@@ -81,7 +81,14 @@ export default function DashboardPage() {
         break;
       case 'kitchen':
         console.log('Redirecting to kitchen dashboard');
-        router.push('/dashboard/kitchen');
+        // Kitchen staff should access through branch-admin or super-admin kitchen page
+        // Check if there's a branch_id, if yes use branch-admin, else super-admin
+        const kitchenBranchId = typeof window !== 'undefined' ? localStorage.getItem('branch_id') : null;
+        if (kitchenBranchId) {
+          router.push('/dashboard/branch-admin/kitchen');
+        } else {
+          router.push('/dashboard/super-admin/kitchen');
+        }
         break;
       case 'admin': // Legacy support
       case 'administrator': // Legacy support

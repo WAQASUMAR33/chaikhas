@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 
@@ -102,12 +102,21 @@ export default function OrderManagementPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const payload = { terminal };
+      const branchId = getBranchId();
+      const payload = { 
+        terminal,
+        branch_id: branchId || terminal
+      };
       if (filter !== 'all') {
         payload.status = filter;
       }
       
       const result = await apiPost('/getOrders.php', payload);
+      
+      // Debug: Log API response to diagnose total amount issues
+      if (result.data && Array.isArray(result.data) && result.data.length > 0) {
+        console.log('Sample order from API:', JSON.stringify(result.data[0], null, 2));
+      }
       
       if (result.data && Array.isArray(result.data)) {
         // Map API response - matching actual database structure
@@ -115,6 +124,30 @@ export default function OrderManagementPage() {
         const mappedOrders = result.data.map((order) => {
           const orderId = order.order_id || order.id;
           const orderNumber = order.order_id ? `ORD-${order.order_id}` : (order.orderid || order.order_number || `ORD-${order.id || order.order_id}`);
+          
+          // Calculate total amounts with better fallback logic
+          // Try multiple field names that might contain the order total
+          const gTotalAmount = parseFloat(order.g_total_amount || order.grand_total_amount || order.total_amount || order.total || order.subtotal || 0);
+          
+          // Try multiple field names for net total
+          let netTotalAmount = parseFloat(order.net_total_amount || order.netTotal || order.net_total || order.final_amount || 0);
+          
+          // If netTotal is 0 but we have a total, use total as fallback
+          // This handles cases where bill hasn't been generated yet
+          if (netTotalAmount === 0 && gTotalAmount > 0) {
+            netTotalAmount = gTotalAmount;
+          }
+          
+          // If both are 0, try calculating from order items if available
+          if (netTotalAmount === 0 && gTotalAmount === 0 && order.items && Array.isArray(order.items)) {
+            const calculatedTotal = order.items.reduce((sum, item) => {
+              const itemTotal = parseFloat(item.total_amount || item.total || (item.price || 0) * (item.quantity || 0) || 0);
+              return sum + itemTotal;
+            }, 0);
+            if (calculatedTotal > 0) {
+              netTotalAmount = calculatedTotal;
+            }
+          }
           
           return {
             id: orderId,
@@ -128,10 +161,10 @@ export default function OrderManagementPage() {
             hall_name: order.hall_name || '-',
             shop_name: order.shopname || '-',
             customer_name: order.customer_name || order.customer || '-',
-            total: parseFloat(order.g_total_amount || order.total || 0),
+            total: gTotalAmount,
             discount: parseFloat(order.discount_amount || order.discount || 0),
             service_charge: parseFloat(order.service_charge || 0),
-            netTotal: parseFloat(order.net_total_amount || order.netTotal || order.total || 0),
+            netTotal: netTotalAmount,
             status: (order.order_status || order.status || 'Pending').toLowerCase(),
             payment_mode: order.payment_mode || 'Cash',
             created_at: order.created_at || order.date || '',
@@ -1057,9 +1090,13 @@ export default function OrderManagementPage() {
     },
     {
       header: 'Total',
-      accessor: (row) => (
-        <span className="font-bold text-[#FF5F15] text-sm">{formatPKR(row.netTotal)}</span>
-      ),
+      accessor: (row) => {
+        // Use netTotal if available, otherwise fallback to total, otherwise show 0
+        const displayAmount = row.netTotal > 0 ? row.netTotal : (row.total > 0 ? row.total : 0);
+        return (
+          <span className="font-bold text-[#FF5F15] text-sm">{formatPKR(displayAmount)}</span>
+        );
+      },
       className: 'w-32',
       wrap: false,
     },

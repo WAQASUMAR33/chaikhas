@@ -12,7 +12,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getToken } from '@/utils/api';
+import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { ShoppingCart, Plus, Minus, X, Receipt, Check } from 'lucide-react';
 
@@ -93,7 +93,11 @@ export default function CreateOrderPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_categories.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       if (result.data && Array.isArray(result.data)) {
         setCategories(result.data);
       }
@@ -110,7 +114,11 @@ export default function CreateOrderPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_products.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       if (result.data && Array.isArray(result.data)) {
         setDishes(result.data);
       }
@@ -185,6 +193,7 @@ export default function CreateOrderPage() {
 
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
       const userId = getToken(); // Get user ID from token or localStorage
       
       // Prepare order items
@@ -212,6 +221,7 @@ export default function CreateOrderPage() {
         table_id: orderType === 'Dine In' ? parseInt(selectedTable) : 0,
         comments: comments,
         terminal: terminal,
+        branch_id: branchId || terminal, // Use branch_id or fallback to terminal
         items: items,
       };
 

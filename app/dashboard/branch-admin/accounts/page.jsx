@@ -249,11 +249,12 @@ export default function AccountManagementPage() {
    * Table actions (Edit and Delete buttons)
    */
   const actions = (row) => (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex items-center justify-end gap-1 sm:gap-2 flex-wrap">
       <Button
         variant="outline"
         size="sm"
         onClick={() => handleEdit(row)}
+        className="text-xs sm:text-sm"
       >
         Edit
       </Button>
@@ -261,6 +262,7 @@ export default function AccountManagementPage() {
         variant="danger"
         size="sm"
         onClick={() => handleDelete(row.id)}
+        className="text-xs sm:text-sm"
       >
         Delete
       </Button>
@@ -292,10 +294,10 @@ export default function AccountManagementPage() {
     <AdminLayout>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Account Management</h1>
-            <p className="text-gray-600 mt-1">Super Admin can add Admin, Order Taker, and Accountant roles</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Account Management</h1>
+            <p className="text-sm sm:text-base text-gray-600 mt-1">Super Admin can add Admin, Order Taker, and Accountant roles</p>
           </div>
           <Button
             onClick={() => {
@@ -311,6 +313,7 @@ export default function AccountManagementPage() {
               setConfirmPassword('');
               setModalOpen(true);
             }}
+            className="w-full sm:w-auto"
           >
             + Add User
           </Button>
@@ -327,8 +330,8 @@ export default function AccountManagementPage() {
 
         {/* Users Table */}
         {loading ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Loading users...</p>
+          <div className="bg-white rounded-lg shadow p-6 sm:p-8 text-center">
+            <p className="text-sm sm:text-base text-gray-500">Loading users...</p>
           </div>
         ) : (
           <Table

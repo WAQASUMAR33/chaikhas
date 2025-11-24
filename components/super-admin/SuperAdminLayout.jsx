@@ -28,7 +28,8 @@ import {
   LogOut,
   PlusCircle,
   ShoppingCart,
-  Network
+  Network,
+  Settings
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
 

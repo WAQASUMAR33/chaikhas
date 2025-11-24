@@ -16,8 +16,8 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
 
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
-      <div className="overflow-x-auto -mx-4 sm:mx-0">
-        <div className="inline-block min-w-full align-middle px-4 sm:px-0">
+      <div className="overflow-x-auto -mx-2 sm:-mx-4 md:mx-0">
+        <div className="inline-block min-w-full align-middle px-2 sm:px-4 md:px-0">
           <div className="overflow-hidden">
             <table className="min-w-full divide-y divide-gray-200">
               {/* Table Header */}
@@ -27,7 +27,7 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
                     <th
                       key={index}
                       scope="col"
-                      className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      className="px-2 sm:px-3 md:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                     >
                       {column.header}
                     </th>
@@ -35,7 +35,7 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
                   {actions && (
                     <th
                       scope="col"
-                      className="px-3 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      className="px-2 sm:px-3 md:px-6 py-2 sm:py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
                     >
                       Actions
                     </th>
@@ -50,7 +50,7 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
                     {columns.map((column, colIndex) => (
                       <td
                         key={colIndex}
-                        className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-900 ${column.className || ''} ${
+                        className={`px-2 sm:px-3 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-900 ${column.className || ''} ${
                           column.wrap !== false ? '' : 'whitespace-nowrap'
                         }`}
                         style={column.style}
@@ -61,8 +61,10 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
                       </td>
                     ))}
                     {actions && (
-                      <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-right text-xs sm:text-sm font-medium">
-                        {actions(row, rowIndex)}
+                      <td className="px-2 sm:px-3 md:px-6 py-2 sm:py-3 md:py-4 whitespace-nowrap text-right text-xs sm:text-sm font-medium">
+                        <div className="flex items-center justify-end gap-1 sm:gap-2">
+                          {actions(row, rowIndex)}
+                        </div>
                       </td>
                     )}
                   </tr>

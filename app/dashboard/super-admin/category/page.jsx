@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState([]);
@@ -36,70 +36,185 @@ export default function CategoryManagementPage() {
   const fetchKitchens = async () => {
     try {
       const terminal = getTerminal();
-      // Try different possible API endpoints
-      let result = await apiPost('/get_kitchens.php', { terminal });
+      const branchId = getBranchId();
       
-      if (!result.success || !result.data) {
-        result = await apiPost('/kitchen_management.php', { terminal, action: 'get' });
+      console.log('=== Fetching Kitchens for Categories ===');
+      console.log('Params:', { terminal, branch_id: branchId || 1, action: 'get' });
+      
+      let result;
+      
+      // Try kitchen_management.php first
+      try {
+        result = await apiPost('/kitchen_management.php', { 
+          terminal, 
+          branch_id: branchId || 1,
+          action: 'get' 
+        });
+        console.log('kitchen_management.php response:', result);
+      } catch (error) {
+        console.error('Error calling kitchen_management.php:', error);
+        result = null;
       }
       
-      if (result.data && Array.isArray(result.data)) {
-        setKitchens(result.data);
+      // If first API call didn't work, try alternative endpoint
+      if (!result || !result.success || !result.data) {
+        console.log('Trying alternative endpoint: get_kitchens.php');
+        try {
+          result = await apiPost('/get_kitchens.php', { 
+            terminal, 
+            branch_id: branchId || 1 
+          });
+          console.log('get_kitchens.php response:', result);
+        } catch (error) {
+          console.error('Error calling get_kitchens.php:', error);
+        }
+      }
+      
+      if (!result) {
+        console.warn('Both API calls failed, using empty array');
+        setKitchens([]);
+        return;
+      }
+      
+      let kitchensData = [];
+      
+      // Handle multiple possible response structures
+      if (Array.isArray(result.data)) {
+        kitchensData = result.data;
+        console.log('Found kitchens in result.data (array)');
+      } else if (result.data && Array.isArray(result.data.data)) {
+        kitchensData = result.data.data;
+        console.log('Found kitchens in result.data.data');
       } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        setKitchens(result.data.data);
-      } else {
-        // Fallback: create default kitchens if API doesn't exist
-        setKitchens([
-          { kitchen_id: 1, title: 'Kitchen 1 - BBQ', code: 'K1' },
-          { kitchen_id: 2, title: 'Kitchen 2 - Fast Food', code: 'K2' }
-        ]);
+        kitchensData = result.data.data;
+        console.log('Found kitchens in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.kitchens)) {
+        kitchensData = result.data.kitchens;
+        console.log('Found kitchens in result.data.kitchens');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            kitchensData = result.data[key];
+            console.log(`Found kitchens in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        kitchensData = result;
+        console.log('Found kitchens in result (direct array)');
       }
+      
+      console.log(`Total kitchens found: ${kitchensData.length}`);
+      
+      // Ensure each kitchen has required fields
+      const validKitchens = kitchensData.map(kitchen => ({
+        kitchen_id: kitchen.kitchen_id || kitchen.id || kitchen.KitchenID,
+        title: kitchen.title || kitchen.name || kitchen.kitchen_name || kitchen.Title || `Kitchen ${kitchen.kitchen_id || kitchen.id}`,
+        code: kitchen.code || kitchen.kitchen_code || kitchen.Code || `K${kitchen.kitchen_id || kitchen.id}`,
+        printer: kitchen.printer || kitchen.printer_name || kitchen.Printer || '',
+        branch_id: kitchen.branch_id || branchId || 1
+      })).filter(k => k.kitchen_id); // Filter out invalid entries
+      
+      setKitchens(validKitchens);
+      console.log('Valid kitchens:', validKitchens);
     } catch (error) {
-      console.error('Error fetching kitchens:', error);
-      // Fallback: create default kitchens
-      setKitchens([
-        { kitchen_id: 1, title: 'Kitchen 1 - BBQ', code: 'K1' },
-        { kitchen_id: 2, title: 'Kitchen 2 - Fast Food', code: 'K2' }
-      ]);
+      console.error('❌ Error fetching kitchens:', error);
+      setKitchens([]);
+      setAlert({ type: 'error', message: 'Failed to load kitchens: ' + (error.message || 'Network error') });
     }
   };
 
   /**
    * Fetch all categories from API
-   * API: get_categories.php (POST with terminal parameter)
+   * API: get_categories.php (POST with terminal and branch_id parameter)
    * Note: API returns a plain array, not wrapped in success object
    */
   const fetchCategories = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const branchId = getBranchId();
       
-      // The API returns a plain JSON array, check if result.data is an array
+      console.log('=== Fetching Categories ===');
+      console.log('Params:', { terminal, branch_id: branchId || terminal });
+      
+      const result = await apiPost('/get_categories.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
+      
+      console.log('get_categories.php response:', result);
+      console.log('result.data type:', typeof result.data);
+      console.log('result.data is array:', Array.isArray(result.data));
+      if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+        console.log('result.data keys:', Object.keys(result.data));
+      }
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
+        categoriesData = result.data;
+        console.log('Found categories in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('Found categories in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.categories)) {
+        categoriesData = result.data.categories;
+        console.log('Found categories in result.data.categories');
+      } else if (result.data && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('Found categories in result.data.data');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            categoriesData = result.data[key];
+            console.log(`Found categories in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        categoriesData = result;
+        console.log('Found categories in result (direct array)');
+      }
+      
+      console.log(`Total categories found: ${categoriesData.length}`);
+      
+      if (categoriesData.length > 0) {
         // Map API response to match our table structure
-        const mappedCategories = result.data.map((cat) => ({
-          id: cat.category_id,
-          category_id: cat.category_id,
-          name: cat.name,
-          description: cat.description || '',
-          kid: cat.kid || 0,
-          kitchen_id: cat.kitchen_id || null,
-          kitchen_name: cat.kitchen_name || '-',
+        const mappedCategories = categoriesData.map((cat) => ({
+          id: cat.category_id || cat.id || cat.CategoryID,
+          category_id: cat.category_id || cat.id || cat.CategoryID,
+          name: cat.name || cat.category_name || cat.Name || '',
+          description: cat.description || cat.desc || cat.Description || '',
+          kid: cat.kid || cat.KID || 0,
+          kitchen_id: cat.kitchen_id || cat.kitchen_ID || null,
+          kitchen_name: cat.kitchen_name || (cat.kitchen_id ? `Kitchen ${cat.kitchen_id}` : 'Not Assigned'),
           terminal: cat.terminal || terminal,
-        }));
+        })).filter(cat => cat.category_id); // Filter out invalid entries
+        
+        console.log('Mapped categories:', mappedCategories);
         setCategories(mappedCategories);
       } else if (result.data && result.data.success === false) {
         // Error response
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load categories' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load categories';
+        console.error('API returned error:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
         setCategories([]);
       } else {
         // Empty result or unexpected format
+        console.warn('⚠️ No categories found in response');
+        console.warn('Full response structure:', JSON.stringify(result, null, 2));
         setCategories([]);
+        if (!result.success) {
+          setAlert({ type: 'warning', message: 'No categories found. Click "Add Category" to create one.' });
+        }
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.error('❌ Error fetching categories:', error);
       setAlert({ type: 'error', message: 'Failed to load categories: ' + (error.message || 'Network error') });
       setLoading(false);
       setCategories([]);
@@ -116,6 +231,7 @@ export default function CategoryManagementPage() {
 
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
       const data = {
         category_id: editingCategory ? editingCategory.category_id : '', // Empty for create
         kid: formData.kid || 0, // Send 0 if not provided, API will auto-generate
@@ -123,6 +239,7 @@ export default function CategoryManagementPage() {
         description: formData.description || '',
         kitchen_id: formData.kitchen_id || null,
         terminal: terminal,
+        branch_id: branchId || terminal, // Include branch_id
       };
 
       if (!data.kitchen_id) {
@@ -209,11 +326,12 @@ export default function CategoryManagementPage() {
    * Table actions (Edit and Delete buttons)
    */
   const actions = (row) => (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex items-center justify-end gap-1 sm:gap-2 flex-wrap">
       <Button
         variant="outline"
         size="sm"
         onClick={() => handleEdit(row)}
+        className="text-xs sm:text-sm"
       >
         Edit
       </Button>
@@ -221,6 +339,7 @@ export default function CategoryManagementPage() {
         variant="danger"
         size="sm"
         onClick={() => handleDelete(row.category_id)}
+        className="text-xs sm:text-sm"
       >
         Delete
       </Button>
@@ -231,10 +350,10 @@ export default function CategoryManagementPage() {
     <SuperAdminLayout>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Category Management</h1>
-            <p className="text-gray-600 mt-1">Manage menu categories</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Category Management</h1>
+            <p className="text-sm sm:text-base text-gray-600 mt-1">Manage menu categories</p>
           </div>
           <Button
             onClick={() => {
@@ -242,6 +361,7 @@ export default function CategoryManagementPage() {
               setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
               setModalOpen(true);
             }}
+            className="w-full sm:w-auto"
           >
             + Add Category
           </Button>
@@ -258,8 +378,8 @@ export default function CategoryManagementPage() {
 
         {/* Categories Table */}
         {loading ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Loading categories...</p>
+          <div className="bg-white rounded-lg shadow p-6 sm:p-8 text-center">
+            <p className="text-sm sm:text-base text-gray-500">Loading categories...</p>
           </div>
         ) : (
           <Table
@@ -322,7 +442,7 @@ export default function CategoryManagementPage() {
               </p>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 mt-6">
               <Button
                 type="button"
                 variant="secondary"
@@ -331,10 +451,11 @@ export default function CategoryManagementPage() {
                   setEditingCategory(null);
                   setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
                 }}
+                className="w-full sm:w-auto"
               >
                 Cancel
               </Button>
-              <Button type="submit">
+              <Button type="submit" className="w-full sm:w-auto">
                 {editingCategory ? 'Update' : 'Create'}
               </Button>
             </div>

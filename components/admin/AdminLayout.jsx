@@ -27,7 +27,8 @@ import {
   X,
   LogOut,
   PlusCircle,
-  ShoppingCart
+  ShoppingCart,
+  Settings
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
 

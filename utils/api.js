@@ -4,7 +4,8 @@
  * Manages authentication tokens in headers
  */
 
-const API_BASE_URL = 'https://darkgreen-trout-102253.hostingersite.com/restuarent/api';
+// Get API base URL from environment variable, fallback to default
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost/restuarent/api';
 
 // Development mode flag - only log in development and client-side
 const IS_DEVELOPMENT = typeof window !== 'undefined' && process.env.NODE_ENV === 'development';

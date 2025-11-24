@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
  * - branch_admin → /dashboard/branch-admin/**
  * - accountant → /dashboard/accountant/**
  * - order_taker → /dashboard/order-taker/**
- * - kitchen → /dashboard/kitchen/**
+ * - kitchen → /dashboard/branch-admin/kitchen/** or /dashboard/super-admin/kitchen/**
  */
 
 export function middleware(request) {

@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 
 export default function MenuManagementPage() {
@@ -47,7 +47,11 @@ export default function MenuManagementPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_products.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       
       // The API returns a plain JSON array
       if (result.data && Array.isArray(result.data)) {
@@ -94,7 +98,11 @@ export default function MenuManagementPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_categories.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       
       // The API returns a plain JSON array
       if (result.data && Array.isArray(result.data)) {
@@ -123,6 +131,7 @@ export default function MenuManagementPage() {
 
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
       const data = {
         dish_id: editingItem ? editingItem.dish_id : '', // Empty for create
         category_id: formData.category_id,
@@ -131,6 +140,7 @@ export default function MenuManagementPage() {
         price: formData.price,
         is_available: formData.is_available ? 1 : 0,
         terminal: terminal,
+        branch_id: branchId || terminal,
         discount: formData.discount || 0,
         kitchen_id: formData.kitchen_id || '',
       };

@@ -12,7 +12,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getToken } from '@/utils/api';
+import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { ShoppingCart, Plus, Minus, X, Receipt, Check } from 'lucide-react';
 
@@ -93,7 +93,11 @@ export default function CreateOrderPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_categories.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       if (result.data && Array.isArray(result.data)) {
         setCategories(result.data);
       }
@@ -110,7 +114,11 @@ export default function CreateOrderPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      const branchId = getBranchId();
+      const result = await apiPost('/get_products.php', { 
+        terminal,
+        branch_id: branchId || terminal
+      });
       if (result.data && Array.isArray(result.data)) {
         setDishes(result.data);
       }
@@ -185,6 +193,7 @@ export default function CreateOrderPage() {
 
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
       const userId = getToken(); // Get user ID from token or localStorage
       
       // Prepare order items
@@ -212,6 +221,7 @@ export default function CreateOrderPage() {
         table_id: orderType === 'Dine In' ? parseInt(selectedTable) : 0,
         comments: comments,
         terminal: terminal,
+        branch_id: branchId || terminal, // Use branch_id or fallback to terminal
         items: items,
       };
 
@@ -320,8 +330,8 @@ export default function CreateOrderPage() {
       <div className="space-y-6">
         {/* Page Header */}
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Create Order</h1>
-          <p className="text-gray-600 mt-1">Select hall, table, and dishes to create a new order</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Create Order</h1>
+          <p className="text-sm sm:text-base text-gray-600 mt-1">Select hall, table, and dishes to create a new order</p>
         </div>
 
         {/* Alert Message */}
@@ -418,8 +428,8 @@ export default function CreateOrderPage() {
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-1">Select Category</h3>
-                    <p className="text-sm text-gray-500">Choose a category to view menu items</p>
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1">Select Category</h3>
+                    <p className="text-xs sm:text-sm text-gray-500">Choose a category to view menu items</p>
                   </div>
                   {selectedCategory && (
                     <button
@@ -465,8 +475,8 @@ export default function CreateOrderPage() {
                     );
                   })}
                   {categories.length === 0 && (
-                    <div className="col-span-full p-8 text-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
-                      <p className="text-sm text-gray-500">No categories available</p>
+                    <div className="col-span-full p-6 sm:p-8 text-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                      <p className="text-xs sm:text-sm text-gray-500">No categories available</p>
                     </div>
                   )}
                 </div>
@@ -531,7 +541,7 @@ export default function CreateOrderPage() {
                           <div className="relative">
                             <div className="flex justify-between items-start mb-3">
                               <div className="flex-1 min-w-0">
-                                <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-[#FF5F15] transition-colors">{dish.name}</h3>
+                                <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-1 group-hover:text-[#FF5F15] transition-colors">{dish.name}</h3>
                                 {dish.description && (
                                   <p className="text-xs text-gray-600 line-clamp-2 mt-1">{dish.description}</p>
                                 )}
@@ -539,7 +549,7 @@ export default function CreateOrderPage() {
                             </div>
                             <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
                               <div>
-                                <p className="text-2xl font-bold text-[#FF5F15]">{formatPKR(dish.price)}</p>
+                                <p className="text-xl sm:text-2xl font-bold text-[#FF5F15]">{formatPKR(dish.price)}</p>
                                 {dish.is_available != 1 && (
                                   <span className="text-xs text-red-500 font-medium">Unavailable</span>
                                 )}
@@ -649,8 +659,8 @@ export default function CreateOrderPage() {
                       <span className="text-xl font-bold text-gray-900">{formatPKR(subtotal)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t border-gray-200">
-                      <span className="text-lg font-bold text-gray-900">Total:</span>
-                      <span className="text-2xl font-bold text-[#FF5F15]">{formatPKR(subtotal)}</span>
+                      <span className="text-base sm:text-lg font-bold text-gray-900">Total:</span>
+                      <span className="text-xl sm:text-2xl font-bold text-[#FF5F15]">{formatPKR(subtotal)}</span>
                     </div>
                     <p className="text-xs text-gray-500 text-center pt-2">
                       Bill will be generated later with discount & service charge
@@ -683,7 +693,7 @@ export default function CreateOrderPage() {
             <div className="space-y-4">
               {/* Receipt Header */}
               <div className="text-center border-b pb-4">
-                <h3 className="text-xl font-bold text-gray-900">Order Receipt</h3>
+                <h3 className="text-lg sm:text-xl font-bold text-gray-900">Order Receipt</h3>
                 <p className="text-sm text-gray-600 mt-1">Order #{orderReceipt.order_id || orderReceipt.orderid || 'N/A'}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   Type: {orderReceipt.order?.order_type || 'Dine In'} | 

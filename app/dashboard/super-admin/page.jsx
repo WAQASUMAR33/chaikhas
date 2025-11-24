@@ -181,11 +181,11 @@ export default function SuperAdminDashboardPage() {
     <SuperAdminLayout>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+        <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2">
             Super Admin Dashboard
           </h1>
-          <p className="text-gray-600">Manage all branches and view global analytics</p>
+          <p className="text-sm sm:text-base text-gray-600">Manage all branches and view global analytics</p>
         </div>
 
         {/* Statistics Cards */}
@@ -194,17 +194,17 @@ export default function SuperAdminDashboardPage() {
             const IconComponent = stat.icon;
             const CardContent = (
               <div
-                className={`${stat.bgColor} rounded-lg shadow p-6 hover:shadow-lg transition cursor-pointer`}
+                className={`${stat.bgColor} rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition cursor-pointer`}
               >
-                <div className="flex items-center justify-between mb-4">
-                  <div className={`${stat.textColor} text-3xl font-bold`}>
+                <div className="flex items-center justify-between mb-3 sm:mb-4">
+                  <div className={`${stat.textColor} text-2xl sm:text-3xl font-bold`}>
                     {stat.value}
                   </div>
-                  <div className={`${stat.textColor} bg-white rounded-full p-3`}>
-                    <IconComponent className="w-6 h-6" />
+                  <div className={`${stat.textColor} bg-white rounded-full p-2 sm:p-3`}>
+                    <IconComponent className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
                 </div>
-                <h3 className="text-sm font-medium text-gray-700">{stat.title}</h3>
+                <h3 className="text-xs sm:text-sm font-medium text-gray-700">{stat.title}</h3>
               </div>
             );
 
@@ -221,9 +221,9 @@ export default function SuperAdminDashboardPage() {
         {/* Quick Actions */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* Recent Orders */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-[#FF5F15]" />
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
+              <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF5F15]" />
               Recent Orders
             </h2>
             {loading ? (
@@ -250,9 +250,9 @@ export default function SuperAdminDashboardPage() {
           </div>
 
           {/* Quick Links */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <LayoutDashboard className="w-5 h-5 text-[#FF5F15]" />
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
+              <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF5F15]" />
               Quick Actions
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 sm:gap-3">
