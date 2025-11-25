@@ -12,7 +12,8 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import logger from '@/utils/logger';
 
 export default function TableManagementPage() {
   const [tables, setTables] = useState([]);
@@ -73,42 +74,60 @@ export default function TableManagementPage() {
         return;
       }
       
-      console.log('=== Fetching Tables (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId });
+      logger.info('Fetching Tables', { terminal, branch_id: branchId });
       
       const result = await apiPost('/get_tables.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      console.log('get_tables.php response:', result);
-      
       // The API returns a plain JSON array
       if (result.data && Array.isArray(result.data)) {
+        logger.logDataFetch('Tables', result.data, result.data.length);
+        
         // Map API response to match our table structure
-        const mappedTables = result.data.map((table) => ({
-          id: table.table_id || table.id || table.TableID,
-          table_id: table.table_id || table.id || table.TableID,
-          table_number: table.table_number || table.table_name || table.number || '',
-          hall_id: table.hall_id || table.HallID || null,
-          hall_name: table.hall_name || table.hall_Name || '',
-          capacity: table.capacity || table.Capacity || 0,
-          status: table.status || table.Status || 'available',
-          terminal: table.terminal || terminal,
-          branch_id: table.branch_id || branchId,
-        })).filter(table => table.table_id); // Filter out invalid entries
+        const mappedTables = result.data.map((table) => {
+          // Log missing fields
+          if (!table.table_id && !table.id && !table.TableID) {
+            logger.logMissingData('table_id', 'table');
+          }
+          if (!table.table_number && !table.table_name && !table.number) {
+            logger.logMissingData('table_number', 'table');
+          }
+          
+          return {
+            id: table.table_id || table.id || table.TableID,
+            table_id: table.table_id || table.id || table.TableID,
+            table_number: table.table_number || table.table_name || table.number || '',
+            hall_id: table.hall_id || table.HallID || null,
+            hall_name: table.hall_name || table.hall_Name || '',
+            capacity: table.capacity || table.Capacity || 0,
+            status: table.status || table.Status || 'available',
+            terminal: table.terminal || terminal,
+            branch_id: table.branch_id || branchId,
+          };
+        }).filter(table => table.table_id); // Filter out invalid entries
+        
+        logger.logDataMapping('API Tables', 'Mapped Tables', mappedTables.length);
+        logger.success(`Successfully loaded ${mappedTables.length} tables`, { 
+          totalReceived: result.data.length,
+          successfullyMapped: mappedTables.length 
+        });
         setTables(mappedTables);
       } else if (result.data && result.data.success === false) {
-        // Error response
+        logger.error('Failed to load tables', result.data);
         setAlert({ type: 'error', message: result.data.message || 'Failed to load tables' });
         setTables([]);
       } else {
-        // Empty result
+        logger.warning('Empty tables response', result);
         setTables([]);
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching tables:', error);
+      logger.error('Failed to fetch tables', { 
+        error: error.message, 
+        stack: error.stack 
+      });
       setAlert({ type: 'error', message: 'Failed to load tables: ' + (error.message || 'Network error') });
       setLoading(false);
       setTables([]);

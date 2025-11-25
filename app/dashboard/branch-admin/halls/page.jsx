@@ -14,8 +14,9 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { Building2, Plus, Edit, Trash2, Search, X, RefreshCw } from 'lucide-react';
+import logger from '@/utils/logger';
 
 export default function HallManagementPage() {
   const [halls, setHalls] = useState([]);
@@ -100,30 +101,31 @@ export default function HallManagementPage() {
         return;
       }
       
-      console.log('=== Fetching Halls (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId });
+      logger.info('Fetching Halls', { terminal, branch_id: branchId });
       
       const result = await apiPost('/get_halls.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      console.log('get_halls.php response:', result);
-      
       // Handle different response structures
       let hallsData = [];
+      let dataSource = '';
       
       if (result.success && result.data) {
         // Check if data is an array directly
         if (Array.isArray(result.data)) {
           hallsData = result.data;
+          dataSource = 'result.data';
         }
         // Check if data is nested: { success: true, data: [...] }
         else if (result.data.data && Array.isArray(result.data.data)) {
           hallsData = result.data.data;
+          dataSource = 'result.data.data';
         }
         // Check if response has success field
         else if (result.data.success === false) {
+          logger.error('Failed to load halls', result.data);
           setAlert({ type: 'error', message: result.data.message || 'Failed to load halls' });
           setHalls([]);
           setFilteredHalls([]);
@@ -134,6 +136,17 @@ export default function HallManagementPage() {
           }
           return;
         }
+      }
+      
+      if (hallsData.length > 0) {
+        logger.logDataFetch('Halls', hallsData, hallsData.length);
+        logger.success(`Found ${hallsData.length} halls from ${dataSource}`, { dataSource });
+      } else {
+        logger.warning('No halls found in API response', { 
+          resultStructure: Object.keys(result.data || {}),
+          fullResponse: result.data 
+        });
+        logger.logMissingData('halls', 'get_halls.php response');
       }
 
       // Map API response to match database schema

@@ -31,6 +31,9 @@ import {
   Settings
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
+import LogPanel from '@/components/ui/LogPanel';
+import { useLogger } from '@/hooks/useLogger';
+import { Bug } from 'lucide-react';
 
 /**
  * Sidebar Menu Items with Lucide icons
@@ -56,6 +59,8 @@ export default function AdminLayout({ children }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false); // Closed by default on mobile
   const [isMobile, setIsMobile] = useState(false);
+  const [logPanelOpen, setLogPanelOpen] = useState(false);
+  const { logs, clearLogs } = useLogger();
 
   useEffect(() => {
     // Check if mobile on mount and resize
@@ -255,6 +260,20 @@ export default function AdminLayout({ children }) {
                   </div>
                 )}
               </div>
+              {/* Log Panel Toggle Button */}
+              <button
+                onClick={() => setLogPanelOpen(!logPanelOpen)}
+                className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition flex items-center gap-1 sm:gap-2 relative"
+                title="Developer Logs"
+              >
+                <Bug className="w-4 h-4" />
+                <span className="hidden sm:inline">Logs</span>
+                {logs.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                    {logs.length > 99 ? '99+' : logs.length}
+                  </span>
+                )}
+              </button>
               {/* Logout Button */}
               <button
                 onClick={handleLogout}
@@ -270,6 +289,14 @@ export default function AdminLayout({ children }) {
         {/* Page Content */}
         <main className="p-3 sm:p-4 md:p-6 overflow-x-hidden">{children}</main>
       </div>
+
+      {/* Log Panel - Fixed on right side */}
+      <LogPanel
+        isOpen={logPanelOpen}
+        onClose={() => setLogPanelOpen(false)}
+        logs={logs}
+        onClear={clearLogs}
+      />
     </div>
   );
 }

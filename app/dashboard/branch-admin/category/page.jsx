@@ -13,7 +13,8 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import logger from '@/utils/logger';
 
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState([]);
@@ -60,7 +61,7 @@ export default function CategoryManagementPage() {
       if (!result || !result.success || !result.data) {
         console.log('Trying alternative endpoint: get_kitchens.php');
         try {
-          result = await apiPost('/get_kitchens.php', { 
+          result = await apiGet('/get_kitchens.php', { 
             terminal, 
             branch_id: branchId || 1 
           });
@@ -145,37 +146,30 @@ export default function CategoryManagementPage() {
         return;
       }
       
-      console.log('=== Fetching Categories (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId });
+      logger.info('Fetching Categories', { terminal, branch_id: branchId });
       
       // Branch-admin: Only fetch categories for their branch
-      const result = await apiPost('/get_categories.php', { 
+      const result = await apiGet('/get_categories.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      console.log('get_categories.php response:', result);
-      console.log('result.data type:', typeof result.data);
-      console.log('result.data is array:', Array.isArray(result.data));
-      if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
-        console.log('result.data keys:', Object.keys(result.data));
-      }
-      
       let categoriesData = [];
+      let dataSource = '';
       
       // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
         categoriesData = result.data;
-        console.log('Found categories in result.data (array)');
+        dataSource = 'result.data';
       } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
         categoriesData = result.data.data;
-        console.log('Found categories in result.data.success.data');
+        dataSource = 'result.data.success.data';
       } else if (result.data && Array.isArray(result.data.categories)) {
         categoriesData = result.data.categories;
-        console.log('Found categories in result.data.categories');
+        dataSource = 'result.data.categories';
       } else if (result.data && Array.isArray(result.data.data)) {
         categoriesData = result.data.data;
-        console.log('Found categories in result.data.data');
+        dataSource = 'result.data.data';
       } else if (result.data && typeof result.data === 'object') {
         // Try to extract array from any property
         for (const key in result.data) {

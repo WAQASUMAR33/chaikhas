@@ -13,8 +13,9 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
+import logger from '@/utils/logger';
 
 export default function MenuManagementPage() {
   const [menuItems, setMenuItems] = useState([]);
@@ -72,65 +73,91 @@ export default function MenuManagementPage() {
         return;
       }
       
-      console.log('=== Fetching Menu Items (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId });
+      logger.info('Fetching Menu Items', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_products.php', { 
+      const result = await apiGet('/get_products.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      console.log('get_products.php full response:', JSON.stringify(result, null, 2));
-      
       let menuItemsData = [];
+      let dataSource = '';
       
       // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
         menuItemsData = result.data;
-        console.log('✅ Found menu items in result.data (array)');
+        dataSource = 'result.data';
       } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
         menuItemsData = result.data.data;
-        console.log('✅ Found menu items in result.data.success.data');
+        dataSource = 'result.data.success.data';
       } else if (result.data && Array.isArray(result.data.menu) || Array.isArray(result.data.items)) {
         menuItemsData = result.data.menu || result.data.items;
-        console.log('✅ Found menu items in result.data.menu/items');
+        dataSource = 'result.data.menu/items';
       } else if (result.data && typeof result.data === 'object') {
         // Try to extract array from any property
         for (const key in result.data) {
           if (Array.isArray(result.data[key])) {
             menuItemsData = result.data[key];
-            console.log(`✅ Found menu items in result.data.${key}`);
+            dataSource = `result.data.${key}`;
             break;
           }
         }
       } else if (Array.isArray(result)) {
         menuItemsData = result;
-        console.log('✅ Found menu items in result (direct array)');
+        dataSource = 'result (direct array)';
       }
       
-      console.log(`Total menu items found: ${menuItemsData.length}`);
+      if (menuItemsData.length > 0) {
+        logger.logDataFetch('Menu Items', menuItemsData, menuItemsData.length);
+        logger.success(`Found ${menuItemsData.length} menu items from ${dataSource}`, { dataSource });
+      } else {
+        logger.warning('No menu items found in API response', { 
+          resultStructure: Object.keys(result.data || {}),
+          fullResponse: result.data 
+        });
+        logger.logMissingData('menu items', 'get_products.php response');
+      }
       
       if (menuItemsData.length > 0) {
-        // Map API response - the API joins with categories so catname is available
-        const mappedItems = menuItemsData.map((item) => ({
-          id: item.dish_id || item.id || item.DishID,
-          dish_id: item.dish_id || item.id || item.DishID,
-          name: item.name || item.dish_name || item.Name || '',
-          barcode: item.barcode || '',
-          description: item.description || item.desc || '',
-          price: parseFloat(item.price || item.Price || 0),
-          qnty: item.qnty || item.qty || item.quantity || '1',
-          category_id: item.category_id || item.CategoryID || null,
-          category_name: item.catname || item.category_name || item.cat_name || '',
-          is_available: item.is_available != null ? item.is_available : 1,
-          is_frequent: item.is_frequent != null ? item.is_frequent : 1,
-          status: (item.is_available != null ? item.is_available : 1) == 1 ? 'active' : 'inactive',
-          discount: parseFloat(item.discount || 0),
-          terminal: item.terminal || terminal,
-          branch_id: item.branch_id || branchId,
-        })).filter(item => item.dish_id); // Filter out invalid entries
+        logger.info(`Mapping ${menuItemsData.length} menu items`);
         
-        console.log('✅ Mapped menu items:', mappedItems);
+        // Map API response - the API joins with categories so catname is available
+        const mappedItems = menuItemsData.map((item) => {
+          // Log missing fields
+          if (!item.dish_id && !item.id && !item.DishID) {
+            logger.logMissingData('dish_id', 'menu item');
+          }
+          if (!item.name && !item.dish_name && !item.Name) {
+            logger.logMissingData('name', 'menu item');
+          }
+          if (!item.price && !item.Price) {
+            logger.logMissingData('price', 'menu item');
+          }
+          
+          return {
+            id: item.dish_id || item.id || item.DishID,
+            dish_id: item.dish_id || item.id || item.DishID,
+            name: item.name || item.dish_name || item.Name || '',
+            barcode: item.barcode || '',
+            description: item.description || item.desc || '',
+            price: parseFloat(item.price || item.Price || 0),
+            qnty: item.qnty || item.qty || item.quantity || '1',
+            category_id: item.category_id || item.CategoryID || null,
+            category_name: item.catname || item.category_name || item.cat_name || '',
+            is_available: item.is_available != null ? item.is_available : 1,
+            is_frequent: item.is_frequent != null ? item.is_frequent : 1,
+            status: (item.is_available != null ? item.is_available : 1) == 1 ? 'active' : 'inactive',
+            discount: parseFloat(item.discount || 0),
+            terminal: item.terminal || terminal,
+            branch_id: item.branch_id || branchId,
+          };
+        }).filter(item => item.dish_id); // Filter out invalid entries
+        
+        logger.logDataMapping('API Menu Items', 'Mapped Menu Items', mappedItems.length);
+        logger.success(`Successfully mapped ${mappedItems.length} menu items`, { 
+          totalReceived: menuItemsData.length,
+          successfullyMapped: mappedItems.length 
+        });
         setMenuItems(mappedItems);
         setAlert({ type: '', message: '' }); // Clear any previous errors
       } else if (result.data && result.data.success === false) {
@@ -189,7 +216,7 @@ export default function MenuManagementPage() {
       console.log('=== Fetching Categories for Menu (Branch Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_categories.php', { 
+      const result = await apiGet('/get_categories.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });

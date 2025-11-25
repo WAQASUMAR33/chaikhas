@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 
 export default function MenuManagementPage() {
@@ -95,7 +95,7 @@ export default function MenuManagementPage() {
       console.log('=== Fetching Menu Items (Super Admin) ===');
       console.log('Params:', payload);
       
-      const result = await apiPost('/get_products.php', payload);
+      const result = await apiGet('/get_products.php', payload);
       
       console.log('get_products.php full response:', JSON.stringify(result, null, 2));
       
@@ -207,7 +207,7 @@ export default function MenuManagementPage() {
       console.log('=== Fetching Categories for Menu (Super Admin) ===');
       console.log('Params:', payload);
       
-      const result = await apiPost('/get_categories.php', payload);
+      const result = await apiGet('/get_categories.php', payload);
       
       console.log('get_categories.php response:', result);
       

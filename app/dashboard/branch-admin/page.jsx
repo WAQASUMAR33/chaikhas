@@ -8,10 +8,11 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
-import { apiPost, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock } from 'lucide-react';
 import Link from 'next/link';
+import logger from '@/utils/logger';
 
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState({
@@ -51,26 +52,28 @@ export default function AdminDashboardPage() {
         return;
       }
       
-      console.log('=== Fetching Dashboard Stats (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId });
+      logger.info('Fetching Dashboard Stats', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_dashboard_stats.php', { 
+      const result = await apiGet('/get_dashboard_stats.php', { 
         terminal,
         branch_id: branchId 
       });
       
-      console.log('Dashboard stats response:', result);
-      
       if (result.success && result.data) {
-        setStats({
+        const statsData = {
           totalOrders: result.data.totalOrders || result.data.total_orders || 0,
           totalSales: result.data.totalSales || result.data.total_sales || 0,
           totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
           totalCategories: result.data.totalCategories || result.data.total_categories || 0,
           recentOrders: result.data.recentOrders || result.data.recent_orders || [],
-        });
+        };
+        
+        logger.logDataFetch('Dashboard Stats', statsData, statsData.totalOrders);
+        logger.success('Dashboard stats loaded successfully', statsData);
+        
+        setStats(statsData);
       } else {
-        // If API returns empty or error, set defaults
+        logger.warning('Dashboard stats API returned no data or error', result.data);
         setStats({
           totalOrders: 0,
           totalSales: 0,
@@ -80,7 +83,7 @@ export default function AdminDashboardPage() {
         });
       }
     } catch (error) {
-      console.error('Error fetching dashboard stats:', error);
+      logger.error('Failed to fetch dashboard stats', { error: error.message, stack: error.stack });
       setStats({
         totalOrders: 0,
         totalSales: 0,

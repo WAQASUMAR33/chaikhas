@@ -14,7 +14,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal } from '@/utils/api';
 import { Building2, Plus, Edit, Trash2, Search, X, RefreshCw } from 'lucide-react';
 
 export default function HallManagementPage() {

@@ -17,7 +17,7 @@ import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X } from 'lucide-react';
 
@@ -70,7 +70,7 @@ export default function SalesListPage() {
         apiParams.to_date = dateRange.toDate;
       }
       
-      const result = await apiPost('/get_sales.php', apiParams);
+      const result = await apiGet('/get_sales.php', apiParams);
       
       // Handle different response structures
       let salesData = [];

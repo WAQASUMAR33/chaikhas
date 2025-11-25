@@ -14,9 +14,10 @@ import Input from '@/components/ui/Input';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { Clock, Printer, CheckCircle, ChefHat, Utensils, Plus, Edit, Trash2, RefreshCw } from 'lucide-react';
+import logger from '@/utils/logger';
 
 export default function KitchenManagementPage() {
   const [kitchens, setKitchens] = useState([]);
@@ -84,7 +85,7 @@ export default function KitchenManagementPage() {
       if (!result || !result.success || !result.data) {
         console.log('Trying alternative endpoint: get_kitchens.php');
         try {
-          result = await apiPost('/get_kitchens.php', { 
+          result = await apiGet('/get_kitchens.php', { 
             terminal, 
             branch_id: branchId || 1 
           });
@@ -224,27 +225,35 @@ export default function KitchenManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
-      console.log('Fetching kitchen orders:', { kitchen_id: selectedKitchen, branch_id: branchId, terminal });
+      logger.info('Fetching Kitchen Orders', { 
+        kitchen_id: selectedKitchen, 
+        branch_id: branchId, 
+        terminal 
+      });
       
-      const result = await apiPost('/get_kitchen_orders.php', { 
+      const result = await apiGet('/get_kitchen_orders.php', { 
         kitchen_id: selectedKitchen,
         branch_id: branchId || 1,
         terminal: terminal
       });
       
-      console.log('Kitchen orders API response:', result);
-      
       if (result.success && result.data) {
         let ordersData = [];
+        let dataSource = '';
         
         // Handle different response structures
         if (Array.isArray(result.data)) {
           ordersData = result.data;
+          dataSource = 'result.data';
         } else if (result.data.orders && Array.isArray(result.data.orders)) {
           ordersData = result.data.orders;
+          dataSource = 'result.data.orders';
         } else if (result.data.data && Array.isArray(result.data.data)) {
           ordersData = result.data.data;
+          dataSource = 'result.data.data';
         }
+        
+        logger.logDataFetch('Kitchen Orders', ordersData, ordersData.length);
         
         // Filter to only show "Running" status orders
         // Show all orders that are not completed/cancelled and don't have bills generated
@@ -263,14 +272,22 @@ export default function KitchenManagementPage() {
           return true;
         });
         
-        console.log(`Filtered ${runningOrders.length} running orders from ${ordersData.length} total orders`);
+        logger.info(`Filtered ${runningOrders.length} running orders from ${ordersData.length} total orders`, {
+          total: ordersData.length,
+          running: runningOrders.length,
+          filtered: ordersData.length - runningOrders.length
+        });
         setOrders(runningOrders);
       } else {
-        console.warn('No orders data in response:', result);
+        logger.warning('No orders data in kitchen response', result);
         setOrders([]);
       }
     } catch (error) {
-      console.error('Error fetching kitchen orders:', error);
+      logger.error('Failed to fetch kitchen orders', { 
+        error: error.message, 
+        stack: error.stack,
+        kitchen_id: selectedKitchen 
+      });
       setAlert({ type: 'error', message: 'Failed to load kitchen orders: ' + (error.message || 'Network error') });
       setOrders([]);
     } finally {
@@ -410,9 +427,7 @@ export default function KitchenManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
-      console.log('=== Updating Item Status ===');
-      console.log('Item ID:', itemId);
-      console.log('New Status:', newStatus);
+      logger.info('Updating Item Status', { itemId, newStatus, terminal, branch_id: branchId });
       
       // Try multiple parameter formats for maximum compatibility
       const result = await apiPost('/update_kitchen_item_status.php', {
@@ -425,8 +440,6 @@ export default function KitchenManagementPage() {
         branch_id: branchId || 1
       });
       
-      console.log('Update status result:', result);
-      
       // Check if update was successful
       const isSuccess = result.success && (
         result.data?.success === true ||
@@ -436,6 +449,7 @@ export default function KitchenManagementPage() {
       );
       
       if (isSuccess) {
+        logger.success(`Item ${itemId} marked as ${newStatus}`, { itemId, newStatus, result: result.data });
         setAlert({ type: 'success', message: result.data?.message || `Item marked as ${newStatus} successfully!` });
         // Refresh orders immediately
         setTimeout(() => {
@@ -443,11 +457,16 @@ export default function KitchenManagementPage() {
         }, 500);
       } else {
         const errorMsg = result.data?.message || result.data?.error || 'Failed to update status';
-        console.error('Status update failed:', errorMsg);
+        logger.error('Status update failed', { itemId, newStatus, error: errorMsg, result: result.data });
         setAlert({ type: 'error', message: errorMsg });
       }
     } catch (error) {
-      console.error('Error updating item status:', error);
+      logger.error('Error updating item status', { 
+        itemId, 
+        newStatus, 
+        error: error.message, 
+        stack: error.stack 
+      });
       setAlert({ type: 'error', message: 'Failed to update status: ' + (error.message || 'Network error') });
     }
   };
@@ -458,7 +477,7 @@ export default function KitchenManagementPage() {
   const handlePrintReceipt = async (orderId) => {
     try {
       const branchId = getBranchId();
-      const result = await apiPost('/get_kitchen_receipt.php', {
+      const result = await apiGet('/get_kitchen_receipt.php', {
         order_id: orderId,
         kitchen_id: selectedKitchen,
         branch_id: branchId || 1

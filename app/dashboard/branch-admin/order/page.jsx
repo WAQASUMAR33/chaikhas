@@ -13,10 +13,11 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign, Calendar } from 'lucide-react';
 import ThermalReceipt from '@/components/receipt/ThermalReceipt';
+import logger from '@/utils/logger';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -145,8 +146,12 @@ export default function OrderManagementPage() {
         return;
       }
       
-      console.log('=== Fetching Orders (Branch Admin) ===');
-      console.log('Params:', { terminal, branch_id: branchId, status: filter !== 'all' ? filter : 'all' });
+      logger.info('Fetching Orders', { 
+        terminal, 
+        branch_id: branchId, 
+        status: filter !== 'all' ? filter : 'all',
+        dateFilter 
+      });
       
       // Calculate date range based on filter
       let fromDate = '';
@@ -185,40 +190,38 @@ export default function OrderManagementPage() {
         payload.to_date = toDate;
       }
       
-      console.log('Fetching orders with date filter:', { dateFilter, fromDate, toDate });
+      logger.info('Date filter applied', { dateFilter, fromDate, toDate });
       
       const result = await apiPost('/getOrders.php', payload);
       
-      console.log('getOrders.php response:', result);
-      console.log('Full API response structure:', JSON.stringify(result, null, 2));
-      
       // Handle multiple possible response structures
       let ordersData = [];
+      let dataSource = '';
       
       // Check if result.data is an array directly
       if (result.data && Array.isArray(result.data)) {
         ordersData = result.data;
-        console.log('✅ Found orders in result.data (array), count:', ordersData.length);
+        dataSource = 'result.data';
       }
       // Check if result.data.data is an array (nested structure)
       else if (result.data && result.data.data && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
-        console.log('✅ Found orders in result.data.data (nested array), count:', ordersData.length);
+        dataSource = 'result.data.data';
       }
       // Check if result.data.orders is an array
       else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
         ordersData = result.data.orders;
-        console.log('✅ Found orders in result.data.orders, count:', ordersData.length);
+        dataSource = 'result.data.orders';
       }
       // Check if result.data.success and result.data.data is an array
       else if (result.data && result.data.success && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
-        console.log('✅ Found orders in result.data.success.data, count:', ordersData.length);
+        dataSource = 'result.data.success.data';
       }
       // Check if result is an array directly
       else if (Array.isArray(result)) {
         ordersData = result;
-        console.log('✅ Found orders in result (direct array), count:', ordersData.length);
+        dataSource = 'result (direct array)';
       }
       // Check if result.success and result.data is an array
       else if (result.success && result.data && Array.isArray(result.data)) {
@@ -250,6 +253,8 @@ export default function OrderManagementPage() {
       }
       
       if (ordersData.length > 0) {
+        logger.info(`Mapping ${ordersData.length} orders from API response`);
+        
         // Map API response - matching actual database structure
         const mappedOrders = ordersData
           .filter(order => order !== null && order !== undefined) // Filter out null/undefined orders
@@ -327,11 +332,18 @@ export default function OrderManagementPage() {
                 terminal: order.terminal || terminal,
               };
             } catch (error) {
-              console.error('Error mapping order:', error, 'Order data:', order);
+              logger.error(`Error mapping order at index ${index}`, { error: error.message, orderData: order });
               return null; // Return null for invalid orders, will be filtered out
             }
           })
           .filter(order => order !== null); // Remove any null entries from mapping errors
+        
+        logger.logDataMapping('API Orders', 'Mapped Orders', mappedOrders.length);
+        logger.success(`Successfully mapped ${mappedOrders.length} orders`, { 
+          totalReceived: ordersData.length,
+          successfullyMapped: mappedOrders.length,
+          failed: ordersData.length - mappedOrders.length
+        });
         
         console.log(`✅ Successfully mapped ${mappedOrders.length} out of ${ordersData.length} orders`);
         
@@ -652,7 +664,7 @@ export default function OrderManagementPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      const result = await apiGet('/get_products.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         setDishes(result.data.map(item => ({
           dish_id: item.dish_id,
@@ -674,7 +686,7 @@ export default function OrderManagementPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const result = await apiGet('/get_categories.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         setCategories(result.data);
       }
@@ -1223,13 +1235,15 @@ export default function OrderManagementPage() {
 
       // Both bill update AND order status update must succeed
       if (billUpdateSuccess && orderUpdateSuccess) {
-        // Update generatedBill with payment info
+        // Update generatedBill with payment info - preserve all existing data
         setGeneratedBill({
           ...generatedBill,
           bill_id: billIdToUse || generatedBill.bill_id,
           payment_status: 'Paid',
           cash_received: cashReceived,
           change: change,
+          // Ensure items are preserved
+          items: generatedBill.items || [],
         });
 
         // Close payment modal automatically
@@ -1984,12 +1998,25 @@ export default function OrderManagementPage() {
                         ? ((discountAmount / (subtotal + serviceCharge)) * 100).toFixed(2)
                         : 0;
                       
+                      // Format order items for receipt
+                      const formattedItems = (orderItems || []).map(item => ({
+                        dish_id: item.dish_id || item.id,
+                        dish_name: item.dish_name || item.name || item.title || 'Item',
+                        name: item.dish_name || item.name || item.title || 'Item',
+                        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+                        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+                      }));
+                      
                       // Prepare bill data for payment modal
                       const receiptData = {
                         bill_id: billToPay?.bill_id || null,
                         order_id: orderDetails.order_id || orderDetails.id,
                         order_number: orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id),
                         order_type: orderDetails.order_type || 'Dine In',
+                        table_number: orderDetails.table_number || orderDetails.table_id || '',
                         subtotal: subtotal,
                         service_charge: serviceCharge,
                         discount_percentage: parseFloat(discountPercentage) || 0,
@@ -1997,7 +2024,7 @@ export default function OrderManagementPage() {
                         grand_total: grandTotal,
                         payment_method: billToPay?.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: billToPay?.payment_status || 'Unpaid',
-                        items: orderItems,
+                        items: formattedItems,
                         date: billToPay?.created_at || orderDetails.created_at || new Date().toLocaleString(),
                       };
                       
@@ -2323,18 +2350,32 @@ export default function OrderManagementPage() {
                         }
                         
                         // Store bill data for receipt - use calculated values from frontend
+                        // Ensure orderItems are properly formatted for receipt
+                        const formattedItems = (orderItems || []).map(item => ({
+                          dish_id: item.dish_id || item.id,
+                          dish_name: item.dish_name || item.name || item.title || 'Item',
+                          name: item.dish_name || item.name || item.title || 'Item',
+                          price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                          quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+                        }));
+                        
                         const receiptData = {
                           bill_id: billId,
                           order_id: billOrder.order_id || billOrder.id,
                           order_number: billOrder.order_id ? `ORD-${billOrder.order_id}` : (billOrder.orderid || billOrder.id),
                           order_type: billOrder.order_type || 'Dine In',
+                          table_number: billOrder.table_number || billOrder.table_id || '',
                           subtotal: subtotal,
                           service_charge: serviceCharge,
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
-                          payment_method: billData.payment_method || billData.payment_mode || billData.payment_mode || billData.payment_mode,
-                          items: orderItems,
+                          payment_method: billData.payment_method || billData.payment_mode || 'Cash',
+                          payment_status: 'Unpaid', // Bill starts as Unpaid
+                          items: formattedItems,
                           date: new Date().toLocaleString(),
                         };
                         
@@ -2830,24 +2871,28 @@ export default function OrderManagementPage() {
               <div id="receipt-print-area" className="bg-white p-4 rounded-lg border border-gray-200">
                 <ThermalReceipt 
                   order={{
-                    ...generatedBill,
-                    g_total_amount: generatedBill.subtotal,
-                    total: generatedBill.subtotal,
-                    subtotal: generatedBill.subtotal,
+                    order_id: generatedBill.order_id,
+                    orderid: generatedBill.order_number,
+                    g_total_amount: generatedBill.subtotal || 0,
+                    total: generatedBill.subtotal || 0,
+                    subtotal: generatedBill.subtotal || 0,
                     service_charge: generatedBill.service_charge || 0,
                     discount_amount: generatedBill.discount_amount || 0,
-                    net_total_amount: generatedBill.grand_total,
-                    netTotal: generatedBill.grand_total,
-                    grand_total: generatedBill.grand_total,
-                    payment_method: generatedBill.payment_method,
-                    payment_mode: generatedBill.payment_method,
+                    discount: generatedBill.discount_amount || 0,
+                    net_total_amount: generatedBill.grand_total || 0,
+                    netTotal: generatedBill.grand_total || 0,
+                    grand_total: generatedBill.grand_total || 0,
+                    final_amount: generatedBill.grand_total || 0,
+                    payment_method: generatedBill.payment_method || 'Cash',
+                    payment_mode: generatedBill.payment_method || 'Cash',
                     payment_status: generatedBill.payment_status || 'Unpaid',
                     cash_received: generatedBill.cash_received || 0,
                     change: generatedBill.change || 0,
                     bill_id: generatedBill.bill_id,
-                    created_at: generatedBill.date,
-                    order_type: generatedBill.order_type,
-                    table_number: generatedBill.table_number
+                    created_at: generatedBill.date || new Date().toISOString(),
+                    date: generatedBill.date || new Date().toISOString(),
+                    order_type: generatedBill.order_type || 'Dine In',
+                    table_number: generatedBill.table_number || ''
                   }}
                   items={generatedBill.items || []}
                   branchName={getBranchName() || ''}

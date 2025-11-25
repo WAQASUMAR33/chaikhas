@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
-import { apiPost, apiGet, getTerminal, getToken, getRole } from '@/utils/api';
+import { apiGet, apiPost, getTerminal, getToken, getRole } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock, Building2, Network } from 'lucide-react';
 import Link from 'next/link';
@@ -69,7 +69,7 @@ export default function SuperAdminDashboardPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_dashboard_stats.php', { terminal });
+      const result = await apiGet('/get_dashboard_stats.php', { terminal });
       
       if (result.success && result.data) {
         setStats(prev => ({

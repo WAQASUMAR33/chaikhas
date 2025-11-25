@@ -12,10 +12,11 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
+import { apiGet, apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { ShoppingCart, Plus, Minus, X, Receipt, Check, Printer } from 'lucide-react';
 import ThermalReceipt from '@/components/receipt/ThermalReceipt';
+import logger from '@/utils/logger';
 
 export default function CreateOrderPage() {
   const [halls, setHalls] = useState([]);
@@ -278,6 +279,31 @@ export default function CreateOrderPage() {
       console.log('result.data type:', typeof result.data);
       console.log('result.data is array:', Array.isArray(result.data));
       
+      // Check for SQL errors in the response
+      if (result.data) {
+        const errorString = JSON.stringify(result.data).toLowerCase();
+        if (errorString.includes('unknown column') || errorString.includes('sql syntax')) {
+          console.error('❌ SQL Error detected in get_categories.php:', result.data);
+          setAlert({ 
+            type: 'error', 
+            message: 'Database Error detected. Please check the backend SQL queries in get_categories.php.' 
+          });
+          setCategories([]);
+          setLoading(false);
+          return;
+        }
+      }
+      
+      // Check if request failed
+      if (!result.success) {
+        const errorMessage = result.data?.message || result.data?.error || 'Failed to load categories';
+        console.error('❌ Failed to fetch categories:', errorMessage);
+        setAlert({ type: 'error', message: `Failed to load categories: ${errorMessage}` });
+        setCategories([]);
+        setLoading(false);
+        return;
+      }
+      
       let categoriesData = [];
       
       // Handle multiple possible response structures
@@ -381,6 +407,31 @@ export default function CreateOrderPage() {
       
       console.log('get_products.php response:', result);
       
+      // Check for SQL errors in the response
+      if (result.data) {
+        const errorString = JSON.stringify(result.data).toLowerCase();
+        if (errorString.includes('unknown column') || errorString.includes('kitchen_id') || errorString.includes('sql syntax')) {
+          console.error('❌ SQL Error detected in get_products.php:', result.data);
+          setAlert({ 
+            type: 'error', 
+            message: 'Database Error: Unknown column error. Please fix the SQL query in get_products.php. See BACKEND_FIX_GUIDE.md for details.' 
+          });
+          setDishes([]);
+          setLoading(false);
+          return;
+        }
+      }
+      
+      // Check if request failed
+      if (!result.success) {
+        const errorMessage = result.data?.message || result.data?.error || 'Failed to load products';
+        console.error('❌ Failed to fetch products:', errorMessage);
+        setAlert({ type: 'error', message: `Failed to load products: ${errorMessage}` });
+        setDishes([]);
+        setLoading(false);
+        return;
+      }
+      
       let dishesData = [];
       
       // Handle multiple possible response structures
@@ -403,13 +454,16 @@ export default function CreateOrderPage() {
       if (dishesData.length > 0) {
         console.log(`✅ Total dishes found: ${dishesData.length}`);
         setDishes(dishesData);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
       } else {
         console.warn('⚠️ No dishes found for this branch');
         setDishes([]);
+        setAlert({ type: 'warning', message: 'No dishes found. Please add dishes in the Menu Management page.' });
       }
       setLoading(false);
     } catch (error) {
       console.error('❌ Error fetching dishes:', error);
+      setAlert({ type: 'error', message: 'Failed to load products: ' + (error.message || 'Network error') });
       setDishes([]);
       setLoading(false);
     }
@@ -532,11 +586,21 @@ export default function CreateOrderPage() {
         items: items,
       };
 
+      logger.info('Creating Order', { 
+        orderType, 
+        hall_id: selectedHall, 
+        table_id: selectedTable,
+        itemsCount: items.length,
+        branch_id: branchId,
+        terminal 
+      });
+      
       // Use kitchen routing API for automatic kitchen assignment
       const result = await apiPost('/create_order_with_kitchen.php', orderData);
 
       // Handle response - check for empty response first
       if (!result.data) {
+        logger.error('Empty response from create_order_with_kitchen.php', orderData);
         setAlert({ type: 'error', message: 'Server returned an empty response. Please check your connection and try again.' });
         return;
       }
@@ -546,10 +610,50 @@ export default function CreateOrderPage() {
         // Check if response has success field (nested structure)
         if (result.data.success === true && result.data.data) {
           const responseData = result.data.data;
-          setOrderReceipt({
-            order: responseData.order || responseData,
-            items: responseData.items || [],
+          logger.success('Order created successfully', { 
             order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
+            itemsCount: responseData.items?.length || 0,
+            responseData 
+          });
+          
+          // Format items for receipt display
+          const formattedItems = (responseData.items || []).map(item => ({
+            dish_id: item.dish_id || item.id,
+            dish_name: item.dish_name || item.name || item.title || 'Item',
+            name: item.dish_name || item.name || item.title || 'Item',
+            price: parseFloat(item.price || item.rate || item.unit_price || 0),
+            quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+            qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+            total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+            total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+          }));
+          
+          // Format order data for receipt
+          const orderData = responseData.order || responseData;
+          const formattedOrder = {
+            ...orderData,
+            order_id: orderData.order_id || responseData.order_id || null,
+            orderid: orderData.orderid || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
+            order_number: orderData.order_number || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
+            order_type: orderData.order_type || orderType,
+            table_number: orderData.table_number || (orderType === 'Dine In' && selectedTable ? tables.find(t => t.table_id == selectedTable)?.table_number : ''),
+            g_total_amount: parseFloat(orderData.g_total_amount || orderData.total || subtotal || 0),
+            total: parseFloat(orderData.total || orderData.g_total_amount || subtotal || 0),
+            subtotal: parseFloat(orderData.subtotal || orderData.g_total_amount || orderData.total || subtotal || 0),
+            service_charge: parseFloat(orderData.service_charge || 0),
+            discount_amount: parseFloat(orderData.discount_amount || orderData.discount || 0),
+            net_total_amount: parseFloat(orderData.net_total_amount || orderData.netTotal || orderData.grand_total || subtotal || 0),
+            netTotal: parseFloat(orderData.netTotal || orderData.net_total_amount || orderData.grand_total || subtotal || 0),
+            grand_total: parseFloat(orderData.grand_total || orderData.net_total_amount || orderData.netTotal || subtotal || 0),
+            payment_method: orderData.payment_method || orderData.payment_mode || 'Cash',
+            payment_status: orderData.payment_status || 'Unpaid',
+            created_at: orderData.created_at || orderData.date || new Date().toISOString(),
+          };
+          
+          setOrderReceipt({
+            order: formattedOrder,
+            items: formattedItems,
+            order_id: formattedOrder.order_id || responseData.order_id || null,
           });
           setReceiptModalOpen(true);
           
@@ -558,6 +662,7 @@ export default function CreateOrderPage() {
             try {
               const terminal = getTerminal();
               const branchId = getBranchId();
+              logger.info('Updating table status to Running', { table_id: selectedTable, hall_id: selectedHall });
               await apiPost('/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
@@ -568,7 +673,7 @@ export default function CreateOrderPage() {
                 branch_id: branchId, // Include branch_id for branch-admin
               });
             } catch (error) {
-              console.error('Error updating table status:', error);
+              logger.error('Error updating table status', { error: error.message, table_id: selectedTable });
               // Don't show error to user, table status update is secondary
             }
           }
@@ -582,13 +687,48 @@ export default function CreateOrderPage() {
           setAlert({ type: 'success', message: result.data.message || 'Order placed successfully!' });
         } else if (result.data.success === false) {
           // API returned an error
+          logger.error('Failed to create order', { error: result.data.message, orderData });
           setAlert({ type: 'error', message: result.data.message || 'Failed to place order' });
         } else {
           // Direct data response (no nested structure)
+          // Format items for receipt display
+          const formattedItems = (result.data.items || []).map(item => ({
+            dish_id: item.dish_id || item.id,
+            dish_name: item.dish_name || item.name || item.title || 'Item',
+            name: item.dish_name || item.name || item.title || 'Item',
+            price: parseFloat(item.price || item.rate || item.unit_price || 0),
+            quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+            qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+            total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+            total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+          }));
+          
+          // Format order data for receipt
+          const orderData = result.data.order || result.data;
+          const formattedOrder = {
+            ...orderData,
+            order_id: orderData.order_id || result.data.order_id || null,
+            orderid: orderData.orderid || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
+            order_number: orderData.order_number || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
+            order_type: orderData.order_type || orderType,
+            table_number: orderData.table_number || (orderType === 'Dine In' && selectedTable ? tables.find(t => t.table_id == selectedTable)?.table_number : ''),
+            g_total_amount: parseFloat(orderData.g_total_amount || orderData.total || subtotal || 0),
+            total: parseFloat(orderData.total || orderData.g_total_amount || subtotal || 0),
+            subtotal: parseFloat(orderData.subtotal || orderData.g_total_amount || orderData.total || subtotal || 0),
+            service_charge: parseFloat(orderData.service_charge || 0),
+            discount_amount: parseFloat(orderData.discount_amount || orderData.discount || 0),
+            net_total_amount: parseFloat(orderData.net_total_amount || orderData.netTotal || orderData.grand_total || subtotal || 0),
+            netTotal: parseFloat(orderData.netTotal || orderData.net_total_amount || orderData.grand_total || subtotal || 0),
+            grand_total: parseFloat(orderData.grand_total || orderData.net_total_amount || orderData.netTotal || subtotal || 0),
+            payment_method: orderData.payment_method || orderData.payment_mode || 'Cash',
+            payment_status: orderData.payment_status || 'Unpaid',
+            created_at: orderData.created_at || orderData.date || new Date().toISOString(),
+          };
+          
           setOrderReceipt({
-            order: result.data.order || result.data,
-            items: result.data.items || [],
-            order_id: result.data.order_id || (result.data.order ? result.data.order.order_id : null),
+            order: formattedOrder,
+            items: formattedItems,
+            order_id: formattedOrder.order_id || result.data.order_id || null,
           });
           setReceiptModalOpen(true);
           

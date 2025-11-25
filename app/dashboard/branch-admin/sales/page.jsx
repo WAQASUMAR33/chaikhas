@@ -17,9 +17,10 @@ import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X } from 'lucide-react';
+import logger from '@/utils/logger';
 
 export default function SalesListPage() {
   const [sales, setSales] = useState([]);
@@ -58,11 +59,12 @@ export default function SalesListPage() {
 
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
       
       // Prepare API parameters
       // For custom date range, use 'custom' period and include dates
       const apiPeriod = period === 'custom' ? 'custom' : period;
-      const apiParams = { terminal, period: apiPeriod };
+      const apiParams = { terminal, period: apiPeriod, branch_id: branchId };
       
       // Add date range if custom period is selected
       if (period === 'custom' && dateRange.fromDate && dateRange.toDate) {
@@ -70,26 +72,38 @@ export default function SalesListPage() {
         apiParams.to_date = dateRange.toDate;
       }
       
-      const result = await apiPost('/get_sales.php', apiParams);
+      logger.info('Fetching Sales Data', { 
+        terminal, 
+        branch_id: branchId,
+        period: apiPeriod,
+        dateRange: period === 'custom' ? { from: dateRange.fromDate, to: dateRange.toDate } : null
+      });
+      
+      const result = await apiGet('/get_sales.php', apiParams);
       
       // Handle different response structures
       let salesData = [];
+      let dataSource = '';
       
       if (result.success && result.data) {
         // Check if data is an array directly
         if (Array.isArray(result.data)) {
           salesData = result.data;
+          dataSource = 'result.data';
         } 
         // Check if data is nested: { success: true, data: [...] }
         else if (result.data.data && Array.isArray(result.data.data)) {
           salesData = result.data.data;
+          dataSource = 'result.data.data';
         }
         // Check if data is wrapped: { success: true, data: { sales: [...] } }
         else if (result.data.sales && Array.isArray(result.data.sales)) {
           salesData = result.data.sales;
+          dataSource = 'result.data.sales';
         }
         // Check if response has success field
         else if (result.data.success === false) {
+          logger.error('Sales API returned error', result.data);
           setAlert({ type: 'error', message: result.data.message || 'Failed to load sales data' });
           setSales([]);
           setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
@@ -101,6 +115,17 @@ export default function SalesListPage() {
           setLastUpdated(new Date());
           return;
         }
+      }
+      
+      if (salesData.length > 0) {
+        logger.logDataFetch('Sales Data', salesData, salesData.length);
+        logger.success(`Found ${salesData.length} sales records from ${dataSource}`, { dataSource });
+      } else {
+        logger.warning('No sales data found in API response', { 
+          resultStructure: Object.keys(result.data || {}),
+          fullResponse: result.data 
+        });
+        logger.logMissingData('sales data', 'get_sales.php response');
       }
 
       // Process and format sales data

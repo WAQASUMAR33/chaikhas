@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 
@@ -283,13 +283,13 @@ export default function OrderManagementPage() {
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
       // Fetch order details - send both order_id (numeric) and orderid (string) for flexibility
-      const orderResult = await apiPost('/get_ordersbyid.php', { 
+      const orderResult = await apiGet('/get_ordersbyid.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
       
       // Fetch order items - send both order_id (numeric) and orderid (string) for flexibility
-      const itemsResult = await apiPost('/get_orderdetails.php', { 
+      const itemsResult = await apiGet('/get_orderdetails.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
@@ -472,7 +472,7 @@ export default function OrderManagementPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      const result = await apiGet('/get_products.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         setDishes(result.data.map(item => ({
           dish_id: item.dish_id,
@@ -494,7 +494,7 @@ export default function OrderManagementPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
+      const result = await apiGet('/get_categories.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         setCategories(result.data);
       }
@@ -523,12 +523,12 @@ export default function OrderManagementPage() {
       const orderNumber = order.orderid || order.order_number;
       
       // Fetch order details and items
-      const orderResult = await apiPost('/get_ordersbyid.php', { 
+      const orderResult = await apiGet('/get_ordersbyid.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
       
-      const itemsResult = await apiPost('/get_orderdetails.php', { 
+      const itemsResult = await apiGet('/get_orderdetails.php', { 
         order_id: orderId,
         orderid: orderNumber
       });

@@ -4,6 +4,8 @@
  * Manages authentication tokens in headers
  */
 
+import logger from './logger';
+
 // Get API base URL from environment variable, fallback to default
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost/restuarent/api';
 
@@ -199,10 +201,11 @@ export const clearAuth = () => {
 /**
  * Make GET request to API
  * @param {string} endpoint - API endpoint (e.g., '/users')
+ * @param {Object} params - Query parameters (will be converted to query string)
  * @param {Object} options - Additional fetch options
  * @returns {Promise<Object>} JSON response
  */
-export const apiGet = async (endpoint, options = {}) => {
+export const apiGet = async (endpoint, params = {}, options = {}) => {
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -216,7 +219,19 @@ export const apiGet = async (endpoint, options = {}) => {
 
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const fullUrl = `${API_BASE_URL}${normalizedEndpoint}`;
+  
+  // Convert params object to query string
+  const queryString = Object.keys(params)
+    .filter(key => params[key] !== null && params[key] !== undefined && params[key] !== '')
+    .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
+    .join('&');
+  
+  const fullUrl = queryString 
+    ? `${API_BASE_URL}${normalizedEndpoint}?${queryString}`
+    : `${API_BASE_URL}${normalizedEndpoint}`;
+
+  // Log API request
+  logger.logAPI('GET', normalizedEndpoint, params);
 
   try {
     const response = await fetch(fullUrl, {
@@ -228,9 +243,17 @@ export const apiGet = async (endpoint, options = {}) => {
     });
 
     const data = await response.json();
+    
+    // Log API response
+    logger.logAPIResponse(normalizedEndpoint, data, response.status);
+    
     return { success: response.ok, data, status: response.status };
   } catch (error) {
     devError('API GET Error:', normalizedEndpoint, error.message);
+    
+    // Log API error
+    logger.logAPIError(normalizedEndpoint, error, params);
+    
     // Provide more detailed error messages
     let errorMessage = error.message || 'Network error';
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
@@ -275,6 +298,9 @@ export const apiPost = async (endpoint, body, options = {}) => {
   const fullUrl = `${API_BASE_URL}${normalizedEndpoint}`;
   devLog('POST Request:', fullUrl);
   
+  // Log API request
+  logger.logAPI('POST', normalizedEndpoint, body);
+  
   try {
     // Try to make the request
     const response = await fetch(fullUrl, {
@@ -312,6 +338,9 @@ export const apiPost = async (endpoint, body, options = {}) => {
     try {
       data = JSON.parse(text);
       devLog('API Response:', normalizedEndpoint, data);
+      
+      // Log API response
+      logger.logAPIResponse(normalizedEndpoint, data, response.status);
       
       // Check if response is an empty object
       if (data && typeof data === 'object' && Object.keys(data).length === 0) {
@@ -463,6 +492,9 @@ export const apiPost = async (endpoint, body, options = {}) => {
     }
   } catch (error) {
     devError('API POST Error:', normalizedEndpoint, error.message);
+    
+    // Log API error
+    logger.logAPIError(normalizedEndpoint, error, body);
     
     // Provide more detailed error messages
     let errorMessage = error.message || 'Network error';
