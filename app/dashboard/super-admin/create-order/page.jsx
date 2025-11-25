@@ -94,16 +94,65 @@ export default function CreateOrderPage() {
     try {
       const terminal = getTerminal();
       const branchId = getBranchId();
+      
+      console.log('=== Fetching Categories (Create Order) ===');
+      console.log('Params:', { terminal, branch_id: branchId || terminal });
+      
       const result = await apiPost('/get_categories.php', { 
         terminal,
         branch_id: branchId || terminal
       });
+      
+      console.log('get_categories.php response:', result);
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setCategories(result.data);
+        categoriesData = result.data;
+        console.log('Found categories in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('Found categories in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.categories)) {
+        categoriesData = result.data.categories;
+        console.log('Found categories in result.data.categories');
+      } else if (result.data && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('Found categories in result.data.data');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            categoriesData = result.data[key];
+            console.log(`Found categories in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        categoriesData = result;
+        console.log('Found categories in result (direct array)');
+      }
+      
+      console.log(`Total categories found: ${categoriesData.length}`);
+      
+      if (categoriesData.length > 0) {
+        // Map to ensure consistent structure
+        const mappedCategories = categoriesData.map((cat) => ({
+          category_id: cat.category_id || cat.id || cat.CategoryID,
+          name: cat.name || cat.category_name || cat.Name || '',
+          description: cat.description || '',
+        }));
+        setCategories(mappedCategories);
+      } else {
+        console.warn('No categories found');
+        setCategories([]);
       }
       setLoading(false);
     } catch (error) {
       console.error('Error fetching categories:', error);
+      setAlert({ type: 'error', message: 'Failed to load categories: ' + (error.message || 'Network error') });
+      setCategories([]);
       setLoading(false);
     }
   };

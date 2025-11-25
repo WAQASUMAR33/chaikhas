@@ -13,12 +13,14 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 
 export default function MenuManagementPage() {
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -30,60 +32,156 @@ export default function MenuManagementPage() {
     is_available: 1,
     kitchen_id: '',
     discount: 0,
+    branch_id: '', // For super-admin to select branch
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
   useEffect(() => {
-    fetchMenuItems();
+    fetchBranches();
     fetchCategories();
+    fetchMenuItems();
   }, []);
 
+  useEffect(() => {
+    // Re-fetch menu items and categories when branch filter changes
+    fetchMenuItems();
+    fetchCategories();
+  }, [selectedBranchFilter]);
+
   /**
-   * Fetch all menu items from API
-   * API: get_products.php (POST with terminal parameter)
-   * Note: API returns a plain array, not wrapped in success object
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin - Menu) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
+
+  /**
+   * Fetch all menu items from API (Super-Admin)
+   * API: get_products.php (POST with terminal, branch_id is optional for filtering)
+   * Super-admin: When branch_id is null/empty, fetch ALL menu items from ALL branches
+   * API should return branch_id and branch_name with each menu item
    */
   const fetchMenuItems = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
-      const result = await apiPost('/get_products.php', { 
-        terminal,
-        branch_id: branchId || terminal
-      });
       
-      // The API returns a plain JSON array
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
+      console.log('=== Fetching Menu Items (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_products.php', payload);
+      
+      console.log('get_products.php full response:', JSON.stringify(result, null, 2));
+      
+      let menuItemsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        // Map API response - the API joins with categories so catname is available
-        const mappedItems = result.data.map((item) => ({
-          id: item.dish_id,
-          dish_id: item.dish_id,
-          name: item.name,
-          barcode: item.barcode || '',
-          description: item.description || '',
-          price: item.price,
-          qnty: item.qnty || '1',
-          category_id: item.category_id,
-          category_name: item.catname || '',
-          is_available: item.is_available || 1,
-          is_frequent: item.is_frequent || 1,
-          status: item.is_available == 1 ? 'active' : 'inactive',
-          discount: item.discount || 0,
-          terminal: item.terminal || terminal,
-        }));
+        menuItemsData = result.data;
+        console.log('✅ Found menu items in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        menuItemsData = result.data.data;
+        console.log('✅ Found menu items in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.menu) || Array.isArray(result.data.items)) {
+        menuItemsData = result.data.menu || result.data.items;
+        console.log('✅ Found menu items in result.data.menu/items');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            menuItemsData = result.data[key];
+            console.log(`✅ Found menu items in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        menuItemsData = result;
+        console.log('✅ Found menu items in result (direct array)');
+      }
+      
+      console.log(`Total menu items found: ${menuItemsData.length}`);
+      
+      if (menuItemsData.length > 0) {
+        // Map API response - include branch_id and branch_name from API response
+        const mappedItems = menuItemsData.map((item) => {
+          const branchId = item.branch_id || item.branch_ID || null;
+          const branchName = item.branch_name || item.branch_Name || null;
+          
+          // Try to find branch name from branches list if not provided by API
+          let displayBranchName = branchName;
+          if (!displayBranchName && branchId) {
+            const branch = branches.find(b => (b.branch_id || b.id || b.ID) == branchId);
+            displayBranchName = branch ? (branch.name || branch.branch_name || branch.title || `Branch ${branchId}`) : `Branch ${branchId}`;
+          } else if (!displayBranchName && branchId) {
+            displayBranchName = `Branch ${branchId}`;
+          }
+          
+          return {
+            id: item.dish_id || item.id || item.DishID,
+            dish_id: item.dish_id || item.id || item.DishID,
+            name: item.name || item.dish_name || item.Name || '',
+            barcode: item.barcode || '',
+            description: item.description || item.desc || '',
+            price: parseFloat(item.price || item.Price || 0),
+            qnty: item.qnty || item.qty || item.quantity || '1',
+            category_id: item.category_id || item.CategoryID || null,
+            category_name: item.catname || item.category_name || item.cat_name || '',
+            is_available: item.is_available != null ? item.is_available : 1,
+            is_frequent: item.is_frequent != null ? item.is_frequent : 1,
+            status: (item.is_available != null ? item.is_available : 1) == 1 ? 'active' : 'inactive',
+            discount: parseFloat(item.discount || 0),
+            terminal: item.terminal || terminal,
+            branch_id: branchId,
+            branch_name: displayBranchName || 'Unknown Branch',
+          };
+        }).filter(item => item.dish_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped menu items with branch info:', mappedItems);
         setMenuItems(mappedItems);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
       } else if (result.data && result.data.success === false) {
         // Error response
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load menu items' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load menu items';
+        console.error('❌ API returned error:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
         setMenuItems([]);
       } else {
         // Empty result
+        console.warn('⚠️ No menu items found');
         setMenuItems([]);
+        if (!result.success) {
+          setAlert({ type: 'warning', message: 'No menu items found. Click "Add Menu Item" to create one.' });
+        }
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching menu items:', error);
+      console.error('❌ Error fetching menu items:', error);
       setAlert({ type: 'error', message: 'Failed to load menu items: ' + (error.message || 'Network error') });
       setLoading(false);
       setMenuItems([]);
@@ -91,32 +189,66 @@ export default function MenuManagementPage() {
   };
 
   /**
-   * Fetch categories for dropdown
-   * API: get_categories.php (POST with terminal parameter)
-   * Note: API returns a plain array
+   * Fetch categories for dropdown (Super-Admin)
+   * API: get_categories.php (POST with terminal, branch_id is optional for filtering)
+   * Super-admin: Fetch all categories or filter by selected branch
    */
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
-      const result = await apiPost('/get_categories.php', { 
-        terminal,
-        branch_id: branchId || terminal
-      });
       
-      // The API returns a plain JSON array
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
+      console.log('=== Fetching Categories for Menu (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_categories.php', payload);
+      
+      console.log('get_categories.php response:', result);
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        const mappedCategories = result.data.map((cat) => ({
-          id: cat.category_id,
-          category_id: cat.category_id,
-          name: cat.name,
-        }));
+        categoriesData = result.data;
+        console.log('✅ Found categories in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('✅ Found categories in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.categories)) {
+        categoriesData = result.data.categories;
+        console.log('✅ Found categories in result.data.categories');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            categoriesData = result.data[key];
+            console.log(`✅ Found categories in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (categoriesData.length > 0) {
+        const mappedCategories = categoriesData.map((cat) => ({
+          id: cat.category_id || cat.id || cat.CategoryID,
+          category_id: cat.category_id || cat.id || cat.CategoryID,
+          name: cat.name || cat.category_name || cat.Name || '',
+          branch_id: cat.branch_id || null,
+        })).filter(cat => cat.category_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped categories:', mappedCategories);
         setCategories(mappedCategories);
       } else {
+        console.warn('⚠️ No categories found');
         setCategories([]);
       }
     } catch (error) {
-      console.error('Failed to load categories:', error);
+      console.error('❌ Failed to load categories:', error);
       setCategories([]);
     }
   };
@@ -131,7 +263,15 @@ export default function MenuManagementPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      
+      // Super-admin: Must select a branch when creating menu item
+      const branchId = formData.branch_id || (editingItem ? editingItem.branch_id : null);
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Please select a branch for this menu item' });
+        return;
+      }
+      
       const data = {
         dish_id: editingItem ? editingItem.dish_id : '', // Empty for create
         category_id: formData.category_id,
@@ -140,10 +280,12 @@ export default function MenuManagementPage() {
         price: formData.price,
         is_available: formData.is_available ? 1 : 0,
         terminal: terminal,
-        branch_id: branchId || terminal,
+        branch_id: branchId, // Include branch_id for super-admin
         discount: formData.discount || 0,
         kitchen_id: formData.kitchen_id || '',
       };
+      
+      console.log('Saving menu item with data:', data);
 
       const result = await apiPost('/dishes_management.php', data);
 
@@ -157,6 +299,7 @@ export default function MenuManagementPage() {
           is_available: 1,
           kitchen_id: '',
           discount: 0,
+          branch_id: '',
         });
         setEditingItem(null);
         setModalOpen(false);
@@ -182,6 +325,7 @@ export default function MenuManagementPage() {
       is_available: item.is_available || 1,
       kitchen_id: item.kitchen_id || '',
       discount: item.discount || 0,
+      branch_id: item.branch_id || '',
     });
     setModalOpen(true);
   };
@@ -249,6 +393,13 @@ export default function MenuManagementPage() {
       wrap: true,
     },
     {
+      header: 'Branch',
+      accessor: 'branch_name',
+      render: (row) => row.branch_name || (row.branch_id ? `Branch ${row.branch_id}` : 'Unknown'),
+      className: 'min-w-[120px] max-w-[150px]',
+      wrap: true,
+    },
+    {
       header: 'Price',
       accessor: (row) => <span className="font-semibold text-gray-900 whitespace-nowrap">{formatPKR(row.price || 0)}</span>,
       className: 'w-32',
@@ -298,10 +449,10 @@ export default function MenuManagementPage() {
     <SuperAdminLayout>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Menu Management</h1>
-            <p className="text-gray-600 mt-1">Manage menu items, prices, and categories</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Menu Management</h1>
+            <p className="text-sm sm:text-base text-gray-600 mt-1">Manage menu items, prices, and categories across all branches</p>
           </div>
           <Button
             onClick={() => {
@@ -314,12 +465,36 @@ export default function MenuManagementPage() {
                 is_available: 1,
                 kitchen_id: '',
                 discount: 0,
+                branch_id: '',
               });
               setModalOpen(true);
             }}
+            className="w-full sm:w-auto"
           >
             + Add Menu Item
           </Button>
+        </div>
+
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">Showing menu items for selected branch only</p>
+          )}
         </div>
 
         {/* Alert Message */}
@@ -359,6 +534,7 @@ export default function MenuManagementPage() {
               is_available: 1,
               kitchen_id: '',
               discount: 0,
+              branch_id: '',
             });
           }}
           title={editingItem ? 'Edit Menu Item' : 'Add New Menu Item'}
@@ -384,6 +560,30 @@ export default function MenuManagementPage() {
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Branch <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="branch_id"
+                value={formData.branch_id}
+                onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
+                required
+                disabled={!!editingItem} // Can't change branch when editing
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="">Select a branch</option>
+                {branches.map((branch) => (
+                  <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                    {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {editingItem ? 'Branch cannot be changed when editing' : 'Select which branch this menu item belongs to'}
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Category <span className="text-red-500">*</span>
               </label>
               <select
@@ -391,15 +591,21 @@ export default function MenuManagementPage() {
                 value={formData.category_id}
                 onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
                 required
-                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                disabled={!formData.branch_id && !editingItem} // Disable if no branch selected (when creating)
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="">Select a category</option>
-                {categories.map((category) => (
-                  <option key={category.category_id} value={category.category_id}>
-                    {category.name}
-                  </option>
-                ))}
+                {categories
+                  .filter(cat => !formData.branch_id || !editingItem || cat.branch_id == formData.branch_id || !cat.branch_id)
+                  .map((category) => (
+                    <option key={category.category_id} value={category.category_id}>
+                      {category.name} {category.branch_id ? `(Branch ${category.branch_id})` : ''}
+                    </option>
+                  ))}
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {!formData.branch_id && !editingItem ? 'Select a branch first' : 'Select which category this item belongs to'}
+              </p>
             </div>
 
             <Input
@@ -455,6 +661,7 @@ export default function MenuManagementPage() {
                     is_available: 1,
                     kitchen_id: '',
                     discount: 0,
+                    branch_id: '',
                   });
                 }}
               >

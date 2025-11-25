@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 
@@ -22,6 +22,8 @@ export default function OrderManagementPage() {
   const [orderDetails, setOrderDetails] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
   const [alert, setAlert] = useState({ type: '', message: '' });
@@ -53,11 +55,38 @@ export default function OrderManagementPage() {
   const [selectedCategory, setSelectedCategory] = useState(''); // Selected category in edit modal
 
   useEffect(() => {
+    fetchBranches();
     fetchOrders();
     // Auto-refresh every 30 seconds to show new orders
     const interval = setInterval(fetchOrders, 30000);
     return () => clearInterval(interval);
-  }, [filter]);
+  }, [filter, selectedBranchFilter]);
+
+  /**
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin - Orders) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
 
   // Auto-calculate 10% service charge for Dine In orders only when bill modal opens
   useEffect(() => {
@@ -102,26 +131,83 @@ export default function OrderManagementPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
-      const payload = { 
-        terminal,
-        branch_id: branchId || terminal
-      };
+      
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
       if (filter !== 'all') {
         payload.status = filter;
       }
       
+      console.log('=== Fetching Orders (Super Admin) ===');
+      console.log('Params:', payload);
+      
       const result = await apiPost('/getOrders.php', payload);
       
-      // Debug: Log API response to diagnose total amount issues
-      if (result.data && Array.isArray(result.data) && result.data.length > 0) {
-        console.log('Sample order from API:', JSON.stringify(result.data[0], null, 2));
+      console.log('getOrders.php response:', result);
+      console.log('Full API response structure:', JSON.stringify(result, null, 2));
+      
+      // Handle multiple possible response structures
+      let ordersData = [];
+      
+      // Check if result.data is an array directly
+      if (result.data && Array.isArray(result.data)) {
+        ordersData = result.data;
+        console.log('✅ Found orders in result.data (array), count:', ordersData.length);
+      }
+      // Check if result.data.data is an array (nested structure)
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.data (nested array), count:', ordersData.length);
+      }
+      // Check if result.data.orders is an array
+      else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
+        ordersData = result.data.orders;
+        console.log('✅ Found orders in result.data.orders, count:', ordersData.length);
+      }
+      // Check if result.data.success and result.data.data is an array
+      else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.success.data, count:', ordersData.length);
+      }
+      // Check if result is an array directly
+      else if (Array.isArray(result)) {
+        ordersData = result;
+        console.log('✅ Found orders in result (direct array), count:', ordersData.length);
+      }
+      // Check if result.success and result.data is an array
+      else if (result.success && result.data && Array.isArray(result.data)) {
+        ordersData = result.data;
+        console.log('✅ Found orders in result.success.data, count:', ordersData.length);
+      }
+      // Try to find any array in result.data object
+      else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            ordersData = result.data[key];
+            console.log(`✅ Found orders in result.data.${key}, count:`, ordersData.length);
+            break;
+          }
+        }
       }
       
-      if (result.data && Array.isArray(result.data)) {
+      // Debug: Log sample order from API
+      if (ordersData.length > 0) {
+        console.log('Sample order from API:', JSON.stringify(ordersData[0], null, 2));
+      } else {
+        console.warn('⚠️ No orders found in API response. Response structure:', Object.keys(result));
+        if (result.data) {
+          console.warn('result.data keys:', Object.keys(result.data));
+        }
+      }
+      
+      if (ordersData.length > 0) {
         // Map API response - matching actual database structure
-        // Map API response - matching actual database structure
-        const mappedOrders = result.data.map((order) => {
+        const mappedOrders = ordersData.map((order) => {
           const orderId = order.order_id || order.id;
           const orderNumber = order.order_id ? `ORD-${order.order_id}` : (order.orderid || order.order_number || `ORD-${order.id || order.order_id}`);
           
@@ -340,19 +426,27 @@ export default function OrderManagementPage() {
           try {
             // Fetch current table details first
             const terminal = getTerminal();
-            const tablesResult = await apiPost('/get_tables.php', { terminal });
+            const branchId = getBranchId();
+            const tablesResult = await apiPost('/get_tables.php', { 
+              terminal,
+              branch_id: branchId || terminal
+            });
             if (tablesResult.data && Array.isArray(tablesResult.data)) {
               const table = tablesResult.data.find(t => t.table_id == tableId);
               if (table) {
                 // Update table status to Available
-                await apiPost('/table_management.php', {
+                console.log('Updating table status to Available for table:', tableId);
+                const updateResult = await apiPost('/table_management.php', {
                   table_id: parseInt(tableId),
                   hall_id: table.hall_id,
                   table_number: table.table_number,
                   capacity: table.capacity,
                   status: 'Available',
                   terminal: terminal,
+                  branch_id: branchId || terminal,
+                  action: 'update'
                 });
+                console.log('Table status update result:', updateResult);
               }
             }
           } catch (error) {
@@ -917,20 +1011,28 @@ export default function OrderManagementPage() {
       if (orderUpdateSuccess && orderDetails && orderDetails.order_type === 'Dine In' && orderDetails.table_id) {
         try {
           const terminal = getTerminal();
+          const branchId = getBranchId();
           // Fetch current table details
-          const tablesResult = await apiPost('/get_tables.php', { terminal });
+          const tablesResult = await apiPost('/get_tables.php', { 
+            terminal,
+            branch_id: branchId || terminal
+          });
           if (tablesResult.data && Array.isArray(tablesResult.data)) {
             const table = tablesResult.data.find(t => t.table_id == orderDetails.table_id);
             if (table) {
               // Update table status to Available
-              await apiPost('/table_management.php', {
+              console.log('Updating table status to Available for table:', orderDetails.table_id);
+              const updateResult = await apiPost('/table_management.php', {
                 table_id: parseInt(orderDetails.table_id),
                 hall_id: table.hall_id,
                 table_number: table.table_number,
                 capacity: table.capacity,
                 status: 'Available',
                 terminal: terminal,
+                branch_id: branchId || terminal,
+                action: 'update'
               });
+              console.log('Table status update result:', updateResult);
             }
           }
         } catch (error) {
@@ -1066,6 +1168,17 @@ export default function OrderManagementPage() {
         <span className="font-bold text-gray-900 text-sm">{row.order_number}</span>
       ),
       className: 'w-36',
+      wrap: false,
+    },
+    {
+      header: 'Branch',
+      accessor: 'branch_name',
+      render: (row) => (
+        <span className="text-gray-700 text-sm font-medium">
+          {row.branch_name || (row.branch_id ? `Branch ${row.branch_id}` : 'Unknown')}
+        </span>
+      ),
+      className: 'w-32',
       wrap: false,
     },
     {
@@ -1220,9 +1333,12 @@ export default function OrderManagementPage() {
     );
   };
 
-  const filteredOrders = filter === 'all' 
-    ? orders 
-    : orders.filter(order => order.status.toLowerCase() === filter.toLowerCase());
+  // Filter orders by branch and status
+  const filteredOrders = orders.filter(order => {
+    const matchesBranch = !selectedBranchFilter || order.branch_id == selectedBranchFilter;
+    const matchesStatus = filter === 'all' || order.status.toLowerCase() === filter.toLowerCase();
+    return matchesBranch && matchesStatus;
+  });
 
   return (
     <SuperAdminLayout>
@@ -1255,13 +1371,38 @@ export default function OrderManagementPage() {
           />
         )}
 
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">Showing orders for selected branch only</p>
+          )}
+        </div>
+
         {/* Filter Buttons */}
         <div className="flex gap-2 flex-wrap items-center">
           <span className="text-sm font-medium text-gray-700 mr-2">Filter by Status:</span>
           {['all', 'Pending', 'Running', 'Bill Generated', 'Complete', 'Cancelled'].map((status) => {
+            const filteredByStatus = selectedBranchFilter 
+              ? orders.filter(o => o.status.toLowerCase() === status.toLowerCase() && o.branch_id == selectedBranchFilter)
+              : orders.filter(o => o.status.toLowerCase() === status.toLowerCase());
             const count = filter === status.toLowerCase() 
-              ? filteredOrders.length 
-              : orders.filter(o => o.status.toLowerCase() === status.toLowerCase()).length;
+              ? (selectedBranchFilter ? orders.filter(o => o.status.toLowerCase() === status.toLowerCase() && o.branch_id == selectedBranchFilter).length : orders.filter(o => o.status.toLowerCase() === status.toLowerCase()).length)
+              : filteredByStatus.length;
             
             return (
               <Button

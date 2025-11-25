@@ -136,12 +136,22 @@ export default function CategoryManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
-      console.log('=== Fetching Categories ===');
-      console.log('Params:', { terminal, branch_id: branchId || terminal });
+      // Branch-admin MUST have branch_id - show error if missing
+      if (!branchId || branchId === 'null' || branchId === 'undefined' || branchId === '') {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setLoading(false);
+        setCategories([]);
+        return;
+      }
       
+      console.log('=== Fetching Categories (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      // Branch-admin: Only fetch categories for their branch
       const result = await apiPost('/get_categories.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       });
       
       console.log('get_categories.php response:', result);
@@ -232,6 +242,13 @@ export default function CategoryManagementPage() {
     try {
       const terminal = getTerminal();
       const branchId = getBranchId();
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId || branchId === 'null' || branchId === 'undefined' || branchId === '') {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
       const data = {
         category_id: editingCategory ? editingCategory.category_id : '', // Empty for create
         kid: formData.kid || 0, // Send 0 if not provided, API will auto-generate
@@ -239,7 +256,7 @@ export default function CategoryManagementPage() {
         description: formData.description || '',
         kitchen_id: formData.kitchen_id || null,
         terminal: terminal,
-        branch_id: branchId || terminal, // Include branch_id
+        branch_id: branchId, // Always include branch_id for branch-admin
       };
 
       if (!data.kitchen_id) {
@@ -247,16 +264,32 @@ export default function CategoryManagementPage() {
         return;
       }
 
+      console.log('Saving category with data:', data);
       const result = await apiPost('/category_management.php', data);
+      console.log('Category save result:', result);
 
-      if (result.success && result.data && result.data.success) {
-        setAlert({ type: 'success', message: result.data.message || 'Category saved successfully!' });
-        setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
-        setEditingCategory(null);
-        setModalOpen(false);
-        fetchCategories(); // Refresh list
+      // Handle different response structures
+      if (result.success && result.data) {
+        const isSuccess = result.data.success === true || 
+                         result.data.success === 'true' || 
+                         (result.data.message && result.data.message.toLowerCase().includes('success')) ||
+                         (result.data.status && result.data.status === 'success') ||
+                         (typeof result.data === 'string' && result.data.toLowerCase().includes('success'));
+        
+        if (isSuccess) {
+          setAlert({ type: 'success', message: result.data.message || result.data.msg || 'Category saved successfully!' });
+          setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
+          setEditingCategory(null);
+          setModalOpen(false);
+          // Refresh list after a short delay to ensure backend has processed
+          setTimeout(() => {
+            fetchCategories();
+          }, 500);
+        } else {
+          setAlert({ type: 'error', message: result.data.message || result.data.error || result.data.msg || 'Failed to save category' });
+        }
       } else {
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to save category' });
+        setAlert({ type: 'error', message: result.data?.message || result.data?.error || 'Failed to save category. Please check your connection.' });
       }
     } catch (error) {
       console.error('Error saving category:', error);

@@ -12,7 +12,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 
 export default function TableManagementPage() {
   const [tables, setTables] = useState([]);
@@ -41,28 +41,62 @@ export default function TableManagementPage() {
   }, []);
 
   /**
-   * Fetch all tables from API
-   * API: get_tables.php (POST with terminal parameter)
+   * Fetch all tables from API (Branch-Admin)
+   * API: get_tables.php (POST with terminal and branch_id parameter)
+   * Branch-Admin: Only fetch tables for their branch
    */
   const fetchTables = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_tables.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setTables([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Tables (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_tables.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for branch-admin
+      });
+      
+      console.log('get_tables.php response:', result);
       
       // The API returns a plain JSON array
       if (result.data && Array.isArray(result.data)) {
         // Map API response to match our table structure
         const mappedTables = result.data.map((table) => ({
-          id: table.table_id,
-          table_id: table.table_id,
-          table_number: table.table_number,
-          hall_id: table.hall_id,
-          hall_name: table.hall_name || '',
-          capacity: table.capacity || 0,
-          status: table.status || 'available',
+          id: table.table_id || table.id || table.TableID,
+          table_id: table.table_id || table.id || table.TableID,
+          table_number: table.table_number || table.table_name || table.number || '',
+          hall_id: table.hall_id || table.HallID || null,
+          hall_name: table.hall_name || table.hall_Name || '',
+          capacity: table.capacity || table.Capacity || 0,
+          status: table.status || table.Status || 'available',
           terminal: table.terminal || terminal,
-        }));
+          branch_id: table.branch_id || branchId,
+        })).filter(table => table.table_id); // Filter out invalid entries
         setTables(mappedTables);
       } else if (result.data && result.data.success === false) {
         // Error response
@@ -82,23 +116,71 @@ export default function TableManagementPage() {
   };
 
   /**
-   * Fetch all halls from API
-   * API: get_halls.php (POST with terminal parameter)
+   * Fetch all halls from API (Branch-Admin)
+   * Only fetch halls for their branch
    */
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      let branchId = getBranchId();
       
-      // The API returns a plain JSON array
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching halls');
+        setHalls([]);
+        return;
+      }
+      
+      console.log('=== Fetching Halls for Tables (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_halls.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for branch-admin
+      });
+      
+      let hallsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        const mappedHalls = result.data.map((hall) => ({
-          id: hall.hall_id,
-          hall_id: hall.hall_id,
-          name: hall.name,
-        }));
+        hallsData = result.data;
+        console.log('✅ Found halls in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+        console.log('✅ Found halls in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            hallsData = result.data[key];
+            console.log(`✅ Found halls in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (hallsData.length > 0) {
+        const mappedHalls = hallsData.map((hall) => ({
+          id: hall.hall_id || hall.id || hall.HallID,
+          hall_id: hall.hall_id || hall.id || hall.HallID,
+          name: hall.name || hall.hall_name || hall.Name || '',
+        })).filter(hall => hall.hall_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped halls:', mappedHalls);
         setHalls(mappedHalls);
       } else {
+        console.warn('⚠️ No halls found for this branch');
         setHalls([]);
       }
     } catch (error) {
@@ -117,6 +199,26 @@ export default function TableManagementPage() {
 
     try {
       const terminal = getTerminal();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
       const data = {
         table_id: editingTable ? editingTable.table_id : '', // Empty for create
         hall_id: formData.hall_id,
@@ -124,7 +226,10 @@ export default function TableManagementPage() {
         capacity: formData.capacity || 0,
         status: formData.status,
         terminal: terminal,
+        branch_id: branchId, // Always include branch_id for branch-admin
       };
+      
+      console.log('Saving table with data:', data);
 
       const result = await apiPost('/table_management.php', data);
 
@@ -170,7 +275,17 @@ export default function TableManagementPage() {
     if (!confirm('Are you sure you want to delete this table?')) return;
 
     try {
-      const result = await apiDelete('/table_management.php', { table_id: tableId });
+      const branchId = getBranchId();
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
+      const result = await apiDelete('/table_management.php', { 
+        table_id: tableId,
+        branch_id: branchId // Include branch_id for branch-admin
+      });
 
       if (result.success && result.data && result.data.success) {
         setAlert({ type: 'success', message: result.data.message || 'Table deleted successfully!' });

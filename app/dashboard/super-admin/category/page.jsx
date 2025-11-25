@@ -18,37 +18,71 @@ import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 export default function CategoryManagementPage() {
   const [categories, setCategories] = useState([]);
   const [kitchens, setKitchens] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
-  const [formData, setFormData] = useState({ name: '', description: '', kid: '', kitchen_id: '' });
+  const [formData, setFormData] = useState({ name: '', description: '', kid: '', kitchen_id: '', branch_id: '' });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
   useEffect(() => {
+    fetchBranches();
     fetchKitchens();
     fetchCategories();
   }, []);
 
+  useEffect(() => {
+    // Re-fetch categories when branch filter changes
+    fetchCategories();
+  }, [selectedBranchFilter]);
+
+  /**
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
+
   /**
    * Fetch kitchens from API
    * API: get_kitchens.php or kitchen_management.php
+   * Super-admin: Fetch all kitchens from all branches
    */
   const fetchKitchens = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
       
-      console.log('=== Fetching Kitchens for Categories ===');
-      console.log('Params:', { terminal, branch_id: branchId || 1, action: 'get' });
+      console.log('=== Fetching Kitchens for Categories (Super Admin) ===');
+      console.log('Params:', { terminal, action: 'get' });
       
       let result;
       
-      // Try kitchen_management.php first
+      // Super-admin: Fetch all kitchens (no branch_id filter)
       try {
         result = await apiPost('/kitchen_management.php', { 
           terminal, 
-          branch_id: branchId || 1,
           action: 'get' 
+          // Don't include branch_id to get all kitchens
         });
         console.log('kitchen_management.php response:', result);
       } catch (error) {
@@ -61,8 +95,8 @@ export default function CategoryManagementPage() {
         console.log('Trying alternative endpoint: get_kitchens.php');
         try {
           result = await apiPost('/get_kitchens.php', { 
-            terminal, 
-            branch_id: branchId || 1 
+            terminal 
+            // Don't include branch_id to get all kitchens
           });
           console.log('get_kitchens.php response:', result);
         } catch (error) {
@@ -113,7 +147,7 @@ export default function CategoryManagementPage() {
         title: kitchen.title || kitchen.name || kitchen.kitchen_name || kitchen.Title || `Kitchen ${kitchen.kitchen_id || kitchen.id}`,
         code: kitchen.code || kitchen.kitchen_code || kitchen.Code || `K${kitchen.kitchen_id || kitchen.id}`,
         printer: kitchen.printer || kitchen.printer_name || kitchen.Printer || '',
-        branch_id: kitchen.branch_id || branchId || 1
+        branch_id: kitchen.branch_id || null
       })).filter(k => k.kitchen_id); // Filter out invalid entries
       
       setKitchens(validKitchens);
@@ -126,23 +160,27 @@ export default function CategoryManagementPage() {
   };
 
   /**
-   * Fetch all categories from API
-   * API: get_categories.php (POST with terminal and branch_id parameter)
-   * Note: API returns a plain array, not wrapped in success object
+   * Fetch all categories from API (Super Admin)
+   * API: get_categories.php (POST with terminal, branch_id is optional for filtering)
+   * Super-admin: When branch_id is null/empty, fetch ALL categories from ALL branches
+   * API should return branch_id and branch_name with each category
    */
   const fetchCategories = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
       
-      console.log('=== Fetching Categories ===');
-      console.log('Params:', { terminal, branch_id: branchId || terminal });
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
       
-      const result = await apiPost('/get_categories.php', { 
-        terminal,
-        branch_id: branchId || terminal
-      });
+      console.log('=== Fetching Categories (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_categories.php', payload);
       
       console.log('get_categories.php response:', result);
       console.log('result.data type:', typeof result.data);
@@ -184,18 +222,35 @@ export default function CategoryManagementPage() {
       
       if (categoriesData.length > 0) {
         // Map API response to match our table structure
-        const mappedCategories = categoriesData.map((cat) => ({
-          id: cat.category_id || cat.id || cat.CategoryID,
-          category_id: cat.category_id || cat.id || cat.CategoryID,
-          name: cat.name || cat.category_name || cat.Name || '',
-          description: cat.description || cat.desc || cat.Description || '',
-          kid: cat.kid || cat.KID || 0,
-          kitchen_id: cat.kitchen_id || cat.kitchen_ID || null,
-          kitchen_name: cat.kitchen_name || (cat.kitchen_id ? `Kitchen ${cat.kitchen_id}` : 'Not Assigned'),
-          terminal: cat.terminal || terminal,
-        })).filter(cat => cat.category_id); // Filter out invalid entries
+        // Include branch_id and branch_name from API response
+        const mappedCategories = categoriesData.map((cat) => {
+          const branchId = cat.branch_id || cat.branch_ID || null;
+          const branchName = cat.branch_name || cat.branch_Name || null;
+          
+          // Try to find branch name from branches list if not provided by API
+          let displayBranchName = branchName;
+          if (!displayBranchName && branchId) {
+            const branch = branches.find(b => (b.branch_id || b.id || b.ID) == branchId);
+            displayBranchName = branch ? (branch.name || branch.branch_name || branch.title || `Branch ${branchId}`) : `Branch ${branchId}`;
+          } else if (!displayBranchName && branchId) {
+            displayBranchName = `Branch ${branchId}`;
+          }
+          
+          return {
+            id: cat.category_id || cat.id || cat.CategoryID,
+            category_id: cat.category_id || cat.id || cat.CategoryID,
+            name: cat.name || cat.category_name || cat.Name || '',
+            description: cat.description || cat.desc || cat.Description || '',
+            kid: cat.kid || cat.KID || 0,
+            kitchen_id: cat.kitchen_id || cat.kitchen_ID || null,
+            kitchen_name: cat.kitchen_name || (cat.kitchen_id ? `Kitchen ${cat.kitchen_id}` : 'Not Assigned'),
+            branch_id: branchId,
+            branch_name: displayBranchName || 'Unknown Branch',
+            terminal: cat.terminal || terminal,
+          };
+        }).filter(cat => cat.category_id); // Filter out invalid entries
         
-        console.log('Mapped categories:', mappedCategories);
+        console.log('Mapped categories with branch info:', mappedCategories);
         setCategories(mappedCategories);
       } else if (result.data && result.data.success === false) {
         // Error response
@@ -231,7 +286,15 @@ export default function CategoryManagementPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      
+      // Super-admin: Must select a branch when creating category
+      const branchId = formData.branch_id || (editingCategory ? editingCategory.branch_id : null);
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Please select a branch for this category' });
+        return;
+      }
+      
       const data = {
         category_id: editingCategory ? editingCategory.category_id : '', // Empty for create
         kid: formData.kid || 0, // Send 0 if not provided, API will auto-generate
@@ -239,7 +302,7 @@ export default function CategoryManagementPage() {
         description: formData.description || '',
         kitchen_id: formData.kitchen_id || null,
         terminal: terminal,
-        branch_id: branchId || terminal, // Include branch_id
+        branch_id: branchId, // Include branch_id
       };
 
       if (!data.kitchen_id) {
@@ -247,16 +310,32 @@ export default function CategoryManagementPage() {
         return;
       }
 
+      console.log('Saving category with data:', data);
       const result = await apiPost('/category_management.php', data);
+      console.log('Category save result:', result);
 
-      if (result.success && result.data && result.data.success) {
-        setAlert({ type: 'success', message: result.data.message || 'Category saved successfully!' });
-        setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
-        setEditingCategory(null);
-        setModalOpen(false);
-        fetchCategories(); // Refresh list
+      // Handle different response structures
+      if (result.success && result.data) {
+        const isSuccess = result.data.success === true || 
+                         result.data.success === 'true' || 
+                         (result.data.message && result.data.message.toLowerCase().includes('success')) ||
+                         (result.data.status && result.data.status === 'success') ||
+                         (typeof result.data === 'string' && result.data.toLowerCase().includes('success'));
+        
+        if (isSuccess) {
+          setAlert({ type: 'success', message: result.data.message || result.data.msg || 'Category saved successfully!' });
+          setFormData({ name: '', description: '', kid: '', kitchen_id: '', branch_id: '' });
+          setEditingCategory(null);
+          setModalOpen(false);
+          // Refresh list after a short delay to ensure backend has processed
+          setTimeout(() => {
+            fetchCategories();
+          }, 500);
+        } else {
+          setAlert({ type: 'error', message: result.data.message || result.data.error || result.data.msg || 'Failed to save category' });
+        }
       } else {
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to save category' });
+        setAlert({ type: 'error', message: result.data?.message || result.data?.error || 'Failed to save category. Please check your connection.' });
       }
     } catch (error) {
       console.error('Error saving category:', error);
@@ -274,6 +353,7 @@ export default function CategoryManagementPage() {
       description: category.description || '',
       kid: category.kid || '',
       kitchen_id: category.kitchen_id || '',
+      branch_id: category.branch_id || '',
     });
     setModalOpen(true);
   };
@@ -316,6 +396,11 @@ export default function CategoryManagementPage() {
       accessor: 'description',
     },
     {
+      header: 'Branch',
+      accessor: 'branch_name',
+      render: (row) => row.branch_name || (row.branch_id ? `Branch ${row.branch_id}` : 'Unknown'),
+    },
+    {
       header: 'Kitchen',
       accessor: 'kitchen_name',
       render: (row) => row.kitchen_name || (row.kitchen_id ? `Kitchen ${row.kitchen_id}` : 'Not Assigned'),
@@ -353,18 +438,42 @@ export default function CategoryManagementPage() {
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Category Management</h1>
-            <p className="text-sm sm:text-base text-gray-600 mt-1">Manage menu categories</p>
+            <p className="text-sm sm:text-base text-gray-600 mt-1">Manage menu categories across all branches</p>
           </div>
           <Button
             onClick={() => {
               setEditingCategory(null);
-              setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
+              setFormData({ name: '', description: '', kid: '', kitchen_id: '', branch_id: '' });
               setModalOpen(true);
             }}
             className="w-full sm:w-auto"
           >
             + Add Category
           </Button>
+        </div>
+
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">
+              Showing categories for selected branch only
+            </p>
+          )}
         </div>
 
         {/* Alert Message */}
@@ -396,7 +505,7 @@ export default function CategoryManagementPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingCategory(null);
-            setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
+            setFormData({ name: '', description: '', kid: '', kitchen_id: '', branch_id: '' });
           }}
           title={editingCategory ? 'Edit Category' : 'Add New Category'}
           size="md"
@@ -421,6 +530,30 @@ export default function CategoryManagementPage() {
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Branch <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="branch_id"
+                value={formData.branch_id}
+                onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
+                required
+                disabled={!!editingCategory} // Can't change branch when editing
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="">Select a branch</option>
+                {branches.map((branch) => (
+                  <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                    {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {editingCategory ? 'Branch cannot be changed when editing' : 'Select which branch this category belongs to'}
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Kitchen <span className="text-red-500">*</span>
               </label>
               <select
@@ -428,17 +561,20 @@ export default function CategoryManagementPage() {
                 value={formData.kitchen_id}
                 onChange={(e) => setFormData({ ...formData, kitchen_id: e.target.value })}
                 required
-                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                disabled={!formData.branch_id && !editingCategory} // Disable if no branch selected (when creating)
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="">Select a kitchen</option>
-                {kitchens.map((kitchen) => (
-                  <option key={kitchen.kitchen_id} value={kitchen.kitchen_id}>
-                    {kitchen.title || `Kitchen ${kitchen.kitchen_id}`}
-                  </option>
-                ))}
+                {kitchens
+                  .filter(kitchen => !formData.branch_id || !editingCategory || kitchen.branch_id == formData.branch_id || !kitchen.branch_id)
+                  .map((kitchen) => (
+                    <option key={kitchen.kitchen_id} value={kitchen.kitchen_id}>
+                      {kitchen.title || `Kitchen ${kitchen.kitchen_id}`} {kitchen.branch_id ? `(Branch ${kitchen.branch_id})` : ''}
+                    </option>
+                  ))}
               </select>
               <p className="text-xs text-gray-500 mt-1">
-                Select which kitchen handles items in this category
+                {!formData.branch_id && !editingCategory ? 'Select a branch first' : 'Select which kitchen handles items in this category'}
               </p>
             </div>
 
@@ -449,7 +585,7 @@ export default function CategoryManagementPage() {
                 onClick={() => {
                   setModalOpen(false);
                   setEditingCategory(null);
-                  setFormData({ name: '', description: '', kid: '', kitchen_id: '' });
+                  setFormData({ name: '', description: '', kid: '', kitchen_id: '', branch_id: '' });
                 }}
                 className="w-full sm:w-auto"
               >

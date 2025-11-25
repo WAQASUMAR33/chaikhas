@@ -14,7 +14,8 @@ import Modal from '@/components/ui/Modal';
 import Alert from '@/components/ui/Alert';
 import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
-import { ShoppingCart, Plus, Minus, X, Receipt, Check } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, X, Receipt, Check, Printer } from 'lucide-react';
+import ThermalReceipt from '@/components/receipt/ThermalReceipt';
 
 export default function CreateOrderPage() {
   const [halls, setHalls] = useState([]);
@@ -56,34 +57,178 @@ export default function CreateOrderPage() {
   // }, [selectedCategory]);
 
   /**
-   * Fetch halls from API
+   * Fetch halls from API (Branch-Admin)
+   * Only fetch halls for their branch
    */
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching halls');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setHalls([]);
+        return;
+      }
+      
+      console.log('=== Fetching Halls (Create Order - Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_halls.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for branch-admin
+      });
+      
+      console.log('get_halls.php response:', result);
+      
+      let hallsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setHalls(result.data);
+        hallsData = result.data;
+        console.log('✅ Found halls in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+        console.log('✅ Found halls in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            hallsData = result.data[key];
+            console.log(`✅ Found halls in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (hallsData.length > 0) {
+        console.log(`✅ Total halls found: ${hallsData.length}`);
+        // Map to ensure consistent structure
+        const mappedHalls = hallsData.map((hall) => ({
+          hall_id: hall.hall_id || hall.id || hall.HallID,
+          id: hall.hall_id || hall.id || hall.HallID,
+          name: hall.name || hall.hall_name || hall.Name || '',
+          capacity: hall.capacity || 0,
+          branch_id: hall.branch_id || branchId,
+        })).filter(hall => hall.hall_id); // Filter out invalid entries
+        
+        setHalls(mappedHalls);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        console.warn('⚠️ No halls found for this branch');
+        setHalls([]);
+        setAlert({ type: 'warning', message: 'No halls found. Please add halls in the Hall Management page.' });
       }
     } catch (error) {
-      console.error('Error fetching halls:', error);
+      console.error('❌ Error fetching halls:', error);
+      setAlert({ type: 'error', message: 'Failed to load halls: ' + (error.message || 'Network error') });
+      setHalls([]);
     }
   };
 
   /**
-   * Fetch tables from API (filtered by hall)
+   * Fetch tables from API (Branch-Admin)
+   * Only fetch tables for their branch, filtered by selected hall
    */
   const fetchTables = async () => {
     try {
+      if (!selectedHall) {
+        setTables([]);
+        return;
+      }
+      
       const terminal = getTerminal();
-      const result = await apiPost('/get_tables.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching tables');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setTables([]);
+        return;
+      }
+      
+      console.log('=== Fetching Tables (Create Order - Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId, hall_id: selectedHall });
+      
+      const result = await apiPost('/get_tables.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for branch-admin
+      });
+      
+      console.log('get_tables.php response:', result);
+      
+      let tablesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        // Filter tables by selected hall
-        const filtered = result.data.filter(table => table.hall_id == selectedHall);
-        setTables(filtered);
+        tablesData = result.data;
+        console.log('✅ Found tables in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+        console.log('✅ Found tables in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            tablesData = result.data[key];
+            console.log(`✅ Found tables in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (tablesData.length > 0) {
+        // Map to ensure consistent structure and filter by selected hall
+        const mappedTables = tablesData
+          .map((table) => ({
+            table_id: table.table_id || table.id || table.TableID,
+            id: table.table_id || table.id || table.TableID,
+            table_number: table.table_number || table.table_name || table.number || '',
+            hall_id: table.hall_id || table.HallID || null,
+            hall_name: table.hall_name || table.hall_Name || '',
+            capacity: table.capacity || table.Capacity || 0,
+            status: table.status || table.Status || 'available',
+            branch_id: table.branch_id || branchId,
+          }))
+          .filter(table => table.table_id && table.hall_id == selectedHall); // Filter by hall
+        
+        console.log(`✅ Total tables found for hall ${selectedHall}: ${mappedTables.length}`);
+        setTables(mappedTables);
+      } else {
+        console.warn('⚠️ No tables found for this branch and hall');
+        setTables([]);
       }
     } catch (error) {
-      console.error('Error fetching tables:', error);
+      console.error('❌ Error fetching tables:', error);
+      setAlert({ type: 'error', message: 'Failed to load tables: ' + (error.message || 'Network error') });
+      setTables([]);
     }
   };
 
@@ -92,39 +237,180 @@ export default function CreateOrderPage() {
    */
   const fetchCategories = async () => {
     try {
+      setLoading(true);
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid (not null, undefined, or empty string)
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          // Try to convert to number for validation
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setCategories([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Categories (Create Order - Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      // Branch-admin: Only fetch categories for their branch
       const result = await apiPost('/get_categories.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       });
+      
+      console.log('get_categories.php full response:', JSON.stringify(result, null, 2));
+      console.log('result.success:', result.success);
+      console.log('result.data type:', typeof result.data);
+      console.log('result.data is array:', Array.isArray(result.data));
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setCategories(result.data);
+        categoriesData = result.data;
+        console.log('✅ Found categories in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('✅ Found categories in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.categories)) {
+        categoriesData = result.data.categories;
+        console.log('✅ Found categories in result.data.categories');
+      } else if (result.data && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('✅ Found categories in result.data.data');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            categoriesData = result.data[key];
+            console.log(`✅ Found categories in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        categoriesData = result;
+        console.log('✅ Found categories in result (direct array)');
+      }
+      
+      console.log(`Total categories found: ${categoriesData.length}`);
+      
+      if (categoriesData.length > 0) {
+        // Map to ensure consistent structure
+        const mappedCategories = categoriesData.map((cat) => ({
+          category_id: cat.category_id || cat.id || cat.CategoryID,
+          name: cat.name || cat.category_name || cat.Name || '',
+          description: cat.description || '',
+        })).filter(cat => cat.category_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped categories:', mappedCategories);
+        setCategories(mappedCategories);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        console.warn('⚠️ No categories found for this branch');
+        console.warn('Response structure:', JSON.stringify(result, null, 2));
+        setCategories([]);
+        
+        if (result.data && result.data.success === false) {
+          const errorMsg = result.data.message || result.data.error || 'Failed to load categories';
+          setAlert({ type: 'error', message: errorMsg });
+        } else if (!result.success) {
+          setAlert({ type: 'warning', message: 'No categories found. Please add categories in the Category Management page.' });
+        }
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.error('❌ Error fetching categories:', error);
+      setAlert({ type: 'error', message: 'Failed to load categories: ' + (error.message || 'Network error') });
+      setCategories([]);
       setLoading(false);
     }
   };
 
   /**
-   * Fetch dishes from API
+   * Fetch dishes from API (Branch-Admin)
+   * Only fetch dishes for their branch
    */
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching dishes');
+        setDishes([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Dishes (Create Order - Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
       const result = await apiPost('/get_products.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       });
+      
+      console.log('get_products.php response:', result);
+      
+      let dishesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setDishes(result.data);
+        dishesData = result.data;
+        console.log('✅ Found dishes in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        dishesData = result.data.data;
+        console.log('✅ Found dishes in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            dishesData = result.data[key];
+            console.log(`✅ Found dishes in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (dishesData.length > 0) {
+        console.log(`✅ Total dishes found: ${dishesData.length}`);
+        setDishes(dishesData);
+      } else {
+        console.warn('⚠️ No dishes found for this branch');
+        setDishes([]);
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching dishes:', error);
+      console.error('❌ Error fetching dishes:', error);
+      setDishes([]);
       setLoading(false);
     }
   };
@@ -193,7 +479,28 @@ export default function CreateOrderPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setPlacing(false);
+        return;
+      }
+      
       const userId = getToken(); // Get user ID from token or localStorage
       
       // Prepare order items
@@ -216,12 +523,12 @@ export default function CreateOrderPage() {
         discount_amount: 0, // Will be added when generating bill
         order_taker_id: parseInt(userId) || 1,
         payment_mode: 'Cash', // Default, will be set when generating bill
+        branch_id: branchId, // Include branch_id for branch-admin
         bill_by: 0,
         hall_id: orderType === 'Dine In' ? parseInt(selectedHall) : 0,
         table_id: orderType === 'Dine In' ? parseInt(selectedTable) : 0,
         comments: comments,
         terminal: terminal,
-        branch_id: branchId || terminal, // Use branch_id or fallback to terminal
         items: items,
       };
 
@@ -249,13 +556,16 @@ export default function CreateOrderPage() {
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
+              const terminal = getTerminal();
+              const branchId = getBranchId();
               await apiPost('/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
                 capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
                 status: 'Running',
-                terminal: getTerminal(),
+                terminal: terminal,
+                branch_id: branchId, // Include branch_id for branch-admin
               });
             } catch (error) {
               console.error('Error updating table status:', error);
@@ -285,13 +595,16 @@ export default function CreateOrderPage() {
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
+              const terminal = getTerminal();
+              const branchId = getBranchId();
               await apiPost('/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
                 capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
                 status: 'Running',
-                terminal: getTerminal(),
+                terminal: terminal,
+                branch_id: branchId, // Include branch_id for branch-admin
               });
             } catch (error) {
               console.error('Error updating table status:', error);
@@ -691,56 +1004,23 @@ export default function CreateOrderPage() {
         >
           {orderReceipt && (
             <div className="space-y-4">
-              {/* Receipt Header */}
-              <div className="text-center border-b pb-4">
-                <h3 className="text-lg sm:text-xl font-bold text-gray-900">Order Receipt</h3>
-                <p className="text-sm text-gray-600 mt-1">Order #{orderReceipt.order_id || orderReceipt.orderid || 'N/A'}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Type: {orderReceipt.order?.order_type || 'Dine In'} | 
-                  Status: {orderReceipt.order?.order_status || 'Running'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {orderReceipt.order?.created_at || new Date().toLocaleString()}
-                </p>
-              </div>
-
-              {/* Order Items */}
-              <div className="space-y-2">
-                {orderReceipt.items && orderReceipt.items.length > 0 && orderReceipt.items.map((item, index) => (
-                  <div key={index} className="flex justify-between text-sm py-2 border-b">
-                    <div>
-                      <p className="font-medium">{item.dish_name || item.title || 'Item'}</p>
-                      <p className="text-xs text-gray-500">
-                        {formatPKR(item.price || item.rate || 0)} x {item.quantity || item.qnty || 0}
-                      </p>
-                    </div>
-                    <p className="font-semibold">{formatPKR(item.total_amount || item.total || 0)}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Receipt Totals */}
-              <div className="border-t pt-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span className="font-medium">{formatPKR(orderReceipt.order?.g_total_amount || orderReceipt.order?.total || 0)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span className="text-[#FF5F15]">
-                    {formatPKR(orderReceipt.order?.net_total_amount || orderReceipt.order?.netTotal || orderReceipt.order?.total || 0)}
-                  </span>
-                </div>
-              </div>
-
               {/* Success Message */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
                 <Check className="w-5 h-5 text-green-600" />
                 <p className="text-sm text-green-800 font-medium">Order placed successfully and sent to kitchen!</p>
               </div>
 
+              {/* Thermal Receipt - Print View */}
+              <div id="receipt-print-area">
+                <ThermalReceipt 
+                  order={orderReceipt.order || orderReceipt}
+                  items={orderReceipt.items || []}
+                  branchName={typeof window !== 'undefined' ? localStorage.getItem('branch_name') || '' : ''}
+                />
+              </div>
+
               {/* Actions */}
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 border-t">
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -756,9 +1036,44 @@ export default function CreateOrderPage() {
                   New Order
                 </Button>
                 <Button
-                  onClick={() => window.print()}
-                  className="flex-1"
+                  onClick={() => {
+                    const printWindow = window.open('', '_blank');
+                    const printContent = document.getElementById('receipt-print-area').innerHTML;
+                    printWindow.document.write(`
+                      <!DOCTYPE html>
+                      <html>
+                        <head>
+                          <title>Receipt - Restaurant Khas</title>
+                          <style>
+                            @media print {
+                              @page {
+                                size: 80mm auto;
+                                margin: 0;
+                              }
+                              body {
+                                margin: 0;
+                                padding: 0;
+                              }
+                            }
+                            body {
+                              font-family: 'Courier New', monospace;
+                              margin: 0;
+                              padding: 0;
+                            }
+                          </style>
+                        </head>
+                        <body>${printContent}</body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                    setTimeout(() => {
+                      printWindow.print();
+                      printWindow.close();
+                    }, 250);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2"
                 >
+                  <Printer className="w-4 h-4" />
                   Print Receipt
                 </Button>
               </div>

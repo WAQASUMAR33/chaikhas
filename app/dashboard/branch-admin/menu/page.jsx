@@ -39,51 +39,117 @@ export default function MenuManagementPage() {
   }, []);
 
   /**
-   * Fetch all menu items from API
-   * API: get_products.php (POST with terminal parameter)
-   * Note: API returns a plain array, not wrapped in success object
+   * Fetch all menu items from API (Branch-Admin)
+   * API: get_products.php (POST with terminal and branch_id parameter)
+   * Branch-Admin: Only fetch menu items for their branch
    */
   const fetchMenuItems = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid (not null, undefined, or empty string)
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          // Try to convert to number for validation
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setMenuItems([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Menu Items (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
       const result = await apiPost('/get_products.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      // The API returns a plain JSON array
+      console.log('get_products.php full response:', JSON.stringify(result, null, 2));
+      
+      let menuItemsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
+        menuItemsData = result.data;
+        console.log('✅ Found menu items in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        menuItemsData = result.data.data;
+        console.log('✅ Found menu items in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.menu) || Array.isArray(result.data.items)) {
+        menuItemsData = result.data.menu || result.data.items;
+        console.log('✅ Found menu items in result.data.menu/items');
+      } else if (result.data && typeof result.data === 'object') {
+        // Try to extract array from any property
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            menuItemsData = result.data[key];
+            console.log(`✅ Found menu items in result.data.${key}`);
+            break;
+          }
+        }
+      } else if (Array.isArray(result)) {
+        menuItemsData = result;
+        console.log('✅ Found menu items in result (direct array)');
+      }
+      
+      console.log(`Total menu items found: ${menuItemsData.length}`);
+      
+      if (menuItemsData.length > 0) {
         // Map API response - the API joins with categories so catname is available
-        const mappedItems = result.data.map((item) => ({
-          id: item.dish_id,
-          dish_id: item.dish_id,
-          name: item.name,
+        const mappedItems = menuItemsData.map((item) => ({
+          id: item.dish_id || item.id || item.DishID,
+          dish_id: item.dish_id || item.id || item.DishID,
+          name: item.name || item.dish_name || item.Name || '',
           barcode: item.barcode || '',
-          description: item.description || '',
-          price: item.price,
-          qnty: item.qnty || '1',
-          category_id: item.category_id,
-          category_name: item.catname || '',
-          is_available: item.is_available || 1,
-          is_frequent: item.is_frequent || 1,
-          status: item.is_available == 1 ? 'active' : 'inactive',
-          discount: item.discount || 0,
+          description: item.description || item.desc || '',
+          price: parseFloat(item.price || item.Price || 0),
+          qnty: item.qnty || item.qty || item.quantity || '1',
+          category_id: item.category_id || item.CategoryID || null,
+          category_name: item.catname || item.category_name || item.cat_name || '',
+          is_available: item.is_available != null ? item.is_available : 1,
+          is_frequent: item.is_frequent != null ? item.is_frequent : 1,
+          status: (item.is_available != null ? item.is_available : 1) == 1 ? 'active' : 'inactive',
+          discount: parseFloat(item.discount || 0),
           terminal: item.terminal || terminal,
-        }));
+          branch_id: item.branch_id || branchId,
+        })).filter(item => item.dish_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped menu items:', mappedItems);
         setMenuItems(mappedItems);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
       } else if (result.data && result.data.success === false) {
         // Error response
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load menu items' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load menu items';
+        console.error('❌ API returned error:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
         setMenuItems([]);
       } else {
         // Empty result
+        console.warn('⚠️ No menu items found for this branch');
         setMenuItems([]);
+        if (!result.success) {
+          setAlert({ type: 'warning', message: 'No menu items found. Click "Add Menu Item" to create one.' });
+        }
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching menu items:', error);
+      console.error('❌ Error fetching menu items:', error);
       setAlert({ type: 'error', message: 'Failed to load menu items: ' + (error.message || 'Network error') });
       setLoading(false);
       setMenuItems([]);
@@ -91,32 +157,82 @@ export default function MenuManagementPage() {
   };
 
   /**
-   * Fetch categories for dropdown
-   * API: get_categories.php (POST with terminal parameter)
-   * Note: API returns a plain array
+   * Fetch categories for dropdown (Branch-Admin)
+   * API: get_categories.php (POST with terminal and branch_id parameter)
+   * Branch-Admin: Only fetch categories for their branch
    */
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching categories');
+        setCategories([]);
+        return;
+      }
+      
+      console.log('=== Fetching Categories for Menu (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
       const result = await apiPost('/get_categories.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      // The API returns a plain JSON array
+      console.log('get_categories.php response:', result);
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        const mappedCategories = result.data.map((cat) => ({
-          id: cat.category_id,
-          category_id: cat.category_id,
-          name: cat.name,
-        }));
+        categoriesData = result.data;
+        console.log('✅ Found categories in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        categoriesData = result.data.data;
+        console.log('✅ Found categories in result.data.success.data');
+      } else if (result.data && Array.isArray(result.data.categories)) {
+        categoriesData = result.data.categories;
+        console.log('✅ Found categories in result.data.categories');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            categoriesData = result.data[key];
+            console.log(`✅ Found categories in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (categoriesData.length > 0) {
+        const mappedCategories = categoriesData.map((cat) => ({
+          id: cat.category_id || cat.id || cat.CategoryID,
+          category_id: cat.category_id || cat.id || cat.CategoryID,
+          name: cat.name || cat.category_name || cat.Name || '',
+        })).filter(cat => cat.category_id); // Filter out invalid entries
+        
+        console.log('✅ Mapped categories:', mappedCategories);
         setCategories(mappedCategories);
       } else {
+        console.warn('⚠️ No categories found for this branch');
         setCategories([]);
       }
     } catch (error) {
-      console.error('Failed to load categories:', error);
+      console.error('❌ Failed to load categories:', error);
       setCategories([]);
     }
   };
@@ -131,7 +247,26 @@ export default function MenuManagementPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
       const data = {
         dish_id: editingItem ? editingItem.dish_id : '', // Empty for create
         category_id: formData.category_id,
@@ -140,10 +275,12 @@ export default function MenuManagementPage() {
         price: formData.price,
         is_available: formData.is_available ? 1 : 0,
         terminal: terminal,
-        branch_id: branchId || terminal,
+        branch_id: branchId, // Always include branch_id for branch-admin
         discount: formData.discount || 0,
         kitchen_id: formData.kitchen_id || '',
       };
+      
+      console.log('Saving menu item with data:', data);
 
       const result = await apiPost('/dishes_management.php', data);
 

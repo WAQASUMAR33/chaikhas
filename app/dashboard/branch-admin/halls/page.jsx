@@ -14,7 +14,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { Building2, Plus, Edit, Trash2, Search, X, RefreshCw } from 'lucide-react';
 
 export default function HallManagementPage() {
@@ -57,8 +57,9 @@ export default function HallManagementPage() {
   }, [searchTerm, halls]);
 
   /**
-   * Fetch all halls from API
-   * API: get_halls.php (POST with terminal parameter)
+   * Fetch all halls from API (Branch-Admin)
+   * API: get_halls.php (POST with terminal and branch_id parameter)
+   * Branch-Admin: Only fetch halls for their branch
    */
   const fetchHalls = async (showRefreshing = false) => {
     if (showRefreshing) {
@@ -70,7 +71,44 @@ export default function HallManagementPage() {
     
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setHalls([]);
+        setFilteredHalls([]);
+        if (showRefreshing) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        return;
+      }
+      
+      console.log('=== Fetching Halls (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_halls.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for branch-admin
+      });
+      
+      console.log('get_halls.php response:', result);
       
       // Handle different response structures
       let hallsData = [];
@@ -144,6 +182,7 @@ export default function HallManagementPage() {
           name: hall.name || '',
           capacity: hall.capacity || 0,
           terminal: hall.terminal || terminal,
+          branch_id: hall.branch_id || branchId,
           created_at: formattedCreatedAt || hall.created_at || 'N/A',
           updated_at: formattedUpdatedAt || hall.updated_at || 'N/A',
           raw_created_at: hall.created_at || '',
@@ -189,12 +228,35 @@ export default function HallManagementPage() {
 
     try {
       const terminal = getTerminal();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
       const data = {
         hall_id: editingHall ? editingHall.id : '', // Empty for create
         name: formData.name.trim(),
         capacity: formData.capacity ? parseInt(formData.capacity) : 0,
         terminal: terminal,
+        branch_id: branchId, // Always include branch_id for branch-admin
       };
+      
+      console.log('Saving hall with data:', data);
 
       const result = await apiPost('/hall_management.php', data);
 
@@ -250,7 +312,17 @@ export default function HallManagementPage() {
     }
 
     try {
-      const result = await apiDelete('/hall_management.php', { hall_id: hallId });
+      const branchId = getBranchId();
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        return;
+      }
+      
+      const result = await apiDelete('/hall_management.php', { 
+        hall_id: hallId,
+        branch_id: branchId // Include branch_id for branch-admin
+      });
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (

@@ -20,6 +20,8 @@ import { Building2, Plus, Edit, Trash2, Search, X, RefreshCw } from 'lucide-reac
 export default function HallManagementPage() {
   const [halls, setHalls] = useState([]);
   const [filteredHalls, setFilteredHalls] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -28,10 +30,12 @@ export default function HallManagementPage() {
   const [formData, setFormData] = useState({
     name: '',
     capacity: '',
+    branch_id: '', // For super-admin to select branch
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
   useEffect(() => {
+    fetchBranches();
     fetchHalls();
     
     // Auto-refresh halls every 15 seconds for real-time updates
@@ -41,6 +45,37 @@ export default function HallManagementPage() {
     
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    // Re-fetch halls when branch filter changes
+    fetchHalls();
+  }, [selectedBranchFilter]);
+
+  /**
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin - Halls) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
 
   // Filter halls based on search term
   useEffect(() => {
@@ -57,8 +92,10 @@ export default function HallManagementPage() {
   }, [searchTerm, halls]);
 
   /**
-   * Fetch all halls from API
-   * API: get_halls.php (POST with terminal parameter)
+   * Fetch all halls from API (Super-Admin)
+   * API: get_halls.php (POST with terminal, branch_id is optional for filtering)
+   * Super-admin: When branch_id is null/empty, fetch ALL halls from ALL branches
+   * API should return branch_id and branch_name with each hall
    */
   const fetchHalls = async (showRefreshing = false) => {
     if (showRefreshing) {
@@ -70,7 +107,20 @@ export default function HallManagementPage() {
     
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
+      console.log('=== Fetching Halls (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_halls.php', payload);
+      
+      console.log('get_halls.php response:', result);
       
       // Handle different response structures
       let hallsData = [];
@@ -138,12 +188,27 @@ export default function HallManagementPage() {
           }
         }
 
+        // Get branch info for super-admin
+        const branchId = hall.branch_id || hall.branch_ID || null;
+        const branchName = hall.branch_name || hall.branch_Name || null;
+        
+        // Try to find branch name from branches list if not provided by API
+        let displayBranchName = branchName;
+        if (!displayBranchName && branchId) {
+          const branch = branches.find(b => (b.branch_id || b.id || b.ID) == branchId);
+          displayBranchName = branch ? (branch.name || branch.branch_name || branch.title || `Branch ${branchId}`) : `Branch ${branchId}`;
+        } else if (!displayBranchName && branchId) {
+          displayBranchName = `Branch ${branchId}`;
+        }
+        
         return {
           id: hall.hall_id || hall.id,
           hall_id: hall.hall_id || hall.id,
           name: hall.name || '',
           capacity: hall.capacity || 0,
           terminal: hall.terminal || terminal,
+          branch_id: branchId,
+          branch_name: displayBranchName || 'Unknown Branch',
           created_at: formattedCreatedAt || hall.created_at || 'N/A',
           updated_at: formattedUpdatedAt || hall.updated_at || 'N/A',
           raw_created_at: hall.created_at || '',
@@ -151,8 +216,13 @@ export default function HallManagementPage() {
         };
       });
 
-      // Sort by ID descending (newest first)
-      mappedHalls.sort((a, b) => (b.id || 0) - (a.id || 0));
+      // Sort by branch_id first, then ID descending (newest first)
+      mappedHalls.sort((a, b) => {
+        if (a.branch_id !== b.branch_id) {
+          return (a.branch_id || 0) - (b.branch_id || 0);
+        }
+        return (b.id || 0) - (a.id || 0);
+      });
       
       setHalls(mappedHalls);
       setFilteredHalls(mappedHalls);
@@ -189,12 +259,24 @@ export default function HallManagementPage() {
 
     try {
       const terminal = getTerminal();
+      
+      // Super-admin: Must select a branch when creating hall
+      const branchId = formData.branch_id || (editingHall ? editingHall.branch_id : null);
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Please select a branch for this hall' });
+        return;
+      }
+      
       const data = {
         hall_id: editingHall ? editingHall.id : '', // Empty for create
         name: formData.name.trim(),
         capacity: formData.capacity ? parseInt(formData.capacity) : 0,
         terminal: terminal,
+        branch_id: branchId, // Include branch_id for super-admin
       };
+      
+      console.log('Saving hall with data:', data);
 
       const result = await apiPost('/hall_management.php', data);
 
@@ -236,6 +318,7 @@ export default function HallManagementPage() {
     setFormData({
       name: hall.name || '',
       capacity: hall.capacity || '',
+      branch_id: hall.branch_id || '',
     });
     setModalOpen(true);
   };
@@ -308,6 +391,13 @@ export default function HallManagementPage() {
       wrap: false,
     },
     {
+      header: 'Branch',
+      accessor: 'branch_name',
+      render: (row) => row.branch_name || (row.branch_id ? `Branch ${row.branch_id}` : 'Unknown'),
+      className: 'min-w-[120px]',
+      wrap: false,
+    },
+    {
       header: 'Terminal',
       accessor: 'terminal',
       className: 'w-24 text-center',
@@ -355,7 +445,7 @@ export default function HallManagementPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Hall Management</h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1">
-              Manage restaurant halls and their capacity
+              Manage restaurant halls and their capacity across all branches
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -372,7 +462,7 @@ export default function HallManagementPage() {
             <Button
               onClick={() => {
                 setEditingHall(null);
-                setFormData({ name: '', capacity: '' });
+                setFormData({ name: '', capacity: '', branch_id: '' });
                 setModalOpen(true);
               }}
               className="flex items-center gap-2 w-full sm:w-auto"
@@ -391,6 +481,28 @@ export default function HallManagementPage() {
             onClose={() => setAlert({ type: '', message: '' })}
           />
         )}
+
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">Showing halls for selected branch only</p>
+          )}
+        </div>
 
         {/* Search Bar */}
         <div className="bg-white rounded-lg shadow p-4">
@@ -490,7 +602,7 @@ export default function HallManagementPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingHall(null);
-            setFormData({ name: '', capacity: '' });
+            setFormData({ name: '', capacity: '', branch_id: '' });
             setAlert({ type: '', message: '' });
           }}
           title={editingHall ? 'Edit Hall' : 'Add New Hall'}
@@ -518,6 +630,30 @@ export default function HallManagementPage() {
               min="0"
             />
 
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Branch <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="branch_id"
+                value={formData.branch_id}
+                onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
+                required
+                disabled={!!editingHall} // Can't change branch when editing
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="">Select a branch</option>
+                {branches.map((branch) => (
+                  <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                    {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {editingHall ? 'Branch cannot be changed when editing' : 'Select which branch this hall belongs to'}
+              </p>
+            </div>
+
             {editingHall && (
               <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-600">
                 <p><strong>ID:</strong> {editingHall.id}</p>
@@ -535,7 +671,7 @@ export default function HallManagementPage() {
                 onClick={() => {
                   setModalOpen(false);
                   setEditingHall(null);
-                  setFormData({ name: '', capacity: '' });
+                  setFormData({ name: '', capacity: '', branch_id: '' });
                   setAlert({ type: '', message: '' });
                 }}
                 className="w-full sm:w-auto"

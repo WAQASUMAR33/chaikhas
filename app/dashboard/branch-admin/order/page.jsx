@@ -59,6 +59,21 @@ export default function OrderManagementPage() {
     return () => clearInterval(interval);
   }, [filter]);
 
+  // Debug: Log orders state changes
+  useEffect(() => {
+    if (orders.length > 0) {
+      console.log('📊 Orders state updated:', {
+        totalOrders: orders.length,
+        filter: filter,
+        firstOrder: orders[0] ? {
+          id: orders[0].id,
+          order_number: orders[0].order_number,
+          status: orders[0].status
+        } : null
+      });
+    }
+  }, [orders.length, filter]);
+
   // Auto-calculate 10% service charge for Dine In orders only when bill modal opens
   useEffect(() => {
     if (billModalOpen && billOrder) {
@@ -102,10 +117,36 @@ export default function OrderManagementPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid (not null, undefined, or empty string)
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Branch-admin MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Orders (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId, status: filter !== 'all' ? filter : 'all' });
+      
       const payload = { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchId  // Always include branch_id for branch-admin
       };
       if (filter !== 'all') {
         payload.status = filter;
@@ -113,69 +154,198 @@ export default function OrderManagementPage() {
       
       const result = await apiPost('/getOrders.php', payload);
       
-      // Debug: Log API response to diagnose total amount issues
-      if (result.data && Array.isArray(result.data) && result.data.length > 0) {
-        console.log('Sample order from API:', JSON.stringify(result.data[0], null, 2));
+      console.log('getOrders.php response:', result);
+      console.log('Full API response structure:', JSON.stringify(result, null, 2));
+      
+      // Handle multiple possible response structures
+      let ordersData = [];
+      
+      // Check if result.data is an array directly
+      if (result.data && Array.isArray(result.data)) {
+        ordersData = result.data;
+        console.log('✅ Found orders in result.data (array), count:', ordersData.length);
+      }
+      // Check if result.data.data is an array (nested structure)
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.data (nested array), count:', ordersData.length);
+      }
+      // Check if result.data.orders is an array
+      else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
+        ordersData = result.data.orders;
+        console.log('✅ Found orders in result.data.orders, count:', ordersData.length);
+      }
+      // Check if result.data.success and result.data.data is an array
+      else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.success.data, count:', ordersData.length);
+      }
+      // Check if result is an array directly
+      else if (Array.isArray(result)) {
+        ordersData = result;
+        console.log('✅ Found orders in result (direct array), count:', ordersData.length);
+      }
+      // Check if result.success and result.data is an array
+      else if (result.success && result.data && Array.isArray(result.data)) {
+        ordersData = result.data;
+        console.log('✅ Found orders in result.success.data, count:', ordersData.length);
+      }
+      // Try to find any array in result.data object
+      else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            ordersData = result.data[key];
+            console.log(`✅ Found orders in result.data.${key}, count:`, ordersData.length);
+            break;
+          }
+        }
       }
       
-      if (result.data && Array.isArray(result.data)) {
+      // Debug: Log sample order from API
+      if (ordersData.length > 0) {
+        console.log('✅ Orders data received:', ordersData.length, 'orders');
+        console.log('Sample order from API:', JSON.stringify(ordersData[0], null, 2));
+      } else {
+        console.warn('⚠️ No orders found in API response. Full response:', result);
+        if (result.data && typeof result.data === 'object') {
+          console.warn('result.data keys:', Object.keys(result.data));
+          // Try to log the full result.data to see structure
+          console.warn('Full result.data:', JSON.stringify(result.data, null, 2));
+        }
+      }
+      
+      if (ordersData.length > 0) {
         // Map API response - matching actual database structure
-        // Map API response - matching actual database structure
-        const mappedOrders = result.data.map((order) => {
-          const orderId = order.order_id || order.id;
-          const orderNumber = order.order_id ? `ORD-${order.order_id}` : (order.orderid || order.order_number || `ORD-${order.id || order.order_id}`);
-          
-          // Calculate total amounts with better fallback logic
-          // Try multiple field names that might contain the order total
-          const gTotalAmount = parseFloat(order.g_total_amount || order.grand_total_amount || order.total_amount || order.total || order.subtotal || 0);
-          
-          // Try multiple field names for net total
-          let netTotalAmount = parseFloat(order.net_total_amount || order.netTotal || order.net_total || order.final_amount || 0);
-          
-          // If netTotal is 0 but we have a total, use total as fallback
-          // This handles cases where bill hasn't been generated yet
-          if (netTotalAmount === 0 && gTotalAmount > 0) {
-            netTotalAmount = gTotalAmount;
-          }
-          
-          // If both are 0, try calculating from order items if available
-          if (netTotalAmount === 0 && gTotalAmount === 0 && order.items && Array.isArray(order.items)) {
-            const calculatedTotal = order.items.reduce((sum, item) => {
-              const itemTotal = parseFloat(item.total_amount || item.total || (item.price || 0) * (item.quantity || 0) || 0);
-              return sum + itemTotal;
-            }, 0);
-            if (calculatedTotal > 0) {
-              netTotalAmount = calculatedTotal;
+        const mappedOrders = ordersData
+          .filter(order => order !== null && order !== undefined) // Filter out null/undefined orders
+          .map((order, index) => {
+            try {
+              // Extract order ID - try multiple fields
+              const orderId = order.order_id || order.id || order.OrderID || index + 1;
+              
+              // Extract order number - try multiple formats
+              let orderNumber = '';
+              if (order.order_id) {
+                orderNumber = `ORD-${order.order_id}`;
+              } else if (order.orderid) {
+                orderNumber = order.orderid;
+              } else if (order.order_number) {
+                orderNumber = order.order_number;
+              } else if (order.id) {
+                orderNumber = `ORD-${order.id}`;
+              } else {
+                orderNumber = `ORD-${orderId}`;
+              }
+              
+              // Ensure orderNumber is a string
+              if (typeof orderNumber !== 'string') {
+                orderNumber = String(orderNumber);
+              }
+              
+              // Calculate total amounts with better fallback logic
+              // Try multiple field names that might contain the order total
+              const gTotalAmount = parseFloat(order.g_total_amount || order.grand_total_amount || order.total_amount || order.total || order.subtotal || 0) || 0;
+              
+              // Try multiple field names for net total
+              let netTotalAmount = parseFloat(order.net_total_amount || order.netTotal || order.net_total || order.final_amount || 0) || 0;
+              
+              // If netTotal is 0 but we have a total, use total as fallback
+              // This handles cases where bill hasn't been generated yet
+              if (netTotalAmount === 0 && gTotalAmount > 0) {
+                netTotalAmount = gTotalAmount;
+              }
+              
+              // If both are 0, try calculating from order items if available
+              if (netTotalAmount === 0 && gTotalAmount === 0 && order.items && Array.isArray(order.items)) {
+                const calculatedTotal = order.items.reduce((sum, item) => {
+                  const itemTotal = parseFloat(item.total_amount || item.total || (item.price || 0) * (item.quantity || 0) || 0);
+                  return sum + (itemTotal || 0);
+                }, 0);
+                if (calculatedTotal > 0) {
+                  netTotalAmount = calculatedTotal;
+                }
+              }
+              
+              // Extract status - try multiple field names and normalize to lowercase
+              const rawStatus = order.order_status || order.status || order.Status || 'Pending';
+              const normalizedStatus = String(rawStatus).toLowerCase().trim();
+              
+              return {
+                id: orderId,
+                order_id: orderId,
+                order_number: orderNumber,
+                orderid: order.orderid || orderNumber,
+                order_type: order.order_type || order.orderType || 'Dine In',
+                table_id: order.table_id || order.tableid || order.table_ID || '-',
+                table_number: order.table_number || order.table_id || order.table_ID || '-',
+                hall_id: order.hall_id || order.hall_ID || '-',
+                hall_name: order.hall_name || order.hall_Name || '-',
+                shop_name: order.shopname || order.shop_name || '-',
+                customer_name: order.customer_name || order.customer || '-',
+                total: gTotalAmount,
+                discount: parseFloat(order.discount_amount || order.discount || 0) || 0,
+                service_charge: parseFloat(order.service_charge || order.serviceCharge || 0) || 0,
+                netTotal: netTotalAmount,
+                status: normalizedStatus,
+                payment_mode: order.payment_mode || order.paymentMode || 'Cash',
+                created_at: order.created_at || order.date || order.createdAt || '',
+                terminal: order.terminal || terminal,
+              };
+            } catch (error) {
+              console.error('Error mapping order:', error, 'Order data:', order);
+              return null; // Return null for invalid orders, will be filtered out
             }
-          }
+          })
+          .filter(order => order !== null); // Remove any null entries from mapping errors
+        
+        console.log(`✅ Successfully mapped ${mappedOrders.length} out of ${ordersData.length} orders`);
+        
+        if (mappedOrders.length > 0) {
+          console.log('✅ Sample mapped order:', JSON.stringify(mappedOrders[0], null, 2));
+          console.log('✅ Setting orders state with', mappedOrders.length, 'orders');
+          setOrders(mappedOrders);
           
-          return {
-            id: orderId,
-            order_id: orderId,
-            order_number: orderNumber,
-            orderid: order.orderid || orderNumber, // Ensure orderid is always formatted string like "ORD-123"
-            order_type: order.order_type || 'Dine In',
-            table_id: order.table_id || order.tableid || '-',
-            table_number: order.table_number || order.table_id || '-',
-            hall_id: order.hall_id || '-',
-            hall_name: order.hall_name || '-',
-            shop_name: order.shopname || '-',
-            customer_name: order.customer_name || order.customer || '-',
-            total: gTotalAmount,
-            discount: parseFloat(order.discount_amount || order.discount || 0),
-            service_charge: parseFloat(order.service_charge || 0),
-            netTotal: netTotalAmount,
-            status: (order.order_status || order.status || 'Pending').toLowerCase(),
-            payment_mode: order.payment_mode || 'Cash',
-            created_at: order.created_at || order.date || '',
-            terminal: order.terminal || terminal,
-          };
-        });
-        setOrders(mappedOrders);
+          // Debug: Verify orders were set (will log on next render)
+          setTimeout(() => {
+            console.log('✅ Orders state should now have', mappedOrders.length, 'orders');
+          }, 100);
+          
+          setAlert({ type: '', message: '' }); // Clear any previous errors
+        } else {
+          console.error('❌ All orders failed to map. Original data:', ordersData);
+          console.error('❌ Full API result:', result);
+          setAlert({ type: 'error', message: 'Orders data format is incorrect. Please check API response structure.' });
+          setOrders([]);
+        }
       } else if (result.data && result.data.success === false) {
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load orders' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load orders';
+        console.error('❌ API returned error:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
         setOrders([]);
       } else {
+        console.warn('⚠️ No orders found in response');
+        console.warn('⚠️ Full response structure:', {
+          success: result.success,
+          dataType: typeof result.data,
+          dataKeys: result.data ? Object.keys(result.data) : null,
+          fullResult: result
+        });
+        
+        // Try one more time to find data in a different structure
+        if (result && typeof result === 'object') {
+          // Check all keys for arrays
+          for (const key in result) {
+            if (Array.isArray(result[key]) && result[key].length > 0) {
+              console.warn(`⚠️ Found array in result.${key} with ${result[key].length} items. This might be the orders data.`);
+            }
+          }
+        }
+        
+        if (!result.success && result.data && result.data.message) {
+          setAlert({ type: 'warning', message: result.data.message || 'No orders found' });
+        } else {
+          setAlert({ type: 'info', message: 'No orders found. Check console for API response details.' });
+        }
         setOrders([]);
       }
       setLoading(false);
@@ -340,19 +510,27 @@ export default function OrderManagementPage() {
           try {
             // Fetch current table details first
             const terminal = getTerminal();
-            const tablesResult = await apiPost('/get_tables.php', { terminal });
+            const branchId = getBranchId();
+            const tablesResult = await apiPost('/get_tables.php', { 
+              terminal,
+              branch_id: branchId || terminal
+            });
             if (tablesResult.data && Array.isArray(tablesResult.data)) {
               const table = tablesResult.data.find(t => t.table_id == tableId);
               if (table) {
                 // Update table status to Available
-                await apiPost('/table_management.php', {
+                console.log('Updating table status to Available for table:', tableId);
+                const updateResult = await apiPost('/table_management.php', {
                   table_id: parseInt(tableId),
                   hall_id: table.hall_id,
                   table_number: table.table_number,
                   capacity: table.capacity,
                   status: 'Available',
                   terminal: terminal,
+                  branch_id: branchId || terminal,
+                  action: 'update'
                 });
+                console.log('Table status update result:', updateResult);
               }
             }
           } catch (error) {
@@ -917,20 +1095,28 @@ export default function OrderManagementPage() {
       if (orderUpdateSuccess && orderDetails && orderDetails.order_type === 'Dine In' && orderDetails.table_id) {
         try {
           const terminal = getTerminal();
+          const branchId = getBranchId();
           // Fetch current table details
-          const tablesResult = await apiPost('/get_tables.php', { terminal });
+          const tablesResult = await apiPost('/get_tables.php', { 
+            terminal,
+            branch_id: branchId || terminal
+          });
           if (tablesResult.data && Array.isArray(tablesResult.data)) {
             const table = tablesResult.data.find(t => t.table_id == orderDetails.table_id);
             if (table) {
               // Update table status to Available
-              await apiPost('/table_management.php', {
+              console.log('Updating table status to Available for table:', orderDetails.table_id);
+              const updateResult = await apiPost('/table_management.php', {
                 table_id: parseInt(orderDetails.table_id),
                 hall_id: table.hall_id,
                 table_number: table.table_number,
                 capacity: table.capacity,
                 status: 'Available',
                 terminal: terminal,
+                branch_id: branchId || terminal,
+                action: 'update'
               });
+              console.log('Table status update result:', updateResult);
             }
           }
         } catch (error) {
@@ -1222,7 +1408,22 @@ export default function OrderManagementPage() {
 
   const filteredOrders = filter === 'all' 
     ? orders 
-    : orders.filter(order => order.status.toLowerCase() === filter.toLowerCase());
+    : orders.filter(order => {
+        const orderStatus = (order.status || '').toLowerCase().trim();
+        const filterStatus = filter.toLowerCase().trim();
+        return orderStatus === filterStatus;
+      });
+
+  // Debug: Log filtered orders
+  useEffect(() => {
+    console.log('🔍 Filtered orders debug:', {
+      filter: filter,
+      totalOrders: orders.length,
+      filteredCount: filteredOrders.length,
+      orderStatuses: orders.map(o => o.status).slice(0, 5), // First 5 statuses
+      filteredSample: filteredOrders.slice(0, 2)
+    });
+  }, [filteredOrders.length, filter, orders.length]);
 
   return (
     <AdminLayout>

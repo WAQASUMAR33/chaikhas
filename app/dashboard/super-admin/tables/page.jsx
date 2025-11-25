@@ -17,6 +17,8 @@ import { apiPost, apiDelete, getTerminal } from '@/utils/api';
 export default function TableManagementPage() {
   const [tables, setTables] = useState([]);
   const [halls, setHalls] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTable, setEditingTable] = useState(null);
@@ -25,10 +27,12 @@ export default function TableManagementPage() {
     hall_id: '',
     capacity: '',
     status: 'available', // available, occupied, reserved, maintenance
+    branch_id: '', // For super-admin to select branch
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
   useEffect(() => {
+    fetchBranches();
     fetchTables();
     fetchHalls();
     
@@ -40,37 +44,135 @@ export default function TableManagementPage() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    // Re-fetch tables and halls when branch filter changes
+    fetchTables();
+    fetchHalls();
+  }, [selectedBranchFilter]);
+
   /**
-   * Fetch all tables from API
-   * API: get_tables.php (POST with terminal parameter)
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin - Tables) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
+
+  /**
+   * Fetch all tables from API (Super-Admin)
+   * API: get_tables.php (POST with terminal, branch_id is optional for filtering)
+   * Super-admin: When branch_id is null/empty, fetch ALL tables from ALL branches
+   * API should return branch_id and branch_name with each table
    */
   const fetchTables = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_tables.php', { terminal });
       
-      // The API returns a plain JSON array
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
+      console.log('=== Fetching Tables (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_tables.php', payload);
+      
+      console.log('get_tables.php response:', result);
+      
+      let tablesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        // Map API response to match our table structure
-        const mappedTables = result.data.map((table) => ({
-          id: table.table_id,
-          table_id: table.table_id,
-          table_number: table.table_number,
-          hall_id: table.hall_id,
-          hall_name: table.hall_name || '',
-          capacity: table.capacity || 0,
-          status: table.status || 'available',
-          terminal: table.terminal || terminal,
-        }));
+        tablesData = result.data;
+        console.log('✅ Found tables in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+        console.log('✅ Found tables in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            tablesData = result.data[key];
+            console.log(`✅ Found tables in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (tablesData.length > 0) {
+        // Map API response - include branch_id and branch_name from API response
+        const mappedTables = tablesData.map((table) => {
+          const branchId = table.branch_id || table.branch_ID || null;
+          const branchName = table.branch_name || table.branch_Name || null;
+          
+          // Try to find branch name from branches list if not provided by API
+          let displayBranchName = branchName;
+          if (!displayBranchName && branchId) {
+            const branch = branches.find(b => (b.branch_id || b.id || b.ID) == branchId);
+            displayBranchName = branch ? (branch.name || branch.branch_name || branch.title || `Branch ${branchId}`) : `Branch ${branchId}`;
+          } else if (!displayBranchName && branchId) {
+            displayBranchName = `Branch ${branchId}`;
+          }
+          
+          return {
+            id: table.table_id || table.id || table.TableID,
+            table_id: table.table_id || table.id || table.TableID,
+            table_number: table.table_number || table.table_name || table.number || '',
+            hall_id: table.hall_id || table.HallID || null,
+            hall_name: table.hall_name || table.hall_Name || '',
+            capacity: table.capacity || table.Capacity || 0,
+            status: table.status || table.Status || 'available',
+            terminal: table.terminal || terminal,
+            branch_id: branchId,
+            branch_name: displayBranchName || 'Unknown Branch',
+          };
+        }).filter(table => table.table_id); // Filter out invalid entries
+        
+        // Sort by branch_id first, then table_id
+        mappedTables.sort((a, b) => {
+          if (a.branch_id !== b.branch_id) {
+            return (a.branch_id || 0) - (b.branch_id || 0);
+          }
+          return (a.table_id || 0) - (b.table_id || 0);
+        });
+        
+        console.log('✅ Mapped tables with branch info:', mappedTables);
         setTables(mappedTables);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
       } else if (result.data && result.data.success === false) {
         // Error response
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load tables' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load tables';
+        console.error('❌ API returned error:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
         setTables([]);
       } else {
         // Empty result
+        console.warn('⚠️ No tables found');
         setTables([]);
+        if (!result.success) {
+          setAlert({ type: 'warning', message: 'No tables found. Click "Add Table" to create one.' });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -82,27 +184,67 @@ export default function TableManagementPage() {
   };
 
   /**
-   * Fetch all halls from API
-   * API: get_halls.php (POST with terminal parameter)
+   * Fetch all halls from API (Super-Admin)
+   * Fetch all halls or filter by selected branch
    */
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
       
-      // The API returns a plain JSON array
+      // Build payload - include branch_id only if filtering by branch
+      const payload = { terminal };
+      if (selectedBranchFilter) {
+        payload.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all
+      
+      console.log('=== Fetching Halls for Tables (Super Admin) ===');
+      console.log('Params:', payload);
+      
+      const result = await apiPost('/get_halls.php', payload);
+      
+      console.log('get_halls.php response:', result);
+      
+      let hallsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        const mappedHalls = result.data.map((hall) => ({
-          id: hall.hall_id,
-          hall_id: hall.hall_id,
-          name: hall.name,
-        }));
-        setHalls(mappedHalls);
+        hallsData = result.data;
+        console.log('✅ Found halls in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+        console.log('✅ Found halls in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            hallsData = result.data[key];
+            console.log(`✅ Found halls in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (hallsData.length > 0) {
+        const mappedHalls = hallsData.map((hall) => ({
+          id: hall.hall_id || hall.id || hall.HallID,
+          hall_id: hall.hall_id || hall.id || hall.HallID,
+          name: hall.name || hall.hall_name || hall.Name || '',
+          branch_id: hall.branch_id || null,
+        })).filter(hall => hall.hall_id); // Filter out invalid entries
+        
+        // Filter by selected branch if filter is set
+        const filteredHalls = selectedBranchFilter 
+          ? mappedHalls.filter(hall => hall.branch_id == selectedBranchFilter)
+          : mappedHalls;
+        
+        console.log('✅ Mapped halls:', filteredHalls);
+        setHalls(filteredHalls);
       } else {
+        console.warn('⚠️ No halls found');
         setHalls([]);
       }
     } catch (error) {
-      console.error('Failed to load halls:', error);
+      console.error('❌ Failed to load halls:', error);
       setHalls([]);
     }
   };
@@ -117,6 +259,15 @@ export default function TableManagementPage() {
 
     try {
       const terminal = getTerminal();
+      
+      // Super-admin: Must select a branch when creating table
+      const branchId = formData.branch_id || (editingTable ? editingTable.branch_id : null);
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Please select a branch for this table' });
+        return;
+      }
+      
       const data = {
         table_id: editingTable ? editingTable.table_id : '', // Empty for create
         hall_id: formData.hall_id,
@@ -124,7 +275,10 @@ export default function TableManagementPage() {
         capacity: formData.capacity || 0,
         status: formData.status,
         terminal: terminal,
+        branch_id: branchId, // Include branch_id for super-admin
       };
+      
+      console.log('Saving table with data:', data);
 
       const result = await apiPost('/table_management.php', data);
 
@@ -135,6 +289,7 @@ export default function TableManagementPage() {
           hall_id: '',
           capacity: '',
           status: 'available',
+          branch_id: '',
         });
         setEditingTable(null);
         setModalOpen(false);
@@ -158,6 +313,7 @@ export default function TableManagementPage() {
       hall_id: table.hall_id,
       capacity: table.capacity,
       status: table.status || 'available',
+      branch_id: table.branch_id || '',
     });
     setModalOpen(true);
   };
@@ -202,6 +358,13 @@ export default function TableManagementPage() {
    */
   const columns = [
     { header: 'ID', accessor: 'table_id' },
+    {
+      header: 'Branch',
+      accessor: 'branch_name',
+      render: (row) => row.branch_name || (row.branch_id ? `Branch ${row.branch_id}` : 'Unknown'),
+      className: 'min-w-[120px]',
+      wrap: false,
+    },
     { header: 'Table Number', accessor: 'table_number' },
     { header: 'Hall', accessor: 'hall_name' },
     { header: 'Capacity', accessor: 'capacity' },
@@ -244,7 +407,7 @@ export default function TableManagementPage() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Table Management</h1>
-            <p className="text-gray-600 mt-1">Manage tables and assign them to halls</p>
+            <p className="text-gray-600 mt-1">Manage tables and assign them to halls across all branches</p>
           </div>
           <Button
             onClick={() => {
@@ -254,6 +417,7 @@ export default function TableManagementPage() {
                 hall_id: '',
                 capacity: '',
                 status: 'available',
+                branch_id: '',
               });
               setModalOpen(true);
             }}
@@ -270,6 +434,28 @@ export default function TableManagementPage() {
             onClose={() => setAlert({ type: '', message: '' })}
           />
         )}
+
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">Showing tables for selected branch only</p>
+          )}
+        </div>
 
         {/* Tables Table */}
         {loading ? (
@@ -296,6 +482,7 @@ export default function TableManagementPage() {
               hall_id: '',
               capacity: '',
               status: 'available',
+              branch_id: '',
             });
           }}
           title={editingTable ? 'Edit Table' : 'Add New Table'}
@@ -313,6 +500,30 @@ export default function TableManagementPage() {
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Branch <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="branch_id"
+                value={formData.branch_id}
+                onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
+                required
+                disabled={!!editingTable} // Can't change branch when editing
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="">Select a branch</option>
+                {branches.map((branch) => (
+                  <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                    {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {editingTable ? 'Branch cannot be changed when editing' : 'Select which branch this table belongs to'}
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Hall <span className="text-red-500">*</span>
               </label>
               <select
@@ -320,15 +531,21 @@ export default function TableManagementPage() {
                 value={formData.hall_id}
                 onChange={(e) => setFormData({ ...formData, hall_id: e.target.value })}
                 required
-                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                disabled={!formData.branch_id && !editingTable} // Disable if no branch selected (when creating)
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="">Select a hall</option>
-                {halls.map((hall) => (
-                  <option key={hall.hall_id} value={hall.hall_id}>
-                    {hall.name}
-                  </option>
-                ))}
+                {halls
+                  .filter(hall => !formData.branch_id || !editingTable || hall.branch_id == formData.branch_id || !hall.branch_id)
+                  .map((hall) => (
+                    <option key={hall.hall_id} value={hall.hall_id}>
+                      {hall.name} {hall.branch_id ? `(Branch ${hall.branch_id})` : ''}
+                    </option>
+                  ))}
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {!formData.branch_id && !editingTable ? 'Select a branch first' : 'Select which hall this table belongs to'}
+              </p>
             </div>
 
             <Input
@@ -370,6 +587,7 @@ export default function TableManagementPage() {
                     hall_id: '',
                     capacity: '',
                     status: 'available',
+                    branch_id: '',
                   });
                 }}
               >

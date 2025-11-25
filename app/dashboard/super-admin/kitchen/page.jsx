@@ -39,20 +39,26 @@ export default function KitchenManagementPage() {
   });
   const [showKitchenManagement, setShowKitchenManagement] = useState(false);
   const [branches, setBranches] = useState([]);
-  const [selectedBranchId, setSelectedBranchId] = useState(getBranchId() || '');
+  const [selectedBranchId, setSelectedBranchId] = useState('');
 
   useEffect(() => {
-    fetchBranches().then(() => {
-      // After branches are loaded, fetch kitchens
+    const initialize = async () => {
+      // Fetch branches in background (non-blocking)
+      fetchBranches().catch(err => {
+        console.warn('Failed to fetch branches, but continuing:', err);
+      });
+      
+      // Immediately try to fetch kitchens for all branches (no branch selected)
+      // Don't wait for branches - kitchen API should handle null branch_id
       fetchKitchens();
-    });
+    };
+    initialize();
   }, []);
 
   useEffect(() => {
     // Refetch kitchens when branch selection changes
-    if (branches.length > 0) {
-      fetchKitchens();
-    }
+    // Don't wait for branches.length, fetch immediately
+    fetchKitchens();
   }, [selectedBranchId]);
 
   useEffect(() => {
@@ -136,81 +142,144 @@ export default function KitchenManagementPage() {
         }
       } else {
         // Fetch for all branches (when no branch is selected)
+        // Try to fetch all kitchens directly first (API should handle null branch_id)
+        console.log('No branch selected - attempting to fetch all kitchens directly');
+        
+        try {
+          // Try fetching all kitchens directly (without branch_id)
+          const allKitchensResult = await apiPost('/kitchen_management.php', { 
+            terminal,
+            branch_id: null,  // Explicitly null to get all
+            action: 'get' 
+          });
+          
+          console.log('Direct all kitchens fetch result:', allKitchensResult);
+          
+          let allKitchens = [];
+          
+          // Handle response structure
+          if (Array.isArray(allKitchensResult.data)) {
+            allKitchens = allKitchensResult.data;
+          } else if (allKitchensResult.data && Array.isArray(allKitchensResult.data.data)) {
+            allKitchens = allKitchensResult.data.data;
+          } else if (allKitchensResult.data && allKitchensResult.data.success && Array.isArray(allKitchensResult.data.data)) {
+            allKitchens = allKitchensResult.data.data;
+          } else if (allKitchensResult.data && Array.isArray(allKitchensResult.data.kitchens)) {
+            allKitchens = allKitchensResult.data.kitchens;
+          } else if (allKitchensResult.data && typeof allKitchensResult.data === 'object') {
+            for (const key in allKitchensResult.data) {
+              if (Array.isArray(allKitchensResult.data[key])) {
+                allKitchens = allKitchensResult.data[key];
+                break;
+              }
+            }
+          }
+          
+          // If we got kitchens, use them
+          if (allKitchens.length > 0) {
+            console.log(`Found ${allKitchens.length} kitchens directly from API`);
+            
+            // Ensure each kitchen has branch_id and branch_name
+            const branchesList = branches.length > 0 ? branches : await fetchBranches().catch(() => []);
+            const mappedKitchens = allKitchens.map(k => {
+              const branchId = k.branch_id;
+              const branch = branchesList.find(b => (b.branch_id || b.id || b.ID) == branchId);
+              return {
+                ...k,
+                branch_id: k.branch_id || branchId,
+                branch_name: branch ? (branch.branch_name || branch.name || branch.Name) : `Branch ${branchId || 'Unknown'}`
+              };
+            });
+            
+            setKitchens(mappedKitchens);
+            if (!selectedKitchen && mappedKitchens.length > 0) {
+              setSelectedKitchen(mappedKitchens[0].kitchen_id);
+            }
+            setLoading(false);
+            return;
+          }
+        } catch (error) {
+          console.warn('Direct fetch failed, trying branch-by-branch approach:', error);
+        }
+        
+        // Fallback: Fetch branch by branch
+        console.log('Fallback: Fetching kitchens branch by branch');
         const allKitchens = [];
         
         // Fetch branches first if not loaded
         let branchesList = branches;
         if (branchesList.length === 0) {
           console.log('Branches not loaded yet, fetching...');
-          branchesList = await fetchBranches();
+          branchesList = await fetchBranches().catch(() => []);
         }
         
-        if (branchesList.length === 0) {
-          console.warn('No branches found, cannot fetch kitchens');
-          setKitchens([]);
-          setLoading(false);
-          setAlert({ type: 'warning', message: 'No branches found. Please create a branch first.' });
-          return;
-        }
-        
-        console.log(`Fetching kitchens for ${branchesList.length} branches`);
-        
-        for (const branch of branchesList) {
-          try {
-            const branchResult = await apiPost('/kitchen_management.php', { 
-              terminal,
-              branch_id: branch.branch_id || branch.id || branch.ID,
-              action: 'get'
-            });
-            
-            let branchKitchens = [];
-            
-            // Handle multiple response structures
-            if (Array.isArray(branchResult.data)) {
-              branchKitchens = branchResult.data;
-            } else if (branchResult.data && Array.isArray(branchResult.data.data)) {
-              branchKitchens = branchResult.data.data;
-            } else if (branchResult.data && branchResult.data.success && Array.isArray(branchResult.data.data)) {
-              branchKitchens = branchResult.data.data;
-            } else if (branchResult.data && Array.isArray(branchResult.data.kitchens)) {
-              branchKitchens = branchResult.data.kitchens;
-            } else if (branchResult.data && typeof branchResult.data === 'object') {
-              // Try to extract array from any property
-              for (const key in branchResult.data) {
-                if (Array.isArray(branchResult.data[key])) {
-                  branchKitchens = branchResult.data[key];
-                  break;
+        // If we have branches, fetch kitchens for each
+        if (branchesList.length > 0) {
+          console.log(`Fetching kitchens for ${branchesList.length} branches`);
+          
+          for (const branch of branchesList) {
+            try {
+              const branchResult = await apiPost('/kitchen_management.php', { 
+                terminal,
+                branch_id: branch.branch_id || branch.id || branch.ID,
+                action: 'get'
+              });
+              
+              let branchKitchens = [];
+              
+              // Handle multiple response structures
+              if (Array.isArray(branchResult.data)) {
+                branchKitchens = branchResult.data;
+              } else if (branchResult.data && Array.isArray(branchResult.data.data)) {
+                branchKitchens = branchResult.data.data;
+              } else if (branchResult.data && branchResult.data.success && Array.isArray(branchResult.data.data)) {
+                branchKitchens = branchResult.data.data;
+              } else if (branchResult.data && Array.isArray(branchResult.data.kitchens)) {
+                branchKitchens = branchResult.data.kitchens;
+              } else if (branchResult.data && typeof branchResult.data === 'object') {
+                // Try to extract array from any property
+                for (const key in branchResult.data) {
+                  if (Array.isArray(branchResult.data[key])) {
+                    branchKitchens = branchResult.data[key];
+                    break;
+                  }
                 }
               }
+              
+              // Add branch_id and branch_name to each kitchen for identification
+              const branchId = branch.branch_id || branch.id || branch.ID;
+              branchKitchens = branchKitchens.map(k => ({ 
+                ...k, 
+                branch_id: k.branch_id || branchId,
+                branch_name: branch.branch_name || branch.name || branch.Name || `Branch ${branchId}`
+              }));
+              
+              allKitchens.push(...branchKitchens);
+              console.log(`Found ${branchKitchens.length} kitchens for branch ${branchId} (${branch.branch_name || branch.name})`);
+            } catch (error) {
+              const branchId = branch.branch_id || branch.id || branch.ID;
+              console.error(`Error fetching kitchens for branch ${branchId}:`, error);
             }
-            
-            // Add branch_id and branch_name to each kitchen for identification
-            const branchId = branch.branch_id || branch.id || branch.ID;
-            branchKitchens = branchKitchens.map(k => ({ 
-              ...k, 
-              branch_id: k.branch_id || branchId,
-              branch_name: branch.branch_name || branch.name || branch.Name || `Branch ${branchId}`
-            }));
-            
-            allKitchens.push(...branchKitchens);
-            console.log(`Found ${branchKitchens.length} kitchens for branch ${branchId} (${branch.branch_name || branch.name})`);
-          } catch (error) {
-            const branchId = branch.branch_id || branch.id || branch.ID;
-            console.error(`Error fetching kitchens for branch ${branchId}:`, error);
           }
-        }
-        
-        console.log(`Total kitchens found across all branches: ${allKitchens.length}`);
-        
-        if (allKitchens.length > 0) {
-          setKitchens(allKitchens);
-          if (!selectedKitchen) {
-            setSelectedKitchen(allKitchens[0].kitchen_id);
+          
+          console.log(`Total kitchens found across all branches: ${allKitchens.length}`);
+          
+          if (allKitchens.length > 0) {
+            setKitchens(allKitchens);
+            if (!selectedKitchen) {
+              setSelectedKitchen(allKitchens[0].kitchen_id);
+            }
+          } else {
+            setKitchens([]);
+            setAlert({ type: 'info', message: 'No kitchens found. Click "Add Kitchen" to create one.' });
           }
         } else {
+          // No branches available, but try to fetch kitchens anyway (might work)
+          console.log('No branches available, but attempting to fetch kitchens anyway');
           setKitchens([]);
-          setAlert({ type: 'warning', message: 'No kitchens found in any branch. Click "Add Kitchen" to create one.' });
+          setAlert({ type: 'info', message: 'No branches found. You can still add kitchens if the API supports it.' });
         }
+        
         setLoading(false);
         return;
       }
