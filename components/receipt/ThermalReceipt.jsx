@@ -35,7 +35,7 @@ function LogoWithFallback() {
 
   return (
     <img 
-      src="/logo.png" 
+      src="/assets/CHAIKHAS.PNG" 
       alt="Restaurant Khas Logo" 
       style={{
         maxWidth: '60mm',
@@ -51,22 +51,39 @@ function LogoWithFallback() {
   );
 }
 
-export default function ThermalReceipt({ order, items, branchName = '' }) {
+export default function ThermalReceipt({ order, items, branchName = '', showPaidAmount = false }) {
   // Extract order data with fallbacks
   const orderId = order?.order_id || order?.id || order?.orderid || 'N/A';
   const orderNumber = order?.orderid || (orderId !== 'N/A' ? `ORD-${orderId}` : 'N/A');
   const orderType = order?.order_type || order?.orderType || 'Dine In';
-  const orderDate = order?.created_at || order?.date || order?.createdAt || new Date().toISOString();
+  const orderDate = order?.created_at || order?.date || order?.createdAt || order?.created_at || new Date().toISOString();
   const formattedDate = formatDateTime(orderDate) || new Date(orderDate).toLocaleString();
   
-  // Calculate totals
-  const subtotal = parseFloat(order?.g_total_amount || order?.total || order?.subtotal || 0);
-  const serviceCharge = parseFloat(order?.service_charge || order?.serviceCharge || 0);
-  const discount = parseFloat(order?.discount_amount || order?.discount || 0);
-  const netTotal = parseFloat(order?.net_total_amount || order?.netTotal || order?.net_total || order?.final_amount || subtotal);
-  
-  // Get items array
+  // Calculate totals from items if order totals are missing
   const orderItems = items || order?.items || [];
+  let calculatedSubtotal = 0;
+  
+  if (orderItems.length > 0) {
+    calculatedSubtotal = orderItems.reduce((sum, item) => {
+      const itemPrice = parseFloat(item.price || item.rate || item.unit_price || 0);
+      const itemQty = parseInt(item.quantity || item.qty || item.qnty || 1);
+      const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || (itemPrice * itemQty));
+      return sum + itemTotal;
+    }, 0);
+  }
+  
+  // Use order totals if available, otherwise calculate from items
+  const subtotal = parseFloat(order?.g_total_amount || order?.total || order?.subtotal || calculatedSubtotal);
+  const serviceCharge = parseFloat(order?.service_charge || order?.serviceCharge || 0);
+  const discount = parseFloat(order?.discount_amount || order?.discount || order?.discount_amount || 0);
+  const netTotal = parseFloat(order?.net_total_amount || order?.netTotal || order?.net_total || order?.grand_total || order?.final_amount || (subtotal + serviceCharge - discount));
+  
+  // Payment information
+  const paymentMethod = order?.payment_method || order?.payment_mode || 'Cash';
+  const paymentStatus = order?.payment_status || 'Unpaid';
+  const cashReceived = parseFloat(order?.cash_received || 0);
+  const change = parseFloat(order?.change || 0);
+  const billId = order?.bill_id || null;
   
   // Format order type for display
   const displayOrderType = orderType === 'Dine In' ? 'Dine-In' : 
@@ -81,12 +98,13 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
           width: 80mm;
           max-width: 80mm;
           margin: 0 auto;
-          padding: 10px;
+          padding: 12px;
           background: white;
           font-family: 'Courier New', monospace;
           font-size: 12px;
-          line-height: 1.4;
+          line-height: 1.5;
           color: #000;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         
         @media print {
@@ -128,8 +146,8 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
         .receipt-header {
           text-align: center;
           margin-bottom: 15px;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
+          border-bottom: 2px solid #FF5F15;
+          padding-bottom: 12px;
         }
         
         .restaurant-name {
@@ -138,12 +156,14 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
           letter-spacing: 1px;
           margin-bottom: 5px;
           text-transform: uppercase;
+          color: #FF5F15;
         }
         
         .branch-name {
           font-size: 14px;
           font-weight: bold;
           margin-bottom: 8px;
+          color: #333;
         }
         
         .receipt-info {
@@ -175,25 +195,31 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
         }
         
         .items-table thead {
-          border-top: 1px solid #000;
-          border-bottom: 1px solid #000;
+          border-top: 2px solid #FF5F15;
+          border-bottom: 2px solid #FF5F15;
+          background: #fff5f0;
         }
         
         .items-table th {
           text-align: left;
-          padding: 5px 2px;
+          padding: 6px 3px;
           font-weight: bold;
           font-size: 11px;
           text-transform: uppercase;
+          color: #FF5F15;
         }
         
         .items-table td {
-          padding: 4px 2px;
+          padding: 5px 3px;
           font-size: 11px;
         }
         
         .items-table tbody tr {
-          border-bottom: 1px dotted #ccc;
+          border-bottom: 1px dotted #ddd;
+        }
+        
+        .items-table tbody tr:hover {
+          background: #fffaf7;
         }
         
         .item-name {
@@ -240,22 +266,25 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
         }
         
         .net-total {
-          border-top: 2px solid #000;
-          border-bottom: 2px solid #000;
-          padding: 8px 0;
-          margin: 10px 0;
-          font-size: 14px;
+          border-top: 2px solid #FF5F15;
+          border-bottom: 2px solid #FF5F15;
+          padding: 10px 0;
+          margin: 12px 0;
+          font-size: 15px;
           font-weight: bold;
+          background: #fff5f0;
+          color: #FF5F15;
         }
         
         .thank-you {
           text-align: center;
           margin-top: 20px;
           padding-top: 15px;
-          border-top: 1px dashed #000;
-          font-size: 14px;
+          border-top: 2px dashed #FF5F15;
+          font-size: 15px;
           font-weight: bold;
-          letter-spacing: 2px;
+          letter-spacing: 3px;
+          color: #FF5F15;
         }
         
         .divider {
@@ -311,10 +340,12 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
             </thead>
             <tbody>
               {orderItems.map((item, index) => {
-                const itemName = item.dish_name || item.name || item.title || 'Item';
-                const itemPrice = parseFloat(item.price || item.rate || 0);
-                const itemQty = parseInt(item.quantity || item.qty || 1);
-                const itemTotal = parseFloat(item.total_amount || item.total || itemPrice * itemQty);
+                // Extract item data with multiple fallbacks
+                const itemName = item.dish_name || item.name || item.title || item.item_name || 'Item';
+                const itemPrice = parseFloat(item.price || item.rate || item.unit_price || 0);
+                const itemQty = parseInt(item.quantity || item.qty || item.qnty || 1);
+                // Calculate total if not provided
+                const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || (itemPrice * itemQty));
                 
                 // Truncate long item names
                 const displayName = itemName.length > 25 ? itemName.substring(0, 22) + '...' : itemName;
@@ -360,10 +391,39 @@ export default function ThermalReceipt({ order, items, branchName = '' }) {
             <span className="total-value">{formatPKR(netTotal)}</span>
           </div>
           
-          {order?.payment_mode && (
-            <div className="total-row" style={{ marginTop: '10px', fontSize: '10px' }}>
-              <span className="total-label">Payment:</span>
-              <span className="total-value">{order.payment_mode}</span>
+          {/* Payment Information */}
+          {paymentMethod && (
+            <div className="total-row" style={{ marginTop: '10px', fontSize: '11px', borderTop: '1px solid #ddd', paddingTop: '8px' }}>
+              <span className="total-label">Payment Method:</span>
+              <span className="total-value">{paymentMethod}</span>
+            </div>
+          )}
+          
+          {/* Show paid amount if payment is completed */}
+          {showPaidAmount && paymentStatus === 'Paid' && cashReceived > 0 && (
+            <>
+              <div className="total-row" style={{ fontSize: '11px', marginTop: '5px' }}>
+                <span className="total-label">Amount Paid:</span>
+                <span className="total-value" style={{ color: '#059669', fontWeight: 'bold' }}>{formatPKR(cashReceived)}</span>
+              </div>
+              {change > 0 && (
+                <div className="total-row" style={{ fontSize: '11px' }}>
+                  <span className="total-label">Change Returned:</span>
+                  <span className="total-value" style={{ color: '#059669' }}>{formatPKR(change)}</span>
+                </div>
+              )}
+              <div className="total-row" style={{ fontSize: '11px', marginTop: '5px', paddingTop: '5px', borderTop: '1px dashed #ccc' }}>
+                <span className="total-label">Payment Status:</span>
+                <span className="total-value" style={{ color: '#059669', fontWeight: 'bold' }}>✓ PAID</span>
+              </div>
+            </>
+          )}
+          
+          {/* Bill ID if available */}
+          {billId && (
+            <div className="total-row" style={{ fontSize: '10px', marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #ccc', color: '#666' }}>
+              <span className="total-label">Bill ID:</span>
+              <span className="total-value">#{billId}</span>
             </div>
           )}
         </div>

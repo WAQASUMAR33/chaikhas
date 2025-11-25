@@ -407,16 +407,44 @@ export default function KitchenManagementPage() {
    */
   const updateItemStatus = async (itemId, newStatus) => {
     try {
+      const terminal = getTerminal();
+      const branchId = getBranchId();
+      
+      console.log('=== Updating Item Status ===');
+      console.log('Item ID:', itemId);
+      console.log('New Status:', newStatus);
+      
+      // Try multiple parameter formats for maximum compatibility
       const result = await apiPost('/update_kitchen_item_status.php', {
         id: itemId,
-        status: newStatus
+        item_id: itemId,
+        order_item_id: itemId,
+        status: newStatus,
+        kitchen_status: newStatus,
+        terminal: terminal,
+        branch_id: branchId || 1
       });
       
-      if (result.success) {
-        setAlert({ type: 'success', message: 'Item status updated successfully!' });
-        fetchKitchenOrders(); // Refresh
+      console.log('Update status result:', result);
+      
+      // Check if update was successful
+      const isSuccess = result.success && (
+        result.data?.success === true ||
+        result.data?.success === 'true' ||
+        (result.data?.message && result.data.message.toLowerCase().includes('success')) ||
+        (result.data?.status && result.data.status === 'success')
+      );
+      
+      if (isSuccess) {
+        setAlert({ type: 'success', message: result.data?.message || `Item marked as ${newStatus} successfully!` });
+        // Refresh orders immediately
+        setTimeout(() => {
+          fetchKitchenOrders();
+        }, 500);
       } else {
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to update status' });
+        const errorMsg = result.data?.message || result.data?.error || 'Failed to update status';
+        console.error('Status update failed:', errorMsg);
+        setAlert({ type: 'error', message: errorMsg });
       }
     } catch (error) {
       console.error('Error updating item status:', error);

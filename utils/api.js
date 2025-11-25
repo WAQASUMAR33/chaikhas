@@ -313,6 +313,108 @@ export const apiPost = async (endpoint, body, options = {}) => {
       data = JSON.parse(text);
       devLog('API Response:', normalizedEndpoint, data);
       
+      // Check if response is an empty object
+      if (data && typeof data === 'object' && Object.keys(data).length === 0) {
+        // For endpoints that return arrays (like get_tables.php), empty object means no results
+        if (normalizedEndpoint.includes('get_tables') || 
+            normalizedEndpoint.includes('get_halls') || 
+            normalizedEndpoint.includes('get_') && normalizedEndpoint.includes('.php')) {
+          // Return empty array for list endpoints
+          devLog('Empty object response from', normalizedEndpoint, '- treating as empty array');
+          return {
+            success: true,
+            data: [],
+            status: response.status || 200
+          };
+        }
+        
+        // For login endpoints, empty object means invalid credentials
+        if (normalizedEndpoint.includes('login')) {
+          devError('Empty object response from', normalizedEndpoint);
+          return {
+            success: false,
+            data: {
+              success: false,
+              message: 'Invalid username or password',
+              error: 'Server returned an empty response. This usually means invalid credentials or a server configuration issue.',
+              details: 'The API returned an empty object. This typically indicates:\n1. Invalid username or password\n2. Server-side error that was not properly handled\n3. Database query returned no results\n\nPlease check your credentials and try again.',
+              isEmptyResponse: true
+            },
+            status: response.status || 401
+          };
+        }
+        
+        // For other endpoints, log warning but don't treat as error
+        devLog('Empty object response from', normalizedEndpoint, '- may indicate no results');
+        return {
+          success: response.ok,
+          data: {},
+          status: response.status || 200
+        };
+      }
+      
+      // Check for database connection errors in the response
+      if (data && typeof data === 'object') {
+        // Check for common database error patterns
+        const errorText = JSON.stringify(data).toLowerCase();
+        if (errorText.includes('access denied') || 
+            errorText.includes('using password: no') ||
+            errorText.includes('mysql') && errorText.includes('denied') ||
+            errorText.includes('database connection') ||
+            errorText.includes('mysqli_connect') ||
+            errorText.includes('connection failed')) {
+          
+          // This is a database connection error
+          devError('Database connection error detected in API response');
+          return {
+            success: false,
+            data: {
+              success: false,
+              message: 'Database Connection Error',
+              error: 'The server cannot connect to the database. Please check your database configuration.',
+              details: `Database Error: ${data.message || data.error || 'Access denied for user. Check database credentials in PHP config file.'}\n\nTo fix this:\n1. Open your PHP database configuration file (usually config.php or database.php)\n2. Ensure MySQL username and password are correctly set\n3. Verify MySQL service is running in WAMP\n4. Check database credentials match your MySQL setup\n\nCommon location: C:\\wamp64\\www\\restuarent\\api\\config.php`,
+              isDatabaseError: true,
+              rawResponse: data
+            },
+            status: response.status || 500
+          };
+        }
+        
+        // Check for empty error objects or success: false without message
+        if (!data.success) {
+          // If it's just { success: false } or empty object, provide helpful message
+          const hasMessage = data.message || data.error || data.details || data.msg;
+          if (!hasMessage || Object.keys(data).length <= 1) {
+            // Check if this is a login endpoint - provide specific message
+            if (normalizedEndpoint.includes('login')) {
+              return {
+                success: false,
+                data: {
+                  success: false,
+                  message: 'Invalid username or password',
+                  error: 'The credentials you entered are incorrect. Please check your username and password and try again.',
+                  details: 'Login failed. This usually means:\n1. Username or password is incorrect\n2. User account does not exist\n3. Account may be disabled\n\nPlease verify your credentials and try again.',
+                  isEmptyResponse: true
+                },
+                status: response.status || 401
+              };
+            }
+            
+            return {
+              success: false,
+              data: {
+                success: false,
+                message: 'Server Error: Empty response received',
+                error: 'The server returned an empty error response. This usually indicates a database connection issue or PHP error.',
+                details: 'Please check:\n1. PHP error logs in WAMP\n2. Database connection settings\n3. Ensure MySQL service is running\n\nCheck: C:\\wamp64\\logs\\php_error.log',
+                isDatabaseError: true
+              },
+              status: response.status || 500
+            };
+          }
+        }
+      }
+      
       // Even if response.ok is false, if we got valid JSON, return it
       // The API might return { success: false, message: "..." } which is valid
       return { 
@@ -321,13 +423,38 @@ export const apiPost = async (endpoint, body, options = {}) => {
         status: response.status 
       };
     } catch (parseError) {
-      // If response is not valid JSON, it might be an HTML error
+      // If response is not valid JSON, it might be an HTML error or PHP error
       devError('Invalid JSON response from', normalizedEndpoint, ':', text.substring(0, 200));
+      
+      // Check if the text contains database error messages
+      const lowerText = text.toLowerCase();
+      if (lowerText.includes('access denied') || 
+          lowerText.includes('using password: no') ||
+          lowerText.includes('mysql') && (lowerText.includes('denied') || lowerText.includes('error')) ||
+          lowerText.includes('mysqli_connect') ||
+          lowerText.includes('database connection')) {
+        
+        return {
+          success: false,
+          data: {
+            success: false,
+            message: 'Database Connection Error',
+            error: 'The server cannot connect to the database. The response contains database error information.',
+            details: `Database Error Detected in Server Response\n\nThis indicates your PHP API cannot connect to MySQL.\n\nTo fix:\n1. Open your PHP database config file (usually config.php or database.php)\n2. Add or update MySQL password:\n   - Username: root (or your MySQL username)\n   - Password: [your MySQL password]\n3. Verify MySQL service is running in WAMP (green icon)\n4. Test connection in phpMyAdmin\n\nCommon location: C:\\wamp64\\www\\restuarent\\api\\config.php\n\nError details: ${text.substring(0, 300)}`,
+            isDatabaseError: true,
+            rawResponse: text.substring(0, 500)
+          },
+          status: response.status || 500
+        };
+      }
+      
       return {
         success: false,
         data: { 
           success: false,
           message: 'Invalid response from server. Please check server logs.',
+          error: 'Server returned non-JSON response. This might be a PHP error or database connection issue.',
+          details: `The server returned HTML or plain text instead of JSON.\n\nPossible causes:\n1. PHP error (check error logs)\n2. Database connection error\n3. Server configuration issue\n\nCheck: C:\\wamp64\\logs\\php_error.log\n\nResponse preview: ${text.substring(0, 300)}`,
           rawResponse: text.substring(0, 500), // Include first 500 chars for debugging
           endpoint: normalizedEndpoint
         },

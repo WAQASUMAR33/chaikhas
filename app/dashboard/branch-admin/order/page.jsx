@@ -13,9 +13,10 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
-import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
+import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign, Calendar } from 'lucide-react';
+import ThermalReceipt from '@/components/receipt/ThermalReceipt';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -24,6 +25,9 @@ export default function OrderManagementPage() {
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
+  const [dateFilter, setDateFilter] = useState('today'); // today, week, month, custom
+  const [customDate, setCustomDate] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -57,7 +61,7 @@ export default function OrderManagementPage() {
     // Auto-refresh every 30 seconds to show new orders
     const interval = setInterval(fetchOrders, 30000);
     return () => clearInterval(interval);
-  }, [filter]);
+  }, [filter, dateFilter, customDate]);
 
   // Debug: Log orders state changes
   useEffect(() => {
@@ -144,6 +148,31 @@ export default function OrderManagementPage() {
       console.log('=== Fetching Orders (Branch Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId, status: filter !== 'all' ? filter : 'all' });
       
+      // Calculate date range based on filter
+      let fromDate = '';
+      let toDate = '';
+      
+      if (dateFilter === 'today') {
+        const today = new Date();
+        fromDate = today.toISOString().split('T')[0];
+        toDate = today.toISOString().split('T')[0];
+      } else if (dateFilter === 'week') {
+        const today = new Date();
+        const weekAgo = new Date(today);
+        weekAgo.setDate(today.getDate() - 7);
+        fromDate = weekAgo.toISOString().split('T')[0];
+        toDate = today.toISOString().split('T')[0];
+      } else if (dateFilter === 'month') {
+        const today = new Date();
+        const monthAgo = new Date(today);
+        monthAgo.setMonth(today.getMonth() - 1);
+        fromDate = monthAgo.toISOString().split('T')[0];
+        toDate = today.toISOString().split('T')[0];
+      } else if (dateFilter === 'custom' && customDate) {
+        fromDate = customDate;
+        toDate = customDate;
+      }
+      
       const payload = { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
@@ -151,6 +180,12 @@ export default function OrderManagementPage() {
       if (filter !== 'all') {
         payload.status = filter;
       }
+      if (fromDate && toDate) {
+        payload.from_date = fromDate;
+        payload.to_date = toDate;
+      }
+      
+      console.log('Fetching orders with date filter:', { dateFilter, fromDate, toDate });
       
       const result = await apiPost('/getOrders.php', payload);
       
@@ -451,15 +486,76 @@ export default function OrderManagementPage() {
         }
       }
       
-      setOrderDetails(orderData);
-      setExistingBill(billData); // Store bill data
+      // Calculate totals from items if order totals are missing
+      let calculatedSubtotal = 0;
+      let calculatedTotal = 0;
       
-      // Set order items
-      if (itemsResult.data && Array.isArray(itemsResult.data)) {
+      if (itemsResult.data && Array.isArray(itemsResult.data) && itemsResult.data.length > 0) {
         setOrderItems(itemsResult.data);
+        
+        // Calculate subtotal from items if order totals are missing
+        calculatedSubtotal = itemsResult.data.reduce((sum, item) => {
+          const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || 0);
+          return sum + itemTotal;
+        }, 0);
+        
+        calculatedTotal = calculatedSubtotal;
+        
+        // If order data exists but totals are missing, use calculated values
+        if (orderData) {
+          if (!orderData.g_total_amount && !orderData.total && calculatedSubtotal > 0) {
+            orderData.g_total_amount = calculatedSubtotal;
+            orderData.total = calculatedSubtotal;
+          }
+          if (!orderData.net_total_amount && !orderData.netTotal && calculatedTotal > 0) {
+            orderData.net_total_amount = calculatedTotal;
+            orderData.netTotal = calculatedTotal;
+          }
+        }
       } else {
         setOrderItems([]);
       }
+      
+      // If orderData is still null or missing key fields, try to construct from minimal data
+      if (!orderData || !orderData.order_id) {
+        console.warn('Order data is missing or incomplete:', {
+          orderResult: orderResult.data,
+          orderData,
+          orderIdParam
+        });
+        
+        // Create minimal order data structure
+        orderData = {
+          order_id: orderIdParam,
+          orderid: orderNumber || `ORD-${orderIdParam}`,
+          order_type: 'Dine In',
+          order_status: 'Pending',
+          status: 'Pending',
+          payment_mode: 'Cash',
+          created_at: new Date().toISOString(),
+          g_total_amount: calculatedSubtotal || 0,
+          total: calculatedSubtotal || 0,
+          net_total_amount: calculatedTotal || 0,
+          netTotal: calculatedTotal || 0,
+          service_charge: 0,
+          discount_amount: 0,
+          discount: 0,
+        };
+      }
+      
+      // Ensure order number is set
+      if (!orderData.orderid && orderData.order_id) {
+        orderData.orderid = `ORD-${orderData.order_id}`;
+      }
+      
+      // Debug: Log final order data
+      console.log('=== Final Order Data for Modal ===');
+      console.log('Order Data:', JSON.stringify(orderData, null, 2));
+      console.log('Order Items:', itemsResult.data);
+      console.log('Calculated Subtotal:', calculatedSubtotal);
+      
+      setOrderDetails(orderData);
+      setExistingBill(billData); // Store bill data
       
       setDetailsModalOpen(true);
     } catch (error) {
@@ -1197,33 +1293,82 @@ export default function OrderManagementPage() {
    * Handle print receipt - Print the receipt (may be unpaid or paid)
    */
   const handlePrintReceipt = async () => {
-    if (!generatedBill || !generatedBill.order_id) {
-      window.print(); // Just print if no order ID
+    if (!generatedBill) {
+      setAlert({ type: 'error', message: 'No receipt data available to print' });
       return;
     }
-
-    // Print the receipt
-    window.print();
     
-    // If bill is unpaid, update status to "Bill Generated" when printed
-    if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id) {
-      try {
-        const orderIdValue = generatedBill.order_id;
-        const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-        
-        const statusPayload = { 
-          status: 'Bill Generated',
-          order_id: orderIdValue,
-          orderid: orderidValue
-        };
-        
-        await apiPost('/chnageorder_status.php', statusPayload);
-        fetchOrders(); // Refresh orders list
-      } catch (error) {
-        console.error('Error updating order status on print:', error);
-        // Continue even if status update fails
-      }
+    // Get the receipt print area
+    const printContent = document.getElementById('receipt-print-area');
+    if (!printContent) {
+      // Fallback to window.print if print area not found
+      window.print();
+      return;
     }
+    
+    // Create a new window for printing
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setAlert({ type: 'error', message: 'Please allow popups to print receipt' });
+      return;
+    }
+    
+    // Write the receipt content to the print window
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Receipt - Restaurant Khas</title>
+          <style>
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+            body {
+              font-family: 'Courier New', monospace;
+              margin: 0;
+              padding: 10px;
+            }
+          </style>
+        </head>
+        <body>${printContent.innerHTML}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    
+    // Wait for content to load, then print
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+      
+      // If bill is unpaid, update status to "Bill Generated" when printed
+      if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+        try {
+          const orderIdValue = generatedBill.order_id;
+          const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+          
+          const statusPayload = { 
+            status: 'Bill Generated',
+            order_id: orderIdValue,
+            orderid: orderidValue
+          };
+          
+          apiPost('/chnageorder_status.php', statusPayload).then(() => {
+            fetchOrders(); // Refresh orders list
+          }).catch(error => {
+            console.error('Error updating order status on print:', error);
+          });
+        } catch (error) {
+          console.error('Error updating order status on print:', error);
+        }
+      }
+    }, 250);
   };
 
   /**
@@ -1457,36 +1602,107 @@ export default function OrderManagementPage() {
         )}
 
         {/* Filter Buttons */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-sm font-medium text-gray-700 mr-2">Filter by Status:</span>
-          {['all', 'Pending', 'Running', 'Bill Generated', 'Complete', 'Cancelled'].map((status) => {
-            const count = filter === status.toLowerCase() 
-              ? filteredOrders.length 
-              : orders.filter(o => o.status.toLowerCase() === status.toLowerCase()).length;
-            
-            return (
+        <div className="space-y-4">
+          {/* Status Filter */}
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="text-sm font-medium text-gray-700 mr-2">Filter by Status:</span>
+            {['all', 'Pending', 'Running', 'Bill Generated', 'Complete', 'Cancelled'].map((status) => {
+              const count = filter === status.toLowerCase() 
+                ? filteredOrders.length 
+                : orders.filter(o => o.status.toLowerCase() === status.toLowerCase()).length;
+              
+              return (
+                <Button
+                  key={status}
+                  variant={filter === status.toLowerCase() ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setFilter(status.toLowerCase())}
+                  className={`transition-all duration-200 ${
+                    filter === status.toLowerCase() 
+                      ? 'shadow-md scale-105' 
+                      : 'hover:shadow-sm'
+                  }`}
+                >
+                  {status} 
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                    filter === status.toLowerCase()
+                      ? 'bg-white/20 text-white'
+                      : 'bg-gray-200 text-gray-700'
+                  }`}>
+                    {count}
+                  </span>
+                </Button>
+              );
+            })}
+          </div>
+
+          {/* Date Filter */}
+          <div className="flex gap-2 flex-wrap items-center bg-white p-3 rounded-lg border border-gray-200">
+            <span className="text-sm font-medium text-gray-700 mr-2">Filter by Date:</span>
+            {['today', 'week', 'month'].map((period) => (
               <Button
-                key={status}
-                variant={filter === status.toLowerCase() ? 'primary' : 'secondary'}
+                key={period}
+                variant={dateFilter === period ? 'primary' : 'secondary'}
                 size="sm"
-                onClick={() => setFilter(status.toLowerCase())}
-                className={`transition-all duration-200 ${
-                  filter === status.toLowerCase() 
-                    ? 'shadow-md scale-105' 
-                    : 'hover:shadow-sm'
-                }`}
+                onClick={() => {
+                  setDateFilter(period);
+                  setShowDatePicker(false);
+                  setCustomDate('');
+                }}
+                className="capitalize"
               >
-                {status} 
-                <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${
-                  filter === status.toLowerCase()
-                    ? 'bg-white/20 text-white'
-                    : 'bg-gray-200 text-gray-700'
-                }`}>
-                  {count}
-                </span>
+                {period === 'today' ? 'Today' : period === 'week' ? 'Last Week' : 'Last Month'}
               </Button>
-            );
-          })}
+            ))}
+            <Button
+              variant={dateFilter === 'custom' ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setShowDatePicker(!showDatePicker)}
+              className="flex items-center gap-2"
+            >
+              <Calendar className="w-4 h-4" />
+              Custom Date
+            </Button>
+            
+            {/* Custom Date Picker */}
+            {showDatePicker && (
+              <div className="flex items-center gap-2 ml-2">
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => {
+                    setCustomDate(e.target.value);
+                    if (e.target.value) {
+                      setDateFilter('custom');
+                    }
+                  }}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15]"
+                />
+                {customDate && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setCustomDate('');
+                      setDateFilter('today');
+                      setShowDatePicker(false);
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            )}
+            
+            {dateFilter !== 'today' && (
+              <span className="text-xs text-gray-500 ml-2">
+                {dateFilter === 'week' && 'Showing orders from last 7 days'}
+                {dateFilter === 'month' && 'Showing orders from last 30 days'}
+                {dateFilter === 'custom' && customDate && `Showing orders for ${new Date(customDate).toLocaleDateString()}`}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Orders Table */}
@@ -1534,7 +1750,12 @@ export default function OrderManagementPage() {
               <div className="grid grid-cols-2 gap-4 pb-4">
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
                   <p className="text-xs font-medium text-blue-600 uppercase tracking-wide mb-1">Order Number</p>
-                  <p className="font-bold text-xl text-gray-900">{orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id)}</p>
+                  <p className="font-bold text-xl text-gray-900">
+                    {orderDetails.orderid || 
+                     (orderDetails.order_id ? `ORD-${orderDetails.order_id}` : null) || 
+                     (orderDetails.id ? `ORD-${orderDetails.id}` : null) || 
+                     'N/A'}
+                  </p>
                 </div>
                 <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 rounded-xl border border-purple-100">
                   <p className="text-xs font-medium text-purple-600 uppercase tracking-wide mb-1">Order Type</p>
@@ -1591,38 +1812,71 @@ export default function OrderManagementPage() {
 
               {/* Order Totals with enhanced styling */}
               <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
-                <div className="flex justify-between text-sm py-2">
-                  <span className="text-gray-600 font-medium">Subtotal:</span>
-                  <span className="font-semibold text-gray-900">{formatPKR(orderDetails.g_total_amount || orderDetails.total || 0)}</span>
-                </div>
-                {orderDetails.service_charge > 0 && (
-                  <div className="flex justify-between text-sm py-2">
-                    <span className="text-gray-600 font-medium">Service Charge:</span>
-                    <span className="font-semibold text-gray-900">{formatPKR(orderDetails.service_charge || 0)}</span>
-                  </div>
-                )}
-                {orderDetails.discount_amount > 0 && (
-                  <div className="flex justify-between text-sm py-2">
-                    <span className="text-gray-600 font-medium">Discount:</span>
-                    <span className="font-semibold text-red-600">-{formatPKR(orderDetails.discount_amount || orderDetails.discount || 0)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
-                  <span className="text-gray-900">Total:</span>
-                  <span className="text-[#FF5F15] text-2xl">
-                    {formatPKR(orderDetails.net_total_amount || orderDetails.netTotal || orderDetails.total || 0)}
-                  </span>
-                </div>
+                {(() => {
+                  // Calculate subtotal from items if order totals are missing
+                  const itemsSubtotal = orderItems.length > 0 
+                    ? orderItems.reduce((sum, item) => {
+                        const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || 0);
+                        return sum + itemTotal;
+                      }, 0)
+                    : 0;
+                  
+                  // Use order totals if available, otherwise calculate from items
+                  const subtotal = orderDetails.g_total_amount || orderDetails.total || itemsSubtotal;
+                  const serviceCharge = orderDetails.service_charge || 0;
+                  const discountAmount = orderDetails.discount_amount || orderDetails.discount || 0;
+                  const netTotal = orderDetails.net_total_amount || orderDetails.netTotal || (subtotal + serviceCharge - discountAmount);
+                  
+                  return (
+                    <>
+                      <div className="flex justify-between text-sm py-2">
+                        <span className="text-gray-600 font-medium">Subtotal:</span>
+                        <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
+                      </div>
+                      {serviceCharge > 0 && (
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Service Charge:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
+                        </div>
+                      )}
+                      {discountAmount > 0 && (
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Discount:</span>
+                          <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                        <span className="text-gray-900">Total:</span>
+                        <span className="text-[#FF5F15] text-2xl">
+                          {formatPKR(netTotal)}
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
-              {/* Generate Bill Button - Only show if status is Running and no bill exists (works for all order types: Dine In, Take Away, Delivery) */}
+              {/* Generate Bill Button - Show for Running, Preparing, Ready, or Pending status if no bill exists */}
               {(() => {
-                // Case-insensitive status check
+                // Case-insensitive status check - allow Generate Bill for Pending, Running, Preparing, or Ready
                 const status = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
-                const isRunning = status === 'running';
+                const canGenerateBill = status === 'running' || 
+                                       status === 'preparing' || 
+                                       status === 'ready' || 
+                                       status === 'pending';
                 const hasNoBill = !existingBill;
                 
-                return isRunning && hasNoBill;
+                // Debug logging
+                console.log('Generate Bill Button Check:', {
+                  status: orderDetails.order_status || orderDetails.status,
+                  statusLower: status,
+                  canGenerateBill,
+                  hasNoBill,
+                  existingBill: existingBill ? 'exists' : 'none',
+                  shouldShow: canGenerateBill && hasNoBill
+                });
+                
+                return canGenerateBill && hasNoBill;
               })() && (
                 <div className="pt-2">
                   <Button
@@ -1953,8 +2207,9 @@ export default function OrderManagementPage() {
                   );
                 })()}
 
-                {/* Generate Bill Button */}
+                {/* Generate Bill Button - Always visible in Generate Bill Modal */}
                 <Button
+                  type="button"
                   onClick={async () => {
                     try {
                       const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
@@ -2570,95 +2825,34 @@ export default function OrderManagementPage() {
           showCloseButton={true}
         >
           {generatedBill && (
-            <div className="space-y-4 text-gray-900" id="receipt-content">
-              {/* Receipt Header */}
-              <div className="text-center border-b pb-4">
-                <h2 className="text-2xl font-bold text-gray-900 mb-1">Restaurant Receipt</h2>
-                <p className="text-sm text-gray-600">Order #{generatedBill.order_number}</p>
-                {generatedBill.order_type && (
-                  <p className="text-xs text-blue-600 font-medium mt-1">Type: {generatedBill.order_type}</p>
-                )}
-                <p className="text-xs text-gray-500 mt-1">{generatedBill.date}</p>
-              </div>
-
-              {/* Order Items */}
-              <div className="border-b pb-4">
-                <h3 className="font-semibold text-gray-900 mb-3">Items</h3>
-                <div className="space-y-2">
-                  {generatedBill.items && generatedBill.items.map((item, index) => (
-                    <div key={index} className="flex justify-between text-sm py-2 border-b last:border-0">
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">{item.title || item.dish_name || 'Item'}</p>
-                        <p className="text-xs text-gray-500">
-                          {formatPKR(item.price || item.rate || 0)} × {item.quantity || item.qnty || 0}
-                        </p>
-                      </div>
-                      <p className="font-semibold text-gray-900 ml-4">
-                        {formatPKR(item.total_amount || item.total || 0)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Bill Summary */}
-              <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 font-medium">Subtotal:</span>
-                  <span className="font-semibold text-gray-900">{formatPKR(generatedBill.subtotal)}</span>
-                </div>
-                {generatedBill.service_charge > 0 && generatedBill.order_type === 'Dine In' && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 font-medium">Service Charge (10%):</span>
-                    <span className="font-semibold text-gray-900">{formatPKR(generatedBill.service_charge)}</span>
-                  </div>
-                )}
-                {generatedBill.discount_percentage > 0 && (
-                  <>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 font-medium">Discount ({generatedBill.discount_percentage}%):</span>
-                      <span className="font-semibold text-red-600">-{formatPKR(generatedBill.discount_amount)}</span>
-                    </div>
-                  </>
-                )}
-                <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-300">
-                  <span className="text-gray-900">Grand Total:</span>
-                  <span className="text-[#FF5F15] text-2xl">
-                    {formatPKR(generatedBill.grand_total)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Payment Info */}
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200 shadow-sm">
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-green-700 font-medium">Payment Status:</span>
-                  <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-500 text-white">
-                    {generatedBill.payment_status === 'Paid' ? 'Paid' : 'Unpaid'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-green-700 font-medium">Payment Method:</span>
-                  <span className="font-semibold text-gray-900">{generatedBill.payment_method}</span>
-                </div>
-                {generatedBill.cash_received > 0 && (
-                  <>
-                    <div className="flex justify-between text-sm mb-2 border-t pt-2 mt-2">
-                      <span className="text-green-700 font-medium">Cash Received:</span>
-                      <span className="font-semibold text-gray-900">{formatPKR(generatedBill.cash_received)}</span>
-                    </div>
-                    {generatedBill.change > 0 && (
-                      <div className="flex justify-between text-sm mb-2">
-                        <span className="text-green-700 font-medium">Change Returned:</span>
-                        <span className="font-semibold text-green-800">{formatPKR(generatedBill.change)}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="flex justify-between text-sm mt-2 border-t pt-2">
-                  <span className="text-green-700 font-medium">Bill ID:</span>
-                  <span className="font-semibold text-gray-900">#{generatedBill.bill_id}</span>
-                </div>
+            <div className="space-y-4" id="receipt-content">
+              {/* Thermal Receipt - Print View */}
+              <div id="receipt-print-area" className="bg-white p-4 rounded-lg border border-gray-200">
+                <ThermalReceipt 
+                  order={{
+                    ...generatedBill,
+                    g_total_amount: generatedBill.subtotal,
+                    total: generatedBill.subtotal,
+                    subtotal: generatedBill.subtotal,
+                    service_charge: generatedBill.service_charge || 0,
+                    discount_amount: generatedBill.discount_amount || 0,
+                    net_total_amount: generatedBill.grand_total,
+                    netTotal: generatedBill.grand_total,
+                    grand_total: generatedBill.grand_total,
+                    payment_method: generatedBill.payment_method,
+                    payment_mode: generatedBill.payment_method,
+                    payment_status: generatedBill.payment_status || 'Unpaid',
+                    cash_received: generatedBill.cash_received || 0,
+                    change: generatedBill.change || 0,
+                    bill_id: generatedBill.bill_id,
+                    created_at: generatedBill.date,
+                    order_type: generatedBill.order_type,
+                    table_number: generatedBill.table_number
+                  }}
+                  items={generatedBill.items || []}
+                  branchName={getBranchName() || ''}
+                  showPaidAmount={generatedBill.payment_status === 'Paid'}
+                />
               </div>
 
               {/* Action Buttons - Hidden in print */}

@@ -79,8 +79,86 @@ export default function LoginPage() {
       );
       
       if (!isSuccess) {
-        // Login failed
-        const errorMsg = result.data?.message || result.data?.error || result.message || 'Login failed. Please check your credentials.';
+        // Login failed - check for database errors first
+        if (result.data?.isDatabaseError) {
+          // Database connection error
+          const dbError = result.data.details || result.data.error || result.data.message;
+          console.error('Database connection error:', result.data);
+          setError(dbError);
+          setLoading(false);
+          return;
+        }
+        
+        // Extract error message from various possible locations
+        let errorMsg = null;
+        
+        // Try to get error message from multiple possible locations
+        if (result.data) {
+          // Check direct properties
+          errorMsg = result.data.message || 
+                     result.data.error || 
+                     result.data.details ||
+                     result.data.msg ||
+                     result.data.error_message ||
+                     result.data.errorMessage;
+          
+          // Check nested structures
+          if (!errorMsg && result.data.data) {
+            errorMsg = result.data.data.message || 
+                       result.data.data.error || 
+                       result.data.data.msg;
+          }
+          
+          // Check if there's a user-friendly error in response
+          if (!errorMsg && result.data.response) {
+            errorMsg = result.data.response.message || result.data.response.error;
+          }
+          
+          // Check for common error patterns in the entire response
+          const responseString = JSON.stringify(result.data).toLowerCase();
+          if (!errorMsg) {
+            if (responseString.includes('invalid username') || responseString.includes('invalid password') || 
+                responseString.includes('incorrect') || responseString.includes('wrong')) {
+              errorMsg = 'Invalid username or password. Please check your credentials and try again.';
+            } else if (responseString.includes('user not found') || responseString.includes('user does not exist')) {
+              errorMsg = 'User not found. Please check your username.';
+            } else if (responseString.includes('password') && responseString.includes('incorrect')) {
+              errorMsg = 'Incorrect password. Please try again.';
+            }
+          }
+        }
+        
+        // Check if response is empty or has no meaningful error message
+        const isEmptyResponse = !result.data || 
+                                Object.keys(result.data || {}).length === 0 || 
+                                (result.data && !errorMsg && result.data.success === false);
+        
+        if (isEmptyResponse || !errorMsg) {
+          // Check HTTP status code for clues
+          const statusCode = result.status;
+          let defaultMessage = 'Login failed. Please check your credentials.';
+          
+          if (statusCode === 401 || statusCode === 403) {
+            defaultMessage = 'Invalid username or password. Please check your credentials and try again.';
+          } else if (statusCode === 500) {
+            defaultMessage = 'Server error occurred. Please check:\n1. MySQL service is running in WAMP\n2. Database connection is configured correctly\n3. PHP error logs: C:\\wamp64\\logs\\php_error.log';
+          } else if (statusCode === 0 || !statusCode) {
+            defaultMessage = 'Cannot connect to server. Please ensure:\n1. WAMP server is running (Apache and MySQL should be green)\n2. API is accessible at http://localhost/restuarent/api/login.php';
+          }
+          
+          console.error('Login failed with empty or invalid response:', {
+            result,
+            statusCode,
+            dataKeys: result.data ? Object.keys(result.data) : [],
+            dataContent: result.data
+          });
+          
+          setError(errorMsg || defaultMessage);
+          setLoading(false);
+          return;
+        }
+        
+        // Regular login failure with extracted error message
         console.error('Login failed:', { result, errorMsg });
         setError(errorMsg);
         setLoading(false);
@@ -315,13 +393,19 @@ export default function LoginPage() {
           router.push(redirectPath);
         }, 150);
     } catch (error) {
+      console.error('Login catch error:', error);
       
       // Check if result has error details (from apiPost)
       if (result && result.data) {
-        if (result.data.details) {
+        // Prioritize database errors with detailed instructions
+        if (result.data.isDatabaseError) {
+          setError(result.data.details || result.data.error || result.data.message);
+        } else if (result.data.details) {
           setError(result.data.details);
         } else if (result.data.message) {
           setError(result.data.message);
+        } else if (result.data.error) {
+          setError(result.data.error);
         } else {
           setError('Login failed. Please check your credentials and try again.');
         }

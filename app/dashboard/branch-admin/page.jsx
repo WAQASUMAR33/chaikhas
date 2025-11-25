@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
-import { apiPost, getTerminal } from '@/utils/api';
+import { apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock } from 'lucide-react';
 import Link from 'next/link';
@@ -29,25 +29,65 @@ export default function AdminDashboardPage() {
 
   /**
    * Fetch dashboard statistics from API
-   * API: get_dashboard_stats.php (POST with terminal parameter)
+   * API: get_dashboard_stats.php (POST with terminal and branch_id parameter)
    */
   const fetchDashboardStats = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_dashboard_stats.php', { terminal });
+      const branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for branch-admin dashboard');
+        setStats({
+          totalOrders: 0,
+          totalSales: 0,
+          totalMenuItems: 0,
+          totalCategories: 0,
+          recentOrders: [],
+        });
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Dashboard Stats (Branch Admin) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_dashboard_stats.php', { 
+        terminal,
+        branch_id: branchId 
+      });
+      
+      console.log('Dashboard stats response:', result);
       
       if (result.success && result.data) {
         setStats({
-          totalOrders: result.data.totalOrders || 0,
-          totalSales: result.data.totalSales || 0,
-          totalMenuItems: result.data.totalMenuItems || 0,
-          totalCategories: result.data.totalCategories || 0,
-          recentOrders: result.data.recentOrders || [],
+          totalOrders: result.data.totalOrders || result.data.total_orders || 0,
+          totalSales: result.data.totalSales || result.data.total_sales || 0,
+          totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
+          totalCategories: result.data.totalCategories || result.data.total_categories || 0,
+          recentOrders: result.data.recentOrders || result.data.recent_orders || [],
+        });
+      } else {
+        // If API returns empty or error, set defaults
+        setStats({
+          totalOrders: 0,
+          totalSales: 0,
+          totalMenuItems: 0,
+          totalCategories: 0,
+          recentOrders: [],
         });
       }
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
+      setStats({
+        totalOrders: 0,
+        totalSales: 0,
+        totalMenuItems: 0,
+        totalCategories: 0,
+        recentOrders: [],
+      });
     } finally {
       setLoading(false);
     }
