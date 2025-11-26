@@ -53,67 +53,358 @@ export default function CreateOrderPage() {
   // Filter dishes on client side - no need to refetch
 
   /**
-   * Fetch halls from API
+   * Fetch halls from API (Order Taker)
+   * Only fetch halls for their branch
    */
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Order taker MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching halls');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setHalls([]);
+        return;
+      }
+      
+      console.log('=== Fetching Halls (Create Order - Order Taker) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_halls.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for order taker
+      });
+      
+      console.log('get_halls.php response:', result);
+      
+      let hallsData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setHalls(result.data);
+        hallsData = result.data;
+        console.log('✅ Found halls in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+        console.log('✅ Found halls in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            hallsData = result.data[key];
+            console.log(`✅ Found halls in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (hallsData.length > 0) {
+        console.log(`✅ Total halls found: ${hallsData.length}`);
+        // Map to ensure consistent structure
+        const mappedHalls = hallsData.map((hall) => ({
+          hall_id: hall.hall_id || hall.id || hall.HallID,
+          id: hall.hall_id || hall.id || hall.HallID,
+          name: hall.name || hall.hall_name || hall.Name || '',
+          capacity: hall.capacity || 0,
+          branch_id: hall.branch_id || branchId,
+        })).filter(hall => hall.hall_id); // Filter out invalid entries
+        
+        setHalls(mappedHalls);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        console.warn('⚠️ No halls found for this branch');
+        setHalls([]);
+        setAlert({ type: 'warning', message: 'No halls found. Please add halls in the Hall Management page.' });
       }
     } catch (error) {
-      console.error('Error fetching halls:', error);
+      console.error('❌ Error fetching halls:', error);
+      setAlert({ type: 'error', message: 'Failed to load halls: ' + (error.message || 'Network error') });
+      setHalls([]);
     }
   };
 
   /**
-   * Fetch tables from API (filtered by hall)
+   * Fetch tables from API (Order Taker)
+   * Only fetch tables for their branch, filtered by selected hall
    */
   const fetchTables = async () => {
     try {
+      if (!selectedHall) {
+        setTables([]);
+        return;
+      }
+      
       const terminal = getTerminal();
-      const result = await apiPost('/get_tables.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Order taker MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching tables');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setTables([]);
+        return;
+      }
+      
+      console.log('=== Fetching Tables (Create Order - Order Taker) ===');
+      console.log('Params:', { terminal, branch_id: branchId, hall_id: selectedHall });
+      
+      const result = await apiPost('/get_tables.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for order taker
+      });
+      
+      console.log('get_tables.php response:', result);
+      
+      let tablesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        // Filter tables by selected hall
-        const filtered = result.data.filter(table => table.hall_id == selectedHall);
-        setTables(filtered);
+        tablesData = result.data;
+        console.log('✅ Found tables in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+        console.log('✅ Found tables in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            tablesData = result.data[key];
+            console.log(`✅ Found tables in result.data.${key}`);
+            break;
+          }
+        }
+      }
+      
+      if (tablesData.length > 0) {
+        // Map to ensure consistent structure and filter by selected hall
+        const mappedTables = tablesData
+          .map((table) => ({
+            table_id: table.table_id || table.id || table.TableID,
+            id: table.table_id || table.id || table.TableID,
+            table_number: table.table_number || table.table_name || table.number || '',
+            hall_id: table.hall_id || table.HallID || null,
+            hall_name: table.hall_name || table.hall_Name || '',
+            capacity: table.capacity || table.Capacity || 0,
+            status: table.status || table.Status || 'available',
+            branch_id: table.branch_id || branchId,
+          }))
+          .filter(table => table.table_id && table.hall_id == selectedHall); // Filter by hall
+        
+        console.log(`✅ Total tables found for hall ${selectedHall}: ${mappedTables.length}`);
+        setTables(mappedTables);
+      } else {
+        console.warn('⚠️ No tables found for this branch and hall');
+        setTables([]);
       }
     } catch (error) {
-      console.error('Error fetching tables:', error);
+      console.error('❌ Error fetching tables:', error);
+      setAlert({ type: 'error', message: 'Failed to load tables: ' + (error.message || 'Network error') });
+      setTables([]);
     }
   };
 
   /**
-   * Fetch categories from API
+   * Fetch categories from API (Order Taker)
+   * Only fetch categories for their branch
    */
   const fetchCategories = async () => {
     try {
+      setLoading(true);
       const terminal = getTerminal();
-      const result = await apiPost('/get_categories.php', { terminal });
-      if (result.data && Array.isArray(result.data)) {
-        setCategories(result.data);
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Order taker MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching categories');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setCategories([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Categories (Create Order - Order Taker) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_categories.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for order taker
+      });
+      
+      console.log('get_categories.php full response:', JSON.stringify(result, null, 2));
+      
+      let categoriesData = [];
+      
+      // Handle multiple possible response structures
+      if (result.success && result.data) {
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          categoriesData = result.data;
+          console.log('✅ Found categories in result.data (array)');
+        } 
+        // Check if data.success is true and data.data is an array
+        else if (result.data.success === true && Array.isArray(result.data.data)) {
+          categoriesData = result.data.data;
+          console.log('✅ Found categories in result.data.data');
+        }
+        // Check if data is an object with a data property that's an array
+        else if (typeof result.data === 'object' && Array.isArray(result.data.data)) {
+          categoriesData = result.data.data;
+          console.log('✅ Found categories in result.data.data');
+        }
+        // Check for categories property
+        else if (Array.isArray(result.data.categories)) {
+          categoriesData = result.data.categories;
+          console.log('✅ Found categories in result.data.categories');
+        }
+        // Try to find any array property in result.data
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key]) && key !== 'details' && key !== 'count') {
+              categoriesData = result.data[key];
+              console.log(`✅ Found categories in result.data.${key}`);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (categoriesData.length > 0) {
+        console.log(`✅ Total categories found: ${categoriesData.length}`);
+        setCategories(categoriesData);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        console.warn('⚠️ No categories found for this branch');
+        setCategories([]);
+        setAlert({ type: 'warning', message: 'No categories found. Please add categories in the Category Management page.' });
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.error('❌ Error fetching categories:', error);
+      setAlert({ type: 'error', message: 'Failed to load categories: ' + (error.message || 'Network error') });
+      setCategories([]);
       setLoading(false);
     }
   };
 
   /**
-   * Fetch dishes from API
+   * Fetch dishes/menu items from API (Order Taker)
+   * Only fetch products for their branch
    */
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_products.php', { terminal });
+      let branchId = getBranchId();
+      
+      // Ensure branch_id is valid
+      if (branchId) {
+        branchId = branchId.toString().trim();
+        if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+          branchId = null;
+        } else {
+          const numBranchId = parseInt(branchId, 10);
+          if (isNaN(numBranchId) || numBranchId <= 0) {
+            branchId = null;
+          }
+        }
+      }
+      
+      // Order taker MUST have branch_id
+      if (!branchId) {
+        console.error('❌ Branch ID is missing for fetching products');
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setDishes([]);
+        setLoading(false);
+        return;
+      }
+      
+      console.log('=== Fetching Products (Create Order - Order Taker) ===');
+      console.log('Params:', { terminal, branch_id: branchId });
+      
+      const result = await apiPost('/get_products.php', { 
+        terminal,
+        branch_id: branchId  // Always include branch_id for order taker
+      });
+      
+      console.log('get_products.php response:', result);
+      
+      let dishesData = [];
+      
+      // Handle multiple possible response structures
       if (result.data && Array.isArray(result.data)) {
-        setDishes(result.data);
+        dishesData = result.data;
+        console.log('✅ Found products in result.data (array)');
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        dishesData = result.data.data;
+        console.log('✅ Found products in result.data.success.data');
+      } else if (result.data && typeof result.data === 'object') {
+        // Check for products property
+        if (Array.isArray(result.data.products)) {
+          dishesData = result.data.products;
+          console.log('✅ Found products in result.data.products');
+        } else {
+          // Try to find any array property
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              dishesData = result.data[key];
+              console.log(`✅ Found products in result.data.${key}`);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (dishesData.length > 0) {
+        console.log(`✅ Total products found: ${dishesData.length}`);
+        setDishes(dishesData);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        console.warn('⚠️ No products found for this branch');
+        setDishes([]);
+        setAlert({ type: 'warning', message: 'No menu items found. Please add products in the Menu Management page.' });
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error fetching dishes:', error);
+      console.error('❌ Error fetching products:', error);
+      setAlert({ type: 'error', message: 'Failed to load menu items: ' + (error.message || 'Network error') });
+      setDishes([]);
       setLoading(false);
     }
   };
