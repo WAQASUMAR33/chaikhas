@@ -13,9 +13,10 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
+import ThermalReceipt from '@/components/receipt/ThermalReceipt';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -1021,13 +1022,70 @@ export default function OrderManagementPage() {
 
       // Both bill update AND order status update must succeed
       if (billUpdateSuccess && orderUpdateSuccess) {
-        // Update generatedBill with payment info
+        // Fetch order items for receipt
+        let itemsForReceipt = generatedBill.items || [];
+        
+        if (itemsForReceipt.length === 0) {
+          try {
+            console.log('=== Fetching Order Items for Paid Receipt ===');
+            const orderId = generatedBill.order_id;
+            const orderNumber = generatedBill.order_number || `ORD-${orderId}`;
+            
+            const itemsResult = await apiPost('/get_orderdetails.php', { 
+              order_id: orderId,
+              orderid: orderNumber
+            });
+            
+            // Extract items from response
+            if (itemsResult.success && itemsResult.data) {
+              if (Array.isArray(itemsResult.data)) {
+                itemsForReceipt = itemsResult.data;
+              } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                itemsForReceipt = itemsResult.data.data;
+              } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                itemsForReceipt = itemsResult.data.items;
+              } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                itemsForReceipt = itemsResult.data.order_items;
+              } else if (typeof itemsResult.data === 'object') {
+                for (const key in itemsResult.data) {
+                  if (Array.isArray(itemsResult.data[key])) {
+                    itemsForReceipt = itemsResult.data[key];
+                    break;
+                  }
+                }
+              }
+            }
+            
+            console.log('✅ Fetched items for paid receipt:', itemsForReceipt.length);
+          } catch (error) {
+            console.error('Error fetching order items for paid receipt:', error);
+            // Continue with existing items if fetch fails
+            if (generatedBill.items && generatedBill.items.length > 0) {
+              itemsForReceipt = generatedBill.items;
+            }
+          }
+        }
+        
+        // Format items for receipt
+        const formattedItems = (itemsForReceipt || []).map(item => ({
+          dish_id: item.dish_id || item.id || item.product_id,
+          dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+          name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+          price: parseFloat(item.price || item.rate || item.unit_price || 0),
+          quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+          qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+        }));
+        
+        // Update generatedBill with payment info and items
         setGeneratedBill({
           ...generatedBill,
           bill_id: billIdToUse || generatedBill.bill_id,
           payment_status: 'Paid',
           cash_received: cashReceived,
           change: change,
+          items: formattedItems,
         });
 
         // Close payment modal automatically
@@ -1047,11 +1105,15 @@ export default function OrderManagementPage() {
           });
         }
         
+        // Show receipt modal with paid receipt
+        setReceiptModalOpen(true);
+        setDetailsModalOpen(false);
+        
         // Show success message
         if (generatedBill.payment_method === 'Cash' && change > 0) {
           setAlert({ 
             type: 'success', 
-            message: `Payment received successfully! Change: ${formatPKR(change)}. Order status updated to Complete.` 
+            message: `Payment received successfully! Change: ${formatPKR(change)}. Order status updated to Complete. Receipt is ready to print.` 
           });
         } else {
           setAlert({ 
@@ -1089,10 +1151,26 @@ export default function OrderManagementPage() {
    * Handle print receipt - Print the receipt (may be unpaid or paid)
    */
   const handlePrintReceipt = async () => {
-    if (!generatedBill || !generatedBill.order_id) {
+    if (!generatedBill) {
       setAlert({ type: 'error', message: 'No receipt data available to print' });
       return;
     }
+    
+    // Validate that items are present
+    const items = generatedBill.items || [];
+    if (!items || items.length === 0) {
+      console.error('❌ Cannot print: No items in generated bill');
+      console.error('Generated bill:', generatedBill);
+      setAlert({ 
+        type: 'error', 
+        message: 'Cannot print receipt: No order items found. Please regenerate the bill.' 
+      });
+      return;
+    }
+    
+    console.log('=== Printing Receipt ===');
+    console.log('Items count:', items.length);
+    console.log('Items:', items);
     
     try {
       // Get the receipt print area content
@@ -1102,8 +1180,7 @@ export default function OrderManagementPage() {
         return;
       }
 
-      // Get order items to determine categories
-      const items = generatedBill.items || [];
+      // Get categories from items
       const categoryIds = [...new Set(
         items
           .map(item => item.category_id || item.kitchen_id)
@@ -1113,7 +1190,11 @@ export default function OrderManagementPage() {
       // Prepare receipt content
       const receiptHTML = printContent.innerHTML;
       
+      console.log('Receipt HTML length:', receiptHTML.length);
+      console.log('Category IDs:', categoryIds);
+      
       // Call backend API to print directly to network printers
+      // Backend will handle printing to two default printers based on category
       const printResult = await apiPost('/print_receipt_direct.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
@@ -1130,36 +1211,45 @@ export default function OrderManagementPage() {
         branch_id: getBranchId() || getTerminal()
       });
 
-      if (printResult.success && printResult.data?.success === true) {
+      if (printResult.success && printResult.data) {
         const response = printResult.data;
-        const printerNames = response.printers || ['Default Printers'];
-        setAlert({ 
-          type: 'success', 
-          message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
-        });
         
-        // If bill is unpaid, update status to "Bill Generated" when printed
-        if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id) {
-          try {
-            const orderIdValue = generatedBill.order_id;
-            const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-            
-            const statusPayload = { 
-              status: 'Bill Generated',
-              order_id: orderIdValue,
-              orderid: orderidValue
-            };
-            
-            await apiPost('/chnageorder_status.php', statusPayload);
-            fetchOrders(); // Refresh orders list
-          } catch (error) {
-            console.error('Error updating order status on print:', error);
+        if (response.success === true) {
+          // Show success message with printer info
+          const printerNames = response.printers || ['Default Printers'];
+          setAlert({ 
+            type: 'success', 
+            message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
+          });
+          
+          // If bill is unpaid, update status to "Bill Generated" when printed
+          if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+            try {
+              const orderIdValue = generatedBill.order_id;
+              const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+              
+              const statusPayload = { 
+                status: 'Bill Generated',
+                order_id: orderIdValue,
+                orderid: orderidValue
+              };
+              
+              await apiPost('/chnageorder_status.php', statusPayload);
+              fetchOrders(); // Refresh orders list
+            } catch (error) {
+              console.error('Error updating order status on print:', error);
+            }
           }
+        } else {
+          setAlert({ 
+            type: 'warning', 
+            message: response.message || 'Print job sent, but some printers may not be available' 
+          });
         }
       } else {
         setAlert({ 
           type: 'warning', 
-          message: printResult.data?.message || 'Print job sent, but some printers may not be available' 
+          message: 'Print job sent, but some printers may not be available' 
         });
       }
     } catch (error) {
@@ -1700,13 +1790,69 @@ export default function OrderManagementPage() {
               })() && (
                 <div className="pt-2">
                   <Button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Fetch order items if not already loaded
+                      let itemsForReceipt = orderItems || [];
+                      
+                      if (itemsForReceipt.length === 0 || (itemsForReceipt.length > 0 && itemsForReceipt[0]?.order_id !== orderDetails.order_id)) {
+                        try {
+                          console.log('=== Fetching Order Items for Paid Receipt ===');
+                          const orderId = orderDetails.order_id || orderDetails.id;
+                          const orderNumber = orderDetails.orderid || orderDetails.order_number || (orderId ? `ORD-${orderId}` : '');
+                          
+                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                            order_id: orderId,
+                            orderid: orderNumber
+                          });
+                          
+                          // Extract items from response
+                          if (itemsResult.success && itemsResult.data) {
+                            if (Array.isArray(itemsResult.data)) {
+                              itemsForReceipt = itemsResult.data;
+                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                              itemsForReceipt = itemsResult.data.data;
+                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                              itemsForReceipt = itemsResult.data.items;
+                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                              itemsForReceipt = itemsResult.data.order_items;
+                            } else if (typeof itemsResult.data === 'object') {
+                              for (const key in itemsResult.data) {
+                                if (Array.isArray(itemsResult.data[key])) {
+                                  itemsForReceipt = itemsResult.data[key];
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                          console.log('✅ Fetched items for paid receipt:', itemsForReceipt.length);
+                        } catch (error) {
+                          console.error('Error fetching order items for paid receipt:', error);
+                          // Continue with orderItems from state if fetch fails
+                          if (orderItems && orderItems.length > 0) {
+                            itemsForReceipt = orderItems;
+                          }
+                        }
+                      }
+                      
+                      // Format items for receipt
+                      const formattedItems = (itemsForReceipt || []).map(item => ({
+                        dish_id: item.dish_id || item.id || item.product_id,
+                        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                        name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                      }));
+                      
                       // Prepare paid bill receipt data
                       const receiptData = {
                         bill_id: existingBill.bill_id,
                         order_id: orderDetails.order_id || orderDetails.id,
                         order_number: orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id),
                         order_type: orderDetails.order_type || 'Dine In',
+                        table_number: orderDetails.table_number || orderDetails.table_id || '',
                         subtotal: parseFloat(existingBill.total_amount || orderDetails.g_total_amount || orderDetails.total || 0),
                         service_charge: parseFloat(existingBill.service_charge || 0),
                         discount_percentage: existingBill.discount > 0 && existingBill.total_amount > 0 
@@ -1716,11 +1862,13 @@ export default function OrderManagementPage() {
                         grand_total: parseFloat(existingBill.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
                         payment_method: existingBill.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: 'Paid',
-                        cash_received: parseFloat(existingBill.grand_total || 0), // Assume cash received equals grand total for paid bills
-                        change: 0,
-                        items: orderItems,
+                        cash_received: parseFloat(existingBill.cash_received || existingBill.grand_total || 0),
+                        change: parseFloat(existingBill.change || 0),
+                        items: formattedItems,
                         date: existingBill.created_at || existingBill.updated_at || new Date().toLocaleString(),
                       };
+                      
+                      console.log('✅ Paid receipt data prepared with items:', formattedItems.length);
                       
                       setGeneratedBill(receiptData);
                       setReceiptModalOpen(true);
@@ -1993,23 +2141,120 @@ export default function OrderManagementPage() {
                           discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
                         }
                         
+                        // ALWAYS fetch order items when generating bill to ensure we have the latest data
+                        let itemsForReceipt = [];
+                        try {
+                          console.log('=== Fetching Order Items for Bill Generation ===');
+                          const orderId = billOrder.order_id || billOrder.id;
+                          const orderNumber = billOrder.orderid || billOrder.order_number || (orderId ? `ORD-${orderId}` : '');
+                          
+                          console.log('Order ID:', orderId);
+                          console.log('Order Number:', orderNumber);
+                          
+                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                            order_id: orderId,
+                            orderid: orderNumber
+                          });
+                          
+                          console.log('Items API response:', itemsResult);
+                          console.log('Items API response data:', JSON.stringify(itemsResult.data, null, 2));
+                          
+                          // Extract items from response - handle multiple structures
+                          if (itemsResult.success && itemsResult.data) {
+                            if (Array.isArray(itemsResult.data)) {
+                              itemsForReceipt = itemsResult.data;
+                              console.log('✅ Found items in result.data (array):', itemsForReceipt.length);
+                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                              itemsForReceipt = itemsResult.data.data;
+                              console.log('✅ Found items in result.data.data:', itemsForReceipt.length);
+                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                              itemsForReceipt = itemsResult.data.items;
+                              console.log('✅ Found items in result.data.items:', itemsForReceipt.length);
+                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                              itemsForReceipt = itemsResult.data.order_items;
+                              console.log('✅ Found items in result.data.order_items:', itemsForReceipt.length);
+                            } else if (typeof itemsResult.data === 'object') {
+                              // Search for any array in the response
+                              for (const key in itemsResult.data) {
+                                if (Array.isArray(itemsResult.data[key])) {
+                                  itemsForReceipt = itemsResult.data[key];
+                                  console.log(`✅ Found items in result.data.${key}:`, itemsForReceipt.length);
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                          
+                          if (itemsForReceipt.length === 0) {
+                            console.warn('⚠️ No items found in API response. Trying orderItems from state...');
+                            // Fallback to orderItems from state if API returns empty
+                            if (orderItems && orderItems.length > 0) {
+                              itemsForReceipt = orderItems;
+                              console.log('✅ Using orderItems from state:', itemsForReceipt.length);
+                            }
+                          }
+                          
+                          console.log('✅ Final items for receipt:', itemsForReceipt.length);
+                          if (itemsForReceipt.length > 0) {
+                            console.log('Sample item:', JSON.stringify(itemsForReceipt[0], null, 2));
+                          }
+                        } catch (error) {
+                          console.error('❌ Error fetching order items for bill:', error);
+                          // Fallback to orderItems from state if fetch fails
+                          if (orderItems && orderItems.length > 0) {
+                            itemsForReceipt = orderItems;
+                            console.log('✅ Using orderItems from state as fallback:', itemsForReceipt.length);
+                          } else {
+                            console.error('❌ No items available - neither from API nor from state');
+                          }
+                        }
+                        
+                        // Format items for receipt
+                        const formattedItems = (itemsForReceipt || []).map(item => ({
+                          dish_id: item.dish_id || item.id || item.product_id,
+                          dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                          name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                          price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                          quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                        }));
+                        
+                        console.log('✅ Formatted items for receipt:', formattedItems.length, formattedItems);
+                        
+                        // Validate that items are present
+                        if (!formattedItems || formattedItems.length === 0) {
+                          console.error('❌ No items found in receipt data!');
+                          setAlert({ 
+                            type: 'error', 
+                            message: 'Cannot generate receipt: No order items found. Please ensure the order has items before generating the bill.' 
+                          });
+                          return;
+                        }
+                        
                         // Store bill data for receipt - use calculated values from frontend
                         const receiptData = {
                           bill_id: billId,
                           order_id: billOrder.order_id || billOrder.id,
                           order_number: billOrder.order_id ? `ORD-${billOrder.order_id}` : (billOrder.orderid || billOrder.id),
                           order_type: billOrder.order_type || 'Dine In',
+                          table_number: billOrder.table_number || billOrder.table_id || '',
                           subtotal: subtotal,
                           service_charge: serviceCharge,
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
-                          payment_method: billData.payment_method || billData.payment_mode || billData.payment_mode || billData.payment_mode,
-                          items: orderItems,
+                          payment_method: billData.payment_method || billData.payment_mode || 'Cash',
+                          payment_status: 'Unpaid', // Bill starts as Unpaid
+                          items: formattedItems,
                           date: new Date().toLocaleString(),
                         };
                         
-                        console.log('Receipt data prepared:', receiptData);
+                        console.log('=== Receipt Data Prepared ===');
+                        console.log('Receipt data:', receiptData);
+                        console.log('Items count:', formattedItems.length);
+                        console.log('Items:', formattedItems);
                         
                         // Store bill data for receipt
                         setGeneratedBill(receiptData);
@@ -2036,24 +2281,14 @@ export default function OrderManagementPage() {
                           // Continue even if status update fails
                         }
                         
-                        // Show receipt modal for printing
-                        setReceiptModalOpen(true);
-                        setDetailsModalOpen(false);
-                        
                         // Refresh orders list
                         fetchOrders();
                         
-                        // Auto-print receipt after a short delay (allowing modal to render)
-                        setTimeout(() => {
-                          window.print();
-                          // Close receipt modal after printing
-                          setTimeout(() => {
-                            setReceiptModalOpen(false);
-                            setGeneratedBill(null);
-                          }, 1000);
-                        }, 500);
+                        // Show receipt modal for printing (don't auto-print, let user click print button)
+                        setReceiptModalOpen(true);
+                        setDetailsModalOpen(false);
                         
-                        setAlert({ type: 'success', message: 'Bill generated successfully! Receipt will be printed automatically.' });
+                        setAlert({ type: 'success', message: 'Bill generated successfully! Click "Print Receipt" to print.' });
                       } else {
                         // More detailed error message - check all possible error locations
                         let errorMsg = 'Failed to generate bill';
@@ -2495,120 +2730,99 @@ export default function OrderManagementPage() {
           size="lg"
           showCloseButton={true}
         >
-          {generatedBill && (
-            <div className="space-y-4 text-gray-900" id="receipt-content">
-              {/* Receipt Header */}
-              <div className="text-center border-b pb-4">
-                <h2 className="text-2xl font-bold text-gray-900 mb-1">Restaurant Receipt</h2>
-                <p className="text-sm text-gray-600">Order #{generatedBill.order_number}</p>
-                {generatedBill.order_type && (
-                  <p className="text-xs text-blue-600 font-medium mt-1">Type: {generatedBill.order_type}</p>
-                )}
-                <p className="text-xs text-gray-500 mt-1">{generatedBill.date}</p>
-              </div>
-
-              {/* Order Items */}
-              <div className="border-b pb-4">
-                <h3 className="font-semibold text-gray-900 mb-3">Items</h3>
-                <div className="space-y-2">
-                  {generatedBill.items && generatedBill.items.map((item, index) => (
-                    <div key={index} className="flex justify-between text-sm py-2 border-b last:border-0">
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">{item.title || item.dish_name || 'Item'}</p>
-                        <p className="text-xs text-gray-500">
-                          {formatPKR(item.price || item.rate || 0)} × {item.quantity || item.qnty || 0}
-                        </p>
-                      </div>
-                      <p className="font-semibold text-gray-900 ml-4">
-                        {formatPKR(item.total_amount || item.total || 0)}
-                      </p>
+          {generatedBill && (() => {
+            // Debug: Log items when rendering receipt
+            const receiptItems = generatedBill.items || [];
+            console.log('=== Rendering Receipt Modal ===');
+            console.log('Items count:', receiptItems.length);
+            console.log('Items:', receiptItems);
+            console.log('Generated bill:', generatedBill);
+            
+            if (receiptItems.length === 0) {
+              console.error('❌ ERROR: Receipt modal opened with NO ITEMS!');
+            }
+            
+            return (
+              <div className="space-y-4" id="receipt-content">
+                {/* Thermal Receipt - Print View */}
+                <div id="receipt-print-area" className="bg-white p-4 rounded-lg border border-gray-200">
+                  <ThermalReceipt 
+                    order={{
+                      order_id: generatedBill.order_id,
+                      orderid: generatedBill.order_number,
+                      g_total_amount: generatedBill.subtotal || 0,
+                      total: generatedBill.subtotal || 0,
+                      subtotal: generatedBill.subtotal || 0,
+                      service_charge: generatedBill.service_charge || 0,
+                      discount_amount: generatedBill.discount_amount || 0,
+                      discount: generatedBill.discount_amount || 0,
+                      net_total_amount: generatedBill.grand_total || 0,
+                      netTotal: generatedBill.grand_total || 0,
+                      grand_total: generatedBill.grand_total || 0,
+                      final_amount: generatedBill.grand_total || 0,
+                      payment_method: generatedBill.payment_method || 'Cash',
+                      payment_mode: generatedBill.payment_method || 'Cash',
+                      payment_status: generatedBill.payment_status || 'Unpaid',
+                      cash_received: generatedBill.cash_received || 0,
+                      change: generatedBill.change || 0,
+                      bill_id: generatedBill.bill_id,
+                      created_at: generatedBill.date || new Date().toISOString(),
+                      date: generatedBill.date || new Date().toISOString(),
+                      order_type: generatedBill.order_type || 'Dine In',
+                      table_number: generatedBill.table_number || ''
+                    }}
+                    items={receiptItems}
+                    branchName={getBranchName() || ''}
+                    showPaidAmount={generatedBill.payment_status === 'Paid'}
+                  />
+                  {/* Debug info - visible in development */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                      <strong>Debug Info:</strong>
+                      <br />Items count: {receiptItems.length}
+                      <br />Order ID: {generatedBill.order_id}
+                      <br />Bill ID: {generatedBill.bill_id}
+                      {receiptItems.length > 0 && (
+                        <>
+                          <br />First item: {receiptItems[0].dish_name || receiptItems[0].name || 'N/A'}
+                          <br />
+                          <pre className="mt-2 text-xs overflow-auto max-h-32">
+                            {JSON.stringify(receiptItems.slice(0, 2), null, 2)}
+                          </pre>
+                        </>
+                      )}
+                      {receiptItems.length === 0 && (
+                        <div className="text-red-600 font-bold mt-2">
+                          ⚠️ NO ITEMS FOUND - Receipt will be empty!
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
 
-              {/* Bill Summary */}
-              <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 font-medium">Subtotal:</span>
-                  <span className="font-semibold text-gray-900">{formatPKR(generatedBill.subtotal)}</span>
-                </div>
-                {generatedBill.service_charge > 0 && generatedBill.order_type === 'Dine In' && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 font-medium">Service Charge (10%):</span>
-                    <span className="font-semibold text-gray-900">{formatPKR(generatedBill.service_charge)}</span>
-                  </div>
-                )}
-                {generatedBill.discount_percentage > 0 && (
-                  <>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 font-medium">Discount ({generatedBill.discount_percentage}%):</span>
-                      <span className="font-semibold text-red-600">-{formatPKR(generatedBill.discount_amount)}</span>
-                    </div>
-                  </>
-                )}
-                <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-300">
-                  <span className="text-gray-900">Grand Total:</span>
-                  <span className="text-[#FF5F15] text-2xl">
-                    {formatPKR(generatedBill.grand_total)}
-                  </span>
+                {/* Action Buttons - Hidden in print */}
+                <div className="flex gap-3 pt-4 no-print">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setReceiptModalOpen(false);
+                      setGeneratedBill(null);
+                    }}
+                    className="flex-1"
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    onClick={handlePrintReceipt}
+                    className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold"
+                  >
+                    <Printer className="w-4 h-4 mr-2" />
+                    Print Receipt
+                  </Button>
                 </div>
               </div>
-
-              {/* Payment Info */}
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200 shadow-sm">
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-green-700 font-medium">Payment Status:</span>
-                  <span className="px-3 py-1 text-xs font-semibold rounded-full bg-green-500 text-white">
-                    {generatedBill.payment_status === 'Paid' ? 'Paid' : 'Unpaid'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-green-700 font-medium">Payment Method:</span>
-                  <span className="font-semibold text-gray-900">{generatedBill.payment_method}</span>
-                </div>
-                {generatedBill.cash_received > 0 && (
-                  <>
-                    <div className="flex justify-between text-sm mb-2 border-t pt-2 mt-2">
-                      <span className="text-green-700 font-medium">Cash Received:</span>
-                      <span className="font-semibold text-gray-900">{formatPKR(generatedBill.cash_received)}</span>
-                    </div>
-                    {generatedBill.change > 0 && (
-                      <div className="flex justify-between text-sm mb-2">
-                        <span className="text-green-700 font-medium">Change Returned:</span>
-                        <span className="font-semibold text-green-800">{formatPKR(generatedBill.change)}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="flex justify-between text-sm mt-2 border-t pt-2">
-                  <span className="text-green-700 font-medium">Bill ID:</span>
-                  <span className="font-semibold text-gray-900">#{generatedBill.bill_id}</span>
-                </div>
-              </div>
-
-              {/* Action Buttons - Hidden in print */}
-              <div className="flex gap-3 pt-4 no-print">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setReceiptModalOpen(false);
-                    setGeneratedBill(null);
-                  }}
-                  className="flex-1"
-                >
-                  Close
-                </Button>
-                <Button
-                  onClick={handlePrintReceipt}
-                  className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold"
-                >
-                  <Printer className="w-4 h-4 mr-2" />
-                  Print Receipt
-                </Button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </Modal>
       </div>
     </AccountantLayout>
