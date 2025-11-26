@@ -68,18 +68,24 @@ export default function OrderManagementPage() {
    * Auto-print bill receipt when the receipt modal opens
    * This covers both newly generated bills and viewing paid receipts.
    */
+  // Debug: Log generatedBill changes to verify items are present
   useEffect(() => {
-    if (receiptModalOpen && generatedBill) {
-      const timer = setTimeout(() => {
-        try {
-          handlePrintReceipt();
-        } catch (error) {
-          console.error('Error auto-printing receipt:', error);
-        }
-      }, 400); // small delay to ensure DOM is ready
-      return () => clearTimeout(timer);
+    if (generatedBill) {
+      console.log('=== Generated Bill State ===');
+      console.log('Bill ID:', generatedBill.bill_id);
+      console.log('Order ID:', generatedBill.order_id);
+      console.log('Items count:', generatedBill.items?.length || 0);
+      console.log('Items:', generatedBill.items);
+      console.log('Subtotal:', generatedBill.subtotal);
+      console.log('Grand Total:', generatedBill.grand_total);
+      
+      if (!generatedBill.items || generatedBill.items.length === 0) {
+        console.error('❌ WARNING: Generated bill has no items!');
+      } else {
+        console.log('✅ Generated bill has items:', generatedBill.items.length);
+      }
     }
-  }, [receiptModalOpen, generatedBill]);
+  }, [generatedBill]);
 
   // Debug: Log orders state changes
   useEffect(() => {
@@ -1910,6 +1916,22 @@ export default function OrderManagementPage() {
       return;
     }
     
+    // Validate that items are present
+    const items = generatedBill.items || [];
+    if (!items || items.length === 0) {
+      console.error('❌ Cannot print: No items in generated bill');
+      console.error('Generated bill:', generatedBill);
+      setAlert({ 
+        type: 'error', 
+        message: 'Cannot print receipt: No order items found. Please regenerate the bill.' 
+      });
+      return;
+    }
+    
+    console.log('=== Printing Receipt ===');
+    console.log('Items count:', items.length);
+    console.log('Items:', items);
+    
     try {
       // Get the receipt print area content
       const printContent = document.getElementById('receipt-print-area');
@@ -1918,9 +1940,6 @@ export default function OrderManagementPage() {
         return;
       }
 
-      // Get order items to determine categories
-      const items = generatedBill.items || orderItems || [];
-      
       // Get categories from items
       const categoryIds = [...new Set(
         items
@@ -1930,6 +1949,9 @@ export default function OrderManagementPage() {
 
       // Prepare receipt content
       const receiptHTML = printContent.innerHTML;
+      
+      console.log('Receipt HTML length:', receiptHTML.length);
+      console.log('Category IDs:', categoryIds);
       
       // Call backend API to print directly to network printers
       // Backend will handle printing to two default printers based on category
@@ -3310,7 +3332,20 @@ export default function OrderManagementPage() {
                           date: new Date().toLocaleString(),
                         };
                         
-                        console.log('Receipt data prepared:', receiptData);
+                        console.log('=== Receipt Data Prepared ===');
+                        console.log('Receipt data:', receiptData);
+                        console.log('Items count:', formattedItems.length);
+                        console.log('Items:', formattedItems);
+                        
+                        // Validate that items are present
+                        if (!formattedItems || formattedItems.length === 0) {
+                          console.error('❌ No items found in receipt data!');
+                          setAlert({ 
+                            type: 'error', 
+                            message: 'Cannot generate receipt: No order items found. Please ensure the order has items before generating the bill.' 
+                          });
+                          return;
+                        }
                         
                         // Store bill data for receipt
                         setGeneratedBill(receiptData);
@@ -3337,24 +3372,14 @@ export default function OrderManagementPage() {
                           // Continue even if status update fails
                         }
                         
-                        // Show receipt modal for printing
-                        setReceiptModalOpen(true);
-                        setDetailsModalOpen(false);
-                        
                         // Refresh orders list
                         fetchOrders();
                         
-                        // Auto-print receipt after a short delay (allowing modal to render)
-                        setTimeout(() => {
-                          window.print();
-                          // Close receipt modal after printing
-                          setTimeout(() => {
-                            setReceiptModalOpen(false);
-                            setGeneratedBill(null);
-                          }, 1000);
-                        }, 500);
+                        // Show receipt modal for printing (don't auto-print, let user click print button)
+                        setReceiptModalOpen(true);
+                        setDetailsModalOpen(false);
                         
-                        setAlert({ type: 'success', message: 'Bill generated successfully! Receipt will be printed automatically.' });
+                        setAlert({ type: 'success', message: 'Bill generated successfully! Click "Print Receipt" to print.' });
                       } else {
                         // More detailed error message - check all possible error locations
                         let errorMsg = 'Failed to generate bill';
@@ -3796,72 +3821,99 @@ export default function OrderManagementPage() {
           size="lg"
           showCloseButton={true}
         >
-          {generatedBill && (
-            <div className="space-y-4" id="receipt-content">
-              {/* Thermal Receipt - Print View */}
-              <div id="receipt-print-area" className="bg-white p-4 rounded-lg border border-gray-200">
-                <ThermalReceipt 
-                  order={{
-                    order_id: generatedBill.order_id,
-                    orderid: generatedBill.order_number,
-                    g_total_amount: generatedBill.subtotal || 0,
-                    total: generatedBill.subtotal || 0,
-                    subtotal: generatedBill.subtotal || 0,
-                    service_charge: generatedBill.service_charge || 0,
-                    discount_amount: generatedBill.discount_amount || 0,
-                    discount: generatedBill.discount_amount || 0,
-                    net_total_amount: generatedBill.grand_total || 0,
-                    netTotal: generatedBill.grand_total || 0,
-                    grand_total: generatedBill.grand_total || 0,
-                    final_amount: generatedBill.grand_total || 0,
-                    payment_method: generatedBill.payment_method || 'Cash',
-                    payment_mode: generatedBill.payment_method || 'Cash',
-                    payment_status: generatedBill.payment_status || 'Unpaid',
-                    cash_received: generatedBill.cash_received || 0,
-                    change: generatedBill.change || 0,
-                    bill_id: generatedBill.bill_id,
-                    created_at: generatedBill.date || new Date().toISOString(),
-                    date: generatedBill.date || new Date().toISOString(),
-                    order_type: generatedBill.order_type || 'Dine In',
-                    table_number: generatedBill.table_number || ''
-                  }}
-                  items={generatedBill.items || []}
-                  branchName={getBranchName() || ''}
-                  showPaidAmount={generatedBill.payment_status === 'Paid'}
-                />
-                {/* Debug info - remove in production */}
-                {process.env.NODE_ENV === 'development' && (
-                  <div style={{ display: 'none' }}>
-                    Debug: Items count: {generatedBill.items?.length || 0}
-                    {generatedBill.items && generatedBill.items.length > 0 && (
-                      <pre>{JSON.stringify(generatedBill.items.slice(0, 2), null, 2)}</pre>
-                    )}
-                  </div>
-                )}
-              </div>
+          {generatedBill && (() => {
+            // Debug: Log items when rendering receipt
+            const receiptItems = generatedBill.items || [];
+            console.log('=== Rendering Receipt Modal ===');
+            console.log('Items count:', receiptItems.length);
+            console.log('Items:', receiptItems);
+            console.log('Generated bill:', generatedBill);
+            
+            if (receiptItems.length === 0) {
+              console.error('❌ ERROR: Receipt modal opened with NO ITEMS!');
+            }
+            
+            return (
+              <div className="space-y-4" id="receipt-content">
+                {/* Thermal Receipt - Print View */}
+                <div id="receipt-print-area" className="bg-white p-4 rounded-lg border border-gray-200">
+                  <ThermalReceipt 
+                    order={{
+                      order_id: generatedBill.order_id,
+                      orderid: generatedBill.order_number,
+                      g_total_amount: generatedBill.subtotal || 0,
+                      total: generatedBill.subtotal || 0,
+                      subtotal: generatedBill.subtotal || 0,
+                      service_charge: generatedBill.service_charge || 0,
+                      discount_amount: generatedBill.discount_amount || 0,
+                      discount: generatedBill.discount_amount || 0,
+                      net_total_amount: generatedBill.grand_total || 0,
+                      netTotal: generatedBill.grand_total || 0,
+                      grand_total: generatedBill.grand_total || 0,
+                      final_amount: generatedBill.grand_total || 0,
+                      payment_method: generatedBill.payment_method || 'Cash',
+                      payment_mode: generatedBill.payment_method || 'Cash',
+                      payment_status: generatedBill.payment_status || 'Unpaid',
+                      cash_received: generatedBill.cash_received || 0,
+                      change: generatedBill.change || 0,
+                      bill_id: generatedBill.bill_id,
+                      created_at: generatedBill.date || new Date().toISOString(),
+                      date: generatedBill.date || new Date().toISOString(),
+                      order_type: generatedBill.order_type || 'Dine In',
+                      table_number: generatedBill.table_number || ''
+                    }}
+                    items={receiptItems}
+                    branchName={getBranchName() || ''}
+                    showPaidAmount={generatedBill.payment_status === 'Paid'}
+                  />
+                  {/* Debug info - visible in development */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                      <strong>Debug Info:</strong>
+                      <br />Items count: {receiptItems.length}
+                      <br />Order ID: {generatedBill.order_id}
+                      <br />Bill ID: {generatedBill.bill_id}
+                      {receiptItems.length > 0 && (
+                        <>
+                          <br />First item: {receiptItems[0].dish_name || receiptItems[0].name || 'N/A'}
+                          <br />
+                          <pre className="mt-2 text-xs overflow-auto max-h-32">
+                            {JSON.stringify(receiptItems.slice(0, 2), null, 2)}
+                          </pre>
+                        </>
+                      )}
+                      {receiptItems.length === 0 && (
+                        <div className="text-red-600 font-bold mt-2">
+                          ⚠️ NO ITEMS FOUND - Receipt will be empty!
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-              {/* Action Buttons - Hidden in print */}
-              <div className="flex gap-3 pt-4 no-print">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setReceiptModalOpen(false);
-                    setGeneratedBill(null);
-                  }}
-                  className="flex-1"
-                >
-                  Close
-                </Button>
-                <Button
-                  onClick={handlePrintReceipt}
-                  className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold"
-                >
-                  <Printer className="w-4 h-4 mr-2" />
-                  Print Receipt
-                </Button>
+                {/* Action Buttons - Hidden in print */}
+                <div className="flex gap-3 pt-4 no-print">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setReceiptModalOpen(false);
+                      setGeneratedBill(null);
+                    }}
+                    className="flex-1"
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    onClick={handlePrintReceipt}
+                    className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold"
+                  >
+                    <Printer className="w-4 h-4 mr-2" />
+                    Print Receipt
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </Modal>
       </div>
     </AdminLayout>
