@@ -1901,7 +1901,8 @@ export default function OrderManagementPage() {
   };
 
   /**
-   * Handle print receipt - Print the receipt (may be unpaid or paid)
+   * Handle print receipt - Print directly to network printers based on category
+   * No dialog, prints to two default printers automatically
    */
   const handlePrintReceipt = async () => {
     if (!generatedBill) {
@@ -1909,77 +1910,119 @@ export default function OrderManagementPage() {
       return;
     }
     
-    // Get the receipt print area
-    const printContent = document.getElementById('receipt-print-area');
-    if (!printContent) {
-      // Fallback to window.print if print area not found
-      window.print();
-      return;
-    }
-    
-    // Create a new window for printing
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      setAlert({ type: 'error', message: 'Please allow popups to print receipt' });
-      return;
-    }
-    
-    // Write the receipt content to the print window
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Receipt - Restaurant Khas</title>
-          <style>
-            @media print {
-              @page {
-                size: 80mm auto;
-                margin: 0;
-              }
-              body {
-                margin: 0;
-                padding: 0;
-              }
-            }
-            body {
-              font-family: 'Courier New', monospace;
-              margin: 0;
-              padding: 10px;
-            }
-          </style>
-        </head>
-        <body>${printContent.innerHTML}</body>
-      </html>
-    `);
-    printWindow.document.close();
-    
-    // Wait for content to load, then print
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
+    try {
+      // Get the receipt print area content
+      const printContent = document.getElementById('receipt-print-area');
+      if (!printContent) {
+        setAlert({ type: 'error', message: 'Receipt content not found' });
+        return;
+      }
+
+      // Get order items to determine categories
+      const items = generatedBill.items || orderItems || [];
       
-      // If bill is unpaid, update status to "Bill Generated" when printed
-      if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
-        try {
-          const orderIdValue = generatedBill.order_id;
-          const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-          
-          const statusPayload = { 
-            status: 'Bill Generated',
-            order_id: orderIdValue,
-            orderid: orderidValue
-          };
-          
-          apiPost('/chnageorder_status.php', statusPayload).then(() => {
-            fetchOrders(); // Refresh orders list
-          }).catch(error => {
-            console.error('Error updating order status on print:', error);
+      // Get categories from items
+      const categoryIds = [...new Set(
+        items
+          .map(item => item.category_id || item.kitchen_id)
+          .filter(Boolean)
+      )];
+
+      // Prepare receipt content
+      const receiptHTML = printContent.innerHTML;
+      
+      // Call backend API to print directly to network printers
+      // Backend will handle printing to two default printers based on category
+      const printResult = await apiPost('/print_receipt_direct.php', {
+        order_id: generatedBill.order_id,
+        bill_id: generatedBill.bill_id,
+        receipt_content: receiptHTML,
+        category_ids: categoryIds,
+        items: items.map(item => ({
+          item_id: item.dish_id || item.id,
+          category_id: item.category_id || item.kitchen_id,
+          name: item.dish_name || item.name,
+          quantity: item.quantity || item.qty,
+          price: item.price || item.rate
+        })),
+        terminal: getTerminal(),
+        branch_id: getBranchId() || getTerminal()
+      });
+
+      if (printResult.success && printResult.data) {
+        const response = printResult.data;
+        
+        if (response.success === true) {
+          // Show success message with printer info
+          const printerNames = response.printers || ['Default Printers'];
+          setAlert({ 
+            type: 'success', 
+            message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
           });
-        } catch (error) {
-          console.error('Error updating order status on print:', error);
+          
+          // If bill is unpaid, update status to "Bill Generated" when printed
+          if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+            try {
+              const orderIdValue = generatedBill.order_id;
+              const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+              
+              const statusPayload = { 
+                status: 'Bill Generated',
+                order_id: orderIdValue,
+                orderid: orderidValue
+              };
+              
+              await apiPost('/chnageorder_status.php', statusPayload);
+              fetchOrders(); // Refresh orders list
+            } catch (error) {
+              console.error('Error updating order status on print:', error);
+            }
+          }
+        } else {
+          setAlert({ 
+            type: 'warning', 
+            message: response.message || 'Print job sent, but some printers may not be available' 
+          });
+        }
+      } else {
+        // Fallback to silent print if API fails
+        console.warn('Direct print API failed, using fallback method');
+        const printWindow = window.open('', '_blank', 'width=1,height=1');
+        if (printWindow) {
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Receipt - Restaurant Khas</title>
+                <style>
+                  @media print {
+                    @page { size: 80mm auto; margin: 0; }
+                    body { margin: 0; padding: 0; }
+                  }
+                  body {
+                    font-family: system-ui, -apple-system, sans-serif;
+                    margin: 0;
+                    padding: 10px;
+                  }
+                </style>
+              </head>
+              <body>${receiptHTML}</body>
+            </html>
+          `);
+          printWindow.document.close();
+          setTimeout(() => {
+            printWindow.print();
+            setTimeout(() => printWindow.close(), 500);
+          }, 250);
         }
       }
-    }, 250);
+    } catch (error) {
+      console.error('Error printing receipt:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing receipt. Please try again or contact support.' 
+      });
+    }
   };
 
   /**

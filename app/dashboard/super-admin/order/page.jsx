@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
-import { apiGet, apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 
@@ -1505,31 +1505,84 @@ export default function OrderManagementPage() {
    */
   const handlePrintReceipt = async () => {
     if (!generatedBill || !generatedBill.order_id) {
-      window.print(); // Just print if no order ID
+      setAlert({ type: 'error', message: 'No receipt data available to print' });
       return;
     }
-
-    // Print the receipt
-    window.print();
     
-    // If bill is unpaid, update status to "Bill Generated" when printed
-    if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id) {
-      try {
-        const orderIdValue = generatedBill.order_id;
-        const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-        
-        const statusPayload = { 
-          status: 'Bill Generated',
-          order_id: orderIdValue,
-          orderid: orderidValue
-        };
-        
-        await apiPost('/chnageorder_status.php', statusPayload);
-        fetchOrders(); // Refresh orders list
-      } catch (error) {
-        console.error('Error updating order status on print:', error);
-        // Continue even if status update fails
+    try {
+      // Get the receipt print area content
+      const printContent = document.getElementById('receipt-print-area');
+      if (!printContent) {
+        setAlert({ type: 'error', message: 'Receipt content not found' });
+        return;
       }
+
+      // Get order items to determine categories
+      const items = generatedBill.items || [];
+      const categoryIds = [...new Set(
+        items
+          .map(item => item.category_id || item.kitchen_id)
+          .filter(Boolean)
+      )];
+
+      // Prepare receipt content
+      const receiptHTML = printContent.innerHTML;
+      
+      // Call backend API to print directly to network printers
+      const printResult = await apiPost('/print_receipt_direct.php', {
+        order_id: generatedBill.order_id,
+        bill_id: generatedBill.bill_id,
+        receipt_content: receiptHTML,
+        category_ids: categoryIds,
+        items: items.map(item => ({
+          item_id: item.dish_id || item.id,
+          category_id: item.category_id || item.kitchen_id,
+          name: item.dish_name || item.name,
+          quantity: item.quantity || item.qty,
+          price: item.price || item.rate
+        })),
+        terminal: getTerminal(),
+        branch_id: getBranchId() || getTerminal()
+      });
+
+      if (printResult.success && printResult.data?.success === true) {
+        const response = printResult.data;
+        const printerNames = response.printers || ['Default Printers'];
+        setAlert({ 
+          type: 'success', 
+          message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
+        });
+        
+        // If bill is unpaid, update status to "Bill Generated" when printed
+        if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id) {
+          try {
+            const orderIdValue = generatedBill.order_id;
+            const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+            
+            const statusPayload = { 
+              status: 'Bill Generated',
+              order_id: orderIdValue,
+              orderid: orderidValue
+            };
+            
+            await apiPost('/chnageorder_status.php', statusPayload);
+            fetchOrders(); // Refresh orders list
+          } catch (error) {
+            console.error('Error updating order status on print:', error);
+          }
+        }
+      } else {
+        setAlert({ 
+          type: 'warning', 
+          message: printResult.data?.message || 'Print job sent, but some printers may not be available' 
+        });
+      }
+    } catch (error) {
+      console.error('Error printing receipt:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing receipt. Please try again or contact support.' 
+      });
     }
   };
 
