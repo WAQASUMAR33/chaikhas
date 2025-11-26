@@ -101,7 +101,7 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
           margin: 0 auto;
           padding: 8mm 5mm;
           background: white;
-          font-family: 'Courier New', monospace;
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           font-size: 11px;
           line-height: 1.4;
           color: #000;
@@ -358,7 +358,7 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         <div className="divider">━━━━━━━━━━━━━━━━━━━━━━━━</div>
 
         {/* Items Table */}
-        {orderItems.length > 0 && (
+        {orderItems && orderItems.length > 0 ? (
           <table className="items-table">
             <thead>
               <tr>
@@ -377,7 +377,7 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
                 // Calculate total if not provided
                 const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || (itemPrice * itemQty));
                 
-                // Truncate long item names for 80mm width (max ~30 chars)
+                // Truncate long item names for 80mm width (max ~28 chars)
                 const maxItemNameLength = 28;
                 const displayName = itemName.length > maxItemNameLength ? itemName.substring(0, maxItemNameLength - 3) + '...' : itemName;
                 
@@ -392,6 +392,10 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
               })}
             </tbody>
           </table>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '10px', fontSize: '11px', color: '#666' }}>
+            No items found
+          </div>
         )}
 
         <div className="divider">━━━━━━━━━━━━━━━━━━━━━━━━</div>

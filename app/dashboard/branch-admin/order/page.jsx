@@ -64,6 +64,23 @@ export default function OrderManagementPage() {
     return () => clearInterval(interval);
   }, [filter, dateFilter, customDate]);
 
+  /**
+   * Auto-print bill receipt when the receipt modal opens
+   * This covers both newly generated bills and viewing paid receipts.
+   */
+  useEffect(() => {
+    if (receiptModalOpen && generatedBill) {
+      const timer = setTimeout(() => {
+        try {
+          handlePrintReceipt();
+        } catch (error) {
+          console.error('Error auto-printing receipt:', error);
+        }
+      }, 400); // small delay to ensure DOM is ready
+      return () => clearTimeout(timer);
+    }
+  }, [receiptModalOpen, generatedBill]);
+
   // Debug: Log orders state changes
   useEffect(() => {
     if (orders.length > 0) {
@@ -1689,10 +1706,18 @@ export default function OrderManagementPage() {
       
       // If order is completed and it's a Dine In order, update table status to Available
       // This should happen regardless of orderUpdateSuccess since payment was successful
-      if (orderDetails && orderDetails.order_type === 'Dine In' && orderDetails.table_id) {
+      // Use generatedBill data if orderDetails is not available
+      const orderForTableUpdate = orderDetails || generatedBill;
+      if (orderForTableUpdate && orderForTableUpdate.order_type === 'Dine In' && (orderForTableUpdate.table_id || orderForTableUpdate.table_number)) {
         try {
           const terminal = getTerminal();
           const branchId = getBranchId();
+          const tableId = orderForTableUpdate.table_id || orderForTableUpdate.table_number;
+          
+          console.log('🔄 Updating table status to Available after order completion');
+          console.log('Table ID:', tableId);
+          console.log('Order type:', orderForTableUpdate.order_type);
+          
           // Fetch current table details
           const tablesResult = await apiPost('/get_tables.php', { 
             terminal,
@@ -1707,22 +1732,47 @@ export default function OrderManagementPage() {
             tablesData = tablesResult.data.data;
           }
           
-          const table = tablesData.find(t => (t.table_id || t.id) == orderDetails.table_id);
+          const table = tablesData.find(t => {
+            const tId = t.table_id || t.id;
+            const tNum = t.table_number || t.table_name || t.number;
+            return tId == tableId || tNum == tableId || String(tId) === String(tableId);
+          });
+          
           if (table) {
             // Update table status to Available
-            console.log('🔄 Updating table status to Available after payment for table:', orderDetails.table_id);
+            console.log('🔄 Updating table status to Available for table:', tableId);
             const updateResult = await apiPost('/table_management.php', {
-              table_id: parseInt(orderDetails.table_id),
-              hall_id: table.hall_id || table.hall_ID,
-              table_number: table.table_number || table.table_name || table.number,
+              table_id: parseInt(table.table_id || table.id || tableId),
+              hall_id: table.hall_id || table.hall_ID || orderForTableUpdate.hall_id,
+              table_number: table.table_number || table.table_name || table.number || orderForTableUpdate.table_number,
               capacity: table.capacity || table.Capacity || 0,
               status: 'available', // Use lowercase to match API
               terminal: terminal,
-              branch_id: branchId || terminal
+              branch_id: branchId || terminal,
+              action: 'update'
             });
-            console.log('✅ Table status update result after payment:', updateResult);
+            console.log('✅ Table status updated to Available:', updateResult);
           } else {
-            console.warn('⚠️ Table not found for table_id:', orderDetails.table_id);
+            console.warn('⚠️ Table not found for table_id:', tableId);
+            // Try to update anyway with available data
+            if (tableId) {
+              console.log('🔄 Attempting table update with available data...');
+              try {
+                await apiPost('/table_management.php', {
+                  table_id: parseInt(tableId),
+                  hall_id: orderForTableUpdate.hall_id || 0,
+                  table_number: orderForTableUpdate.table_number || String(tableId),
+                  capacity: 0,
+                  status: 'available',
+                  terminal: terminal,
+                  branch_id: branchId || terminal,
+                  action: 'update'
+                });
+                console.log('✅ Table status updated (fallback method)');
+              } catch (fallbackError) {
+                console.error('❌ Fallback table update failed:', fallbackError);
+              }
+            }
           }
         } catch (error) {
           console.error('❌ Error updating table status after payment:', error);
@@ -2041,6 +2091,47 @@ export default function OrderManagementPage() {
   };
 
   /**
+   * Reprint kitchen receipt for a specific kitchen
+   */
+  const reprintKitchenReceipt = async (orderId, kitchenId, branchId) => {
+    try {
+      setAlert({ type: '', message: '' });
+      
+      const result = await apiPost('/print_kitchen_receipt.php', {
+        order_id: orderId,
+        kitchen_id: kitchenId,
+        branch_id: branchId || getBranchId() || getTerminal()
+      });
+
+      if (result.success && result.data) {
+        const response = result.data;
+        if (response.success === true) {
+          setAlert({ 
+            type: 'success', 
+            message: `Kitchen receipt sent to ${response.kitchen_name || 'kitchen'} printer${response.printer_ip ? ` (${response.printer_ip})` : ''}` 
+          });
+        } else {
+          setAlert({ 
+            type: 'error', 
+            message: response.message || 'Failed to print kitchen receipt' 
+          });
+        }
+      } else {
+        setAlert({ 
+          type: 'error', 
+          message: result.data?.message || 'Failed to print kitchen receipt' 
+        });
+      }
+    } catch (error) {
+      console.error('Error reprinting kitchen receipt:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing kitchen receipt: ' + (error.message || 'Network error') 
+      });
+    }
+  };
+
+  /**
    * Table actions
    */
   const actions = (row) => {
@@ -2351,27 +2442,96 @@ export default function OrderManagementPage() {
                 </div>
               </div>
 
+              {/* Kitchen Receipt Reprint Section */}
+              {(() => {
+                // Get unique kitchen IDs from order items
+                const kitchenIds = [...new Set(
+                  orderItems
+                    .map(item => item.kitchen_id || item.kitchen_ID)
+                    .filter(Boolean)
+                )];
+                
+                if (kitchenIds.length > 0) {
+                  return (
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-200 shadow-sm">
+                      <h3 className="font-bold text-lg text-gray-900 mb-3 flex items-center gap-2">
+                        <Printer className="w-5 h-5 text-blue-600" />
+                        Kitchen Receipts
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-3">
+                        This order has items from {kitchenIds.length} kitchen{kitchenIds.length > 1 ? 's' : ''}. 
+                        Receipts are automatically printed when orders are created.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {kitchenIds.map((kitchenId) => (
+                          <Button
+                            key={kitchenId}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const orderId = orderDetails.order_id || orderDetails.id;
+                              const branchId = orderDetails.branch_id || getBranchId() || getTerminal();
+                              reprintKitchenReceipt(orderId, kitchenId, branchId);
+                            }}
+                            className="bg-white hover:bg-blue-50 border-blue-300 text-blue-700"
+                          >
+                            <Printer className="w-4 h-4 mr-2" />
+                            Reprint Kitchen {kitchenId}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {/* Order Items with enhanced styling */}
               {orderItems.length > 0 && (
                 <div>
                   <h3 className="font-bold text-lg text-gray-900 mb-4 flex items-center gap-2">
                     <span className="w-1 h-5 bg-[#FF5F15] rounded-full"></span>
                     Order Items
+                    {(() => {
+                      const kitchenIds = [...new Set(
+                        orderItems
+                          .map(item => item.kitchen_id || item.kitchen_ID)
+                          .filter(Boolean)
+                      )];
+                      if (kitchenIds.length > 0) {
+                        return (
+                          <span className="ml-2 px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                            {kitchenIds.length} Kitchen{kitchenIds.length > 1 ? 's' : ''}
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </h3>
                   <div className="space-y-3 bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm">
-                    {orderItems.map((item, index) => (
-                      <div key={index} className="flex justify-between items-center py-3 px-4 bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
-                        <div className="flex-1">
-                          <p className="font-semibold text-gray-900 text-base">{item.title || item.dish_name || 'Item'}</p>
-                          <p className="text-sm text-gray-500 mt-0.5">
-                            {formatPKR(item.price || item.rate || 0)} × {item.quantity || item.qnty || 0}
+                    {orderItems.map((item, index) => {
+                      const kitchenId = item.kitchen_id || item.kitchen_ID;
+                      return (
+                        <div key={index} className="flex justify-between items-center py-3 px-4 bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-gray-900 text-base">{item.title || item.dish_name || 'Item'}</p>
+                              {kitchenId && (
+                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-100 text-orange-700">
+                                  Kitchen {kitchenId}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500 mt-0.5">
+                              {formatPKR(item.price || item.rate || 0)} × {item.quantity || item.qnty || 0}
+                            </p>
+                          </div>
+                          <p className="font-bold text-lg text-gray-900 ml-4">
+                            {formatPKR(item.total_amount || item.total || 0)}
                           </p>
                         </div>
-                        <p className="font-bold text-lg text-gray-900 ml-4">
-                          {formatPKR(item.total_amount || item.total || 0)}
-                        </p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2655,13 +2815,69 @@ export default function OrderManagementPage() {
               })() && (
                 <div className="pt-2">
                   <Button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Fetch order items if not already loaded
+                      let itemsForReceipt = orderItems || [];
+                      
+                      if (itemsForReceipt.length === 0 || (itemsForReceipt.length > 0 && itemsForReceipt[0]?.order_id !== orderDetails.order_id)) {
+                        try {
+                          console.log('=== Fetching Order Items for Paid Receipt ===');
+                          const orderId = orderDetails.order_id || orderDetails.id;
+                          const orderNumber = orderDetails.orderid || orderDetails.order_number || (orderId ? `ORD-${orderId}` : '');
+                          
+                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                            order_id: orderId,
+                            orderid: orderNumber
+                          });
+                          
+                          // Extract items from response
+                          if (itemsResult.success && itemsResult.data) {
+                            if (Array.isArray(itemsResult.data)) {
+                              itemsForReceipt = itemsResult.data;
+                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                              itemsForReceipt = itemsResult.data.data;
+                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                              itemsForReceipt = itemsResult.data.items;
+                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                              itemsForReceipt = itemsResult.data.order_items;
+                            } else if (typeof itemsResult.data === 'object') {
+                              for (const key in itemsResult.data) {
+                                if (Array.isArray(itemsResult.data[key])) {
+                                  itemsForReceipt = itemsResult.data[key];
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                          console.log('✅ Fetched items for paid receipt:', itemsForReceipt.length);
+                        } catch (error) {
+                          console.error('Error fetching order items for paid receipt:', error);
+                          // Continue with orderItems from state if fetch fails
+                          if (orderItems && orderItems.length > 0) {
+                            itemsForReceipt = orderItems;
+                          }
+                        }
+                      }
+                      
+                      // Format items for receipt
+                      const formattedItems = (itemsForReceipt || []).map(item => ({
+                        dish_id: item.dish_id || item.id || item.product_id,
+                        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                        name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                      }));
+                      
                       // Prepare paid bill receipt data
                       const receiptData = {
                         bill_id: existingBill.bill_id,
                         order_id: orderDetails.order_id || orderDetails.id,
                         order_number: orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id),
                         order_type: orderDetails.order_type || 'Dine In',
+                        table_number: orderDetails.table_number || orderDetails.table_id || '',
                         subtotal: parseFloat(existingBill.total_amount || orderDetails.g_total_amount || orderDetails.total || 0),
                         service_charge: parseFloat(existingBill.service_charge || 0),
                         discount_percentage: existingBill.discount > 0 && existingBill.total_amount > 0 
@@ -2671,11 +2887,13 @@ export default function OrderManagementPage() {
                         grand_total: parseFloat(existingBill.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
                         payment_method: existingBill.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: 'Paid',
-                        cash_received: parseFloat(existingBill.grand_total || 0), // Assume cash received equals grand total for paid bills
-                        change: 0,
-                        items: orderItems,
+                        cash_received: parseFloat(existingBill.cash_received || existingBill.grand_total || 0),
+                        change: parseFloat(existingBill.change || 0),
+                        items: formattedItems,
                         date: existingBill.created_at || existingBill.updated_at || new Date().toLocaleString(),
                       };
+                      
+                      console.log('✅ Paid receipt data prepared with items:', formattedItems.length);
                       
                       setGeneratedBill(receiptData);
                       setReceiptModalOpen(true);
@@ -2949,18 +3167,88 @@ export default function OrderManagementPage() {
                           discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
                         }
                         
+                        // ALWAYS fetch order items when generating bill to ensure we have the latest data
+                        let itemsForReceipt = [];
+                        try {
+                          console.log('=== Fetching Order Items for Bill Generation ===');
+                          const orderId = billOrder.order_id || billOrder.id;
+                          const orderNumber = billOrder.orderid || billOrder.order_number || (orderId ? `ORD-${orderId}` : '');
+                          
+                          console.log('Order ID:', orderId);
+                          console.log('Order Number:', orderNumber);
+                          
+                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                            order_id: orderId,
+                            orderid: orderNumber
+                          });
+                          
+                          console.log('Items API response:', itemsResult);
+                          console.log('Items API response data:', JSON.stringify(itemsResult.data, null, 2));
+                          
+                          // Extract items from response - handle multiple structures
+                          if (itemsResult.success && itemsResult.data) {
+                            if (Array.isArray(itemsResult.data)) {
+                              itemsForReceipt = itemsResult.data;
+                              console.log('✅ Found items in result.data (array):', itemsForReceipt.length);
+                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                              itemsForReceipt = itemsResult.data.data;
+                              console.log('✅ Found items in result.data.data:', itemsForReceipt.length);
+                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                              itemsForReceipt = itemsResult.data.items;
+                              console.log('✅ Found items in result.data.items:', itemsForReceipt.length);
+                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                              itemsForReceipt = itemsResult.data.order_items;
+                              console.log('✅ Found items in result.data.order_items:', itemsForReceipt.length);
+                            } else if (typeof itemsResult.data === 'object') {
+                              // Search for any array in the response
+                              for (const key in itemsResult.data) {
+                                if (Array.isArray(itemsResult.data[key])) {
+                                  itemsForReceipt = itemsResult.data[key];
+                                  console.log(`✅ Found items in result.data.${key}:`, itemsForReceipt.length);
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                          
+                          if (itemsForReceipt.length === 0) {
+                            console.warn('⚠️ No items found in API response. Trying orderItems from state...');
+                            // Fallback to orderItems from state if API returns empty
+                            if (orderItems && orderItems.length > 0) {
+                              itemsForReceipt = orderItems;
+                              console.log('✅ Using orderItems from state:', itemsForReceipt.length);
+                            }
+                          }
+                          
+                          console.log('✅ Final items for receipt:', itemsForReceipt.length);
+                          if (itemsForReceipt.length > 0) {
+                            console.log('Sample item:', JSON.stringify(itemsForReceipt[0], null, 2));
+                          }
+                        } catch (error) {
+                          console.error('❌ Error fetching order items for bill:', error);
+                          // Fallback to orderItems from state if fetch fails
+                          if (orderItems && orderItems.length > 0) {
+                            itemsForReceipt = orderItems;
+                            console.log('✅ Using orderItems from state as fallback:', itemsForReceipt.length);
+                          } else {
+                            console.error('❌ No items available - neither from API nor from state');
+                          }
+                        }
+                        
                         // Store bill data for receipt - use calculated values from frontend
                         // Ensure orderItems are properly formatted for receipt
-                        const formattedItems = (orderItems || []).map(item => ({
-                          dish_id: item.dish_id || item.id,
-                          dish_name: item.dish_name || item.name || item.title || 'Item',
-                          name: item.dish_name || item.name || item.title || 'Item',
+                        const formattedItems = (itemsForReceipt || []).map(item => ({
+                          dish_id: item.dish_id || item.id || item.product_id,
+                          dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+                          name: item.dish_name || item.name || item.title || item.item_name || 'Item',
                           price: parseFloat(item.price || item.rate || item.unit_price || 0),
                           quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
                           qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
-                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
                         }));
+                        
+                        console.log('✅ Formatted items for receipt:', formattedItems.length, formattedItems);
                         
                         const receiptData = {
                           bill_id: billId,
@@ -3498,6 +3786,15 @@ export default function OrderManagementPage() {
                   branchName={getBranchName() || ''}
                   showPaidAmount={generatedBill.payment_status === 'Paid'}
                 />
+                {/* Debug info - remove in production */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div style={{ display: 'none' }}>
+                    Debug: Items count: {generatedBill.items?.length || 0}
+                    {generatedBill.items && generatedBill.items.length > 0 && (
+                      <pre>{JSON.stringify(generatedBill.items.slice(0, 2), null, 2)}</pre>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons - Hidden in print */}

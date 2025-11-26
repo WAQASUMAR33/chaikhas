@@ -34,6 +34,7 @@ export default function CreateOrderPage() {
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [orderReceipt, setOrderReceipt] = useState(null);
+  const [printingStatus, setPrintingStatus] = useState(null);
 
   useEffect(() => {
     fetchHalls();
@@ -467,9 +468,22 @@ export default function CreateOrderPage() {
       setAlert({ type: 'error', message: 'Cart is empty. Please add items' });
       return;
     }
+    
+    // Check if table is already running (for Dine In orders)
+    if (orderType === 'Dine In' && selectedTable) {
+      const selectedTableData = tables.find(t => (t.table_id || t.id) == selectedTable);
+      if (selectedTableData) {
+        const tableStatus = (selectedTableData.status || selectedTableData.Status || '').toLowerCase();
+        if (tableStatus === 'running') {
+          setAlert({ type: 'error', message: `Table ${selectedTableData.table_number || selectedTable} is currently running. Please select an available table.` });
+          return;
+        }
+      }
+    }
 
     setPlacing(true);
     setAlert({ type: '', message: '' });
+    setPrintingStatus('Creating order...');
 
     try {
       const terminal = getTerminal();
@@ -506,6 +520,7 @@ export default function CreateOrderPage() {
       };
 
       // Use kitchen routing API for automatic kitchen assignment
+      // Backend automatically prints kitchen receipts after order creation
       const result = await apiPost('/create_order_with_kitchen.php', orderData);
 
       // Handle response - check for empty response first
@@ -524,21 +539,40 @@ export default function CreateOrderPage() {
             items: responseData.items || [],
             order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
           });
+          
+          // Show printing status
+          setPrintingStatus('Order created! Printing kitchen receipts...');
+          
+          // Wait a moment then update status
+          setTimeout(() => {
+            setPrintingStatus('Kitchen receipts sent to printers');
+            setTimeout(() => setPrintingStatus(null), 3000);
+          }, 1000);
+          
           setReceiptModalOpen(true);
           
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
+              const terminal = getTerminal();
+              const branchId = getBranchId();
+              const tableData = tables.find(t => (t.table_id || t.id) == selectedTable);
+              
+              console.log('🔄 Updating table status to Running for table:', selectedTable);
               await apiPost('/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
-                table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
-                capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
-                status: 'Running',
-                terminal: getTerminal(),
+                table_number: tableData?.table_number || tableData?.table_name || '',
+                capacity: tableData?.capacity || 0,
+                status: 'running', // Use lowercase to match API
+                terminal: terminal,
+                branch_id: branchId || terminal,
+                action: 'update'
               });
+              console.log('✅ Table status updated to Running');
             } catch (error) {
-              console.error('Error updating table status:', error);
+              console.error('❌ Error updating table status:', error);
+              // Don't block order placement if table update fails
             }
           }
           
@@ -548,9 +582,10 @@ export default function CreateOrderPage() {
           setSelectedHall('');
           setSelectedTable('');
           setComments('');
-          setAlert({ type: 'success', message: result.data.message || 'Order placed successfully!' });
+          setAlert({ type: 'success', message: result.data.message || 'Order placed successfully! Kitchen receipts are being printed automatically.' });
         } else if (result.data.success === false) {
           // API returned an error
+          setPrintingStatus(null);
           setAlert({ type: 'error', message: result.data.message || 'Failed to place order' });
         } else {
           // Direct data response (no nested structure)
@@ -559,21 +594,40 @@ export default function CreateOrderPage() {
             items: result.data.items || [],
             order_id: result.data.order_id || (result.data.order ? result.data.order.order_id : null),
           });
+          
+          // Show printing status
+          setPrintingStatus('Order created! Printing kitchen receipts...');
+          
+          // Wait a moment then update status
+          setTimeout(() => {
+            setPrintingStatus('Kitchen receipts sent to printers');
+            setTimeout(() => setPrintingStatus(null), 3000);
+          }, 1000);
+          
           setReceiptModalOpen(true);
           
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
+              const terminal = getTerminal();
+              const branchId = getBranchId();
+              const tableData = tables.find(t => (t.table_id || t.id) == selectedTable);
+              
+              console.log('🔄 Updating table status to Running for table:', selectedTable);
               await apiPost('/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
-                table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
-                capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
-                status: 'Running',
-                terminal: getTerminal(),
+                table_number: tableData?.table_number || tableData?.table_name || '',
+                capacity: tableData?.capacity || 0,
+                status: 'running', // Use lowercase to match API
+                terminal: terminal,
+                branch_id: branchId || terminal,
+                action: 'update'
               });
+              console.log('✅ Table status updated to Running');
             } catch (error) {
-              console.error('Error updating table status:', error);
+              console.error('❌ Error updating table status:', error);
+              // Don't block order placement if table update fails
             }
           }
           
@@ -583,13 +637,15 @@ export default function CreateOrderPage() {
           setSelectedHall('');
           setSelectedTable('');
           setComments('');
-          setAlert({ type: 'success', message: 'Order placed successfully!' });
+          setAlert({ type: 'success', message: 'Order placed successfully! Kitchen receipts are being printed automatically.' });
         }
       } else {
+        setPrintingStatus(null);
         setAlert({ type: 'error', message: result.data?.message || result.data?.rawResponse || 'Failed to place order' });
       }
     } catch (error) {
       console.error('Error placing order:', error);
+      setPrintingStatus(null);
       setAlert({ type: 'error', message: 'Failed to place order: ' + (error.message || 'Network error') });
     } finally {
       setPlacing(false);
@@ -619,6 +675,19 @@ export default function CreateOrderPage() {
             message={alert.message}
             onClose={() => setAlert({ type: '', message: '' })}
           />
+        )}
+
+        {/* Printing Status Indicator */}
+        {printingStatus && (
+          <div className="fixed top-4 right-4 bg-blue-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3 animate-fade-in">
+            {printingStatus.includes('Printing') && (
+              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+              </svg>
+            )}
+            <span className="font-medium">{printingStatus}</span>
+          </div>
         )}
 
         {/* Order Selection - Horizontal Row */}
@@ -686,11 +755,20 @@ export default function CreateOrderPage() {
                   className="block w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition shadow-sm hover:border-gray-300 disabled:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
                 >
                   <option value="">Select a table</option>
-                  {tables.map((table) => (
-                    <option key={table.table_id} value={table.table_id}>
-                      {table.table_number} - Capacity: {table.capacity} ({table.status})
-                    </option>
-                  ))}
+                  {tables.map((table) => {
+                    const tableStatus = (table.status || table.Status || 'available').toLowerCase();
+                    const isRunning = tableStatus === 'running';
+                    return (
+                      <option 
+                        key={table.table_id} 
+                        value={table.table_id}
+                        disabled={isRunning}
+                        style={isRunning ? { color: '#ef4444', fontStyle: 'italic' } : {}}
+                      >
+                        {table.table_number} - Capacity: {table.capacity} ({table.status || 'available'}){isRunning ? ' - Running' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             )}
