@@ -55,15 +55,27 @@ export default function OrderTakerDashboardPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
+      console.log('Fetching dashboard stats with terminal:', terminal);
       const result = await apiPost('/get_dashboard_stats.php', { terminal });
+      console.log('Dashboard stats API response:', result);
       
-      if (result.success && result.data && result.data.success) {
-        const data = result.data.data || {};
-        setStats({
-          todayOrders: data.todayOrders || 0,
-          todaySales: data.todaySales || 0,
-        });
+      let statsData = {};
+      
+      if (result.success && result.data) {
+        // Handle multiple response structures
+        if (result.data.success && result.data.data) {
+          statsData = result.data.data;
+        } else if (result.data.data && typeof result.data.data === 'object') {
+          statsData = result.data.data;
+        } else if (typeof result.data === 'object' && !Array.isArray(result.data)) {
+          statsData = result.data;
+        }
       }
+      
+      setStats({
+        todayOrders: statsData.todayOrders || statsData.today_orders || 0,
+        todaySales: statsData.todaySales || statsData.today_sales || 0,
+      });
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
     } finally {

@@ -97,22 +97,33 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         .receipt-container {
           width: 80mm;
           max-width: 80mm;
+          min-width: 80mm;
           margin: 0 auto;
-          padding: 12px;
+          padding: 8mm 5mm;
           background: white;
           font-family: 'Courier New', monospace;
-          font-size: 12px;
-          line-height: 1.5;
+          font-size: 11px;
+          line-height: 1.4;
           color: #000;
           box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          box-sizing: border-box;
         }
         
         @media print {
-          .receipt-container {
-            width: 80mm;
+          @page {
+            size: 80mm auto;
             margin: 0;
-            padding: 5mm;
+          }
+          
+          .receipt-container {
+            width: 80mm !important;
+            max-width: 80mm !important;
+            min-width: 80mm !important;
+            margin: 0 !important;
+            padding: 5mm 4mm !important;
             page-break-after: avoid;
+            box-sizing: border-box;
+            position: relative;
           }
           
           /* Hide all other elements when printing */
@@ -129,6 +140,7 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
             position: absolute;
             left: 0;
             top: 0;
+            width: 80mm !important;
           }
         }
         
@@ -168,12 +180,14 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         
         .receipt-info {
           text-align: center;
-          margin-bottom: 15px;
-          font-size: 11px;
+          margin-bottom: 12px;
+          font-size: 10px;
+          line-height: 1.6;
         }
         
         .info-row {
-          margin: 4px 0;
+          margin: 3px 0;
+          word-wrap: break-word;
         }
         
         .info-label {
@@ -182,16 +196,18 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         
         .order-type {
           display: inline-block;
-          padding: 2px 8px;
+          padding: 2px 6px;
           border: 1px solid #000;
-          margin-top: 5px;
+          margin-top: 4px;
           font-weight: bold;
+          font-size: 10px;
         }
         
         .items-table {
           width: 100%;
-          margin: 15px 0;
+          margin: 12px 0;
           border-collapse: collapse;
+          table-layout: fixed;
         }
         
         .items-table thead {
@@ -202,16 +218,22 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         
         .items-table th {
           text-align: left;
-          padding: 6px 3px;
+          padding: 5px 2px;
           font-weight: bold;
-          font-size: 11px;
+          font-size: 10px;
           text-transform: uppercase;
           color: #FF5F15;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         
         .items-table td {
-          padding: 5px 3px;
-          font-size: 11px;
+          padding: 4px 2px;
+          font-size: 10px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          word-wrap: break-word;
         }
         
         .items-table tbody tr {
@@ -223,24 +245,28 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         }
         
         .item-name {
-          width: 45%;
+          width: 42%;
           text-align: left;
+          padding-right: 2px;
         }
         
         .item-price {
-          width: 18%;
+          width: 20%;
           text-align: right;
+          padding: 0 2px;
         }
         
         .item-qty {
-          width: 12%;
+          width: 10%;
           text-align: center;
+          padding: 0 2px;
         }
         
         .item-total {
-          width: 25%;
+          width: 28%;
           text-align: right;
           font-weight: bold;
+          padding-left: 2px;
         }
         
         .totals-section {
@@ -252,25 +278,29 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
         .total-row {
           display: flex;
           justify-content: space-between;
-          margin: 5px 0;
-          font-size: 11px;
+          align-items: center;
+          margin: 4px 0;
+          font-size: 10px;
+          line-height: 1.5;
         }
         
         .total-label {
           text-align: left;
+          flex: 1;
         }
         
         .total-value {
           text-align: right;
           font-weight: bold;
+          min-width: 60px;
         }
         
         .net-total {
           border-top: 2px solid #FF5F15;
           border-bottom: 2px solid #FF5F15;
-          padding: 10px 0;
-          margin: 12px 0;
-          font-size: 15px;
+          padding: 8px 0;
+          margin: 10px 0;
+          font-size: 13px;
           font-weight: bold;
           background: #fff5f0;
           color: #FF5F15;
@@ -347,8 +377,9 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
                 // Calculate total if not provided
                 const itemTotal = parseFloat(item.total_amount || item.total || item.total_price || (itemPrice * itemQty));
                 
-                // Truncate long item names
-                const displayName = itemName.length > 25 ? itemName.substring(0, 22) + '...' : itemName;
+                // Truncate long item names for 80mm width (max ~30 chars)
+                const maxItemNameLength = 28;
+                const displayName = itemName.length > maxItemNameLength ? itemName.substring(0, maxItemNameLength - 3) + '...' : itemName;
                 
                 return (
                   <tr key={index}>

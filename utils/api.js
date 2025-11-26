@@ -608,6 +608,22 @@ export const apiPost = async (endpoint, body, options = {}) => {
           };
         }
         
+        // For user account endpoints, empty object usually means API error or missing endpoint
+        if (normalizedEndpoint.includes('users_accounts') || 
+            normalizedEndpoint.includes('get_users')) {
+          devError('Empty object response from', normalizedEndpoint, '- API may not exist or is not returning data');
+          return {
+            success: false,
+            data: {
+              success: false,
+              message: 'API returned empty response. Please check if the endpoint exists and returns JSON data.',
+              endpoint: normalizedEndpoint,
+              status: response.status
+            },
+            status: response.status || 500
+          };
+        }
+        
         // For login endpoints, empty object means invalid credentials
         if (normalizedEndpoint.includes('login')) {
           devError('Empty object response from', normalizedEndpoint);

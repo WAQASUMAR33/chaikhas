@@ -12,7 +12,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, apiGet, getTerminal, generateToken, getRole } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, generateToken, getRole } from '@/utils/api';
 import { useRouter } from 'next/navigation';
 
 export default function AccountManagementPage() {
@@ -37,14 +37,47 @@ export default function AccountManagementPage() {
 
   /**
    * Fetch all branches from API
-   * API: branch_management.php (GET)
+   * API: branch_management.php (POST with action: 'get')
    */
   const fetchBranches = async () => {
     try {
-      const result = await apiGet('/branch_management.php');
+      console.log('Fetching branches...');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      
       if (result.success && result.data) {
-        const data = Array.isArray(result.data) ? result.data : (result.data.data || []);
-        setBranches(data);
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          branchesData = result.data;
+          console.log('Found branches in result.data (array):', branchesData.length);
+        } 
+        // Check if data is nested: { success: true, data: [...] }
+        else if (result.data.data && Array.isArray(result.data.data)) {
+          branchesData = result.data.data;
+          console.log('Found branches in result.data.data:', branchesData.length);
+        }
+        // Check if data is wrapped: { success: true, data: { branches: [...] } }
+        else if (result.data.branches && Array.isArray(result.data.branches)) {
+          branchesData = result.data.branches;
+          console.log('Found branches in result.data.branches:', branchesData.length);
+        }
+        // Try to find any array in the response
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              branchesData = result.data[key];
+              console.log(`Found branches in result.data.${key}:`, branchesData.length);
+              break;
+            }
+          }
+        }
+      }
+      
+      setBranches(branchesData);
+      if (branchesData.length === 0) {
+        console.warn('No branches found in response. Full response:', result);
       }
     } catch (error) {
       console.error('Error fetching branches:', error);
@@ -96,68 +129,188 @@ export default function AccountManagementPage() {
    */
   const fetchUsers = useCallback(async () => {
     setLoading(true);
+    setAlert({ type: '', message: '' });
     try {
       const terminal = getTerminal();
+      
+      console.log('=== FETCHING USERS ===');
+      console.log('Terminal:', terminal);
+      console.log('API Endpoint: /get_users_accounts.php');
+      console.log('Request params:', { terminal });
+      
       const result = await apiPost('/get_users_accounts.php', { terminal });
       
-      // The API returns a plain JSON array
-      if (result.data && Array.isArray(result.data)) {
-        // Map API response to match our table structure
-        const mappedUsers = result.data.map((user) => {
-          // Handle branch_id - could be null, undefined, empty string, or number
-          let branchId = user.branch_id;
-          if (branchId === '' || branchId === 'null' || branchId === null || branchId === undefined) {
-            branchId = null;
-          } else {
-            // Ensure it's a number
-            branchId = parseInt(branchId, 10);
-            if (isNaN(branchId)) {
-              branchId = null;
+      console.log('=== API RESPONSE ===');
+      console.log('Full result:', JSON.stringify(result, null, 2));
+      console.log('result.success:', result.success);
+      console.log('result.data:', result.data);
+      console.log('result.data type:', typeof result.data);
+      console.log('result.data is array:', Array.isArray(result.data));
+      if (result.data && typeof result.data === 'object') {
+        console.log('result.data keys:', Object.keys(result.data));
+        console.log('result.data length:', Object.keys(result.data).length);
+      }
+      console.log('result.status:', result.status);
+      console.log('===================');
+      
+      let usersData = [];
+      
+      // Check if result.data is an empty object
+      if (result.data && typeof result.data === 'object' && !Array.isArray(result.data) && Object.keys(result.data).length === 0) {
+        console.error('❌ Empty object response detected');
+        setAlert({ 
+          type: 'error', 
+          message: 'API returned empty response. The get_users_accounts.php endpoint may not exist or is not returning data. Please check: 1) File exists in API folder, 2) API accepts POST requests, 3) API returns JSON format.' 
+        });
+        setUsers([]);
+        setLoading(false);
+        return;
+      }
+      
+      if (result.success && result.data) {
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          usersData = result.data;
+          console.log('Found users in result.data (array):', usersData.length);
+        } 
+        // Check if data is nested: { success: true, data: [...] }
+        else if (result.data.data && Array.isArray(result.data.data)) {
+          usersData = result.data.data;
+          console.log('Found users in result.data.data:', usersData.length);
+        }
+        // Check if data is wrapped: { success: true, data: { users: [...] } }
+        else if (result.data.users && Array.isArray(result.data.users)) {
+          usersData = result.data.users;
+          console.log('Found users in result.data.users:', usersData.length);
+        }
+        // Check if response has success field with false
+        else if (result.data.success === false) {
+          console.error('Users API returned error:', result.data);
+          setAlert({ type: 'error', message: result.data.message || 'Failed to load users' });
+          setUsers([]);
+          setLoading(false);
+          return;
+        }
+        // Try to find any array in the response
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              usersData = result.data[key];
+              console.log(`Found users in result.data.${key}:`, usersData.length);
+              break;
             }
           }
-          
-          // Get branch name using the callback function (which has latest branches)
-          const branchName = getBranchName(branchId);
-          
-          return {
-            id: user.id,
-            username: user.username,
-            fullname: user.fullname,
-            role: user.role,
-            branch_id: branchId,
-            branch_name: branchName, // Look up branch name from branches array
-            status: user.status || 'Active',
-            terminal: user.terminal || terminal,
-            created_at: user.created_at || '',
-          };
-        });
+        }
+      } else if (!result.success) {
+        console.error('❌ Users API request failed');
+        console.error('Result:', result);
+        console.error('Status:', result.status);
+        console.error('Data:', result.data);
         
-        // Debug: Log mapped users to see branch data
-        console.log('=== USER MAPPING DEBUG ===');
-        console.log('Mapped users with branch data:', mappedUsers.map(u => ({
-          id: u.id,
-          username: u.username,
-          branch_id: u.branch_id,
-          branch_id_type: typeof u.branch_id,
-          branch_name: u.branch_name
-        })));
-        console.log('Available branches for lookup:', branches.map(b => ({
-          branch_id: b.branch_id,
-          branch_id_type: typeof b.branch_id,
-          branch_name: b.branch_name,
-          branch_code: b.branch_code
-        })));
-        console.log('=== END DEBUG ===');
-        
-        setUsers(mappedUsers);
-      } else if (result.data && result.data.success === false) {
-        // Error response
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load users' });
+        // Check if result.data is empty object
+        if (result.data && typeof result.data === 'object' && Object.keys(result.data).length === 0) {
+          setAlert({ 
+            type: 'error', 
+            message: 'API returned empty response ({}). This usually means: 1) The get_users_accounts.php file doesn\'t exist, 2) The API is not returning JSON, or 3) There\'s a server error. Please check your API folder and ensure the endpoint exists and returns proper JSON.' 
+          });
+        } else if (result.status === 0 || result.status === undefined) {
+          setAlert({ 
+            type: 'error', 
+            message: 'Cannot connect to server. Please check: 1) API URL is correct in .env.local, 2) Server is running, 3) CORS is enabled on server.' 
+          });
+        } else {
+          const errorMsg = result.data?.message || result.data?.error || result.data?.error_message || 'Failed to load users';
+          setAlert({ 
+            type: 'error', 
+            message: `API Error: ${errorMsg}. Status: ${result.status || 'Unknown'}` 
+          });
+        }
         setUsers([]);
-      } else {
-        // Empty result
-        setUsers([]);
+        setLoading(false);
+        return;
       }
+      
+      // Check if result.data is empty or undefined (after success check)
+      if (!result.data) {
+        console.error('❌ result.data is undefined or null');
+        setAlert({ 
+          type: 'error', 
+          message: 'API returned success but no data. Please check if get_users_accounts.php returns data in the response.' 
+        });
+        setUsers([]);
+        setLoading(false);
+        return;
+      }
+      
+      if (typeof result.data === 'object' && !Array.isArray(result.data) && Object.keys(result.data).length === 0) {
+        console.error('❌ result.data is empty object');
+        setAlert({ 
+          type: 'error', 
+          message: 'API returned empty object. Please ensure get_users_accounts.php returns user data in JSON format.' 
+        });
+        setUsers([]);
+        setLoading(false);
+        return;
+      }
+      
+      if (usersData.length === 0) {
+        console.warn('No users found in response. Full response:', result);
+        // Don't show error if it's just an empty list
+        if (result.data && result.data.message) {
+          setAlert({ type: 'info', message: result.data.message || 'No users found.' });
+        } else {
+          setAlert({ type: 'info', message: 'No users found in the system.' });
+        }
+      }
+      
+      // Map API response to match our table structure
+      const mappedUsers = usersData.map((user) => {
+        // Handle branch_id - could be null, undefined, empty string, or number
+        let branchId = user.branch_id;
+        if (branchId === '' || branchId === 'null' || branchId === null || branchId === undefined) {
+          branchId = null;
+        } else {
+          // Ensure it's a number
+          branchId = parseInt(branchId, 10);
+          if (isNaN(branchId)) {
+            branchId = null;
+          }
+        }
+        
+        // Get branch name using the callback function (which has latest branches)
+        const branchName = getBranchName(branchId);
+        
+        return {
+          id: user.id || user.user_id,
+          username: user.username || '',
+          fullname: user.fullname || user.full_name || '',
+          role: user.role || 'order_taker',
+          branch_id: branchId,
+          branch_name: branchName, // Look up branch name from branches array
+          status: user.status || 'Active',
+          terminal: user.terminal || terminal,
+          created_at: user.created_at || user.created_date || '',
+        };
+      });
+      
+      // Debug: Log mapped users to see branch data
+      console.log('=== USER MAPPING DEBUG ===');
+      console.log('Mapped users with branch data:', mappedUsers.map(u => ({
+        id: u.id,
+        username: u.username,
+        branch_id: u.branch_id,
+        branch_id_type: typeof u.branch_id,
+        branch_name: u.branch_name
+      })));
+      console.log('Available branches for lookup:', branches.map(b => ({
+        branch_id: b.branch_id,
+        branch_id_type: typeof b.branch_id,
+        branch_name: b.branch_name,
+        branch_code: b.branch_code
+      })));
+      console.log('=== END DEBUG ===');
+      
+      setUsers(mappedUsers);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -185,12 +338,15 @@ export default function AccountManagementPage() {
   }, [router]);
 
   // Fetch users after branches are loaded (to ensure branch names can be looked up)
+  // Also fetch if branches array is empty (might be no branches yet, but still fetch users)
   useEffect(() => {
-    if (currentUserRole === 'super_admin' && branches.length > 0) {
-      console.log('Fetching users now that branches are loaded. Branches count:', branches.length);
+    if (currentUserRole === 'super_admin') {
+      // Fetch users regardless of branches count - branch names will be updated later
+      console.log('Fetching users. Branches count:', branches.length);
       fetchUsers();
     }
-  }, [currentUserRole, branches.length, fetchUsers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserRole]);
 
   // Update branch names in existing users when branches change (e.g., after a branch is added)
   useEffect(() => {

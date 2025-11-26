@@ -100,6 +100,7 @@ export default function OrderManagementPage() {
    */
   const fetchOrders = async () => {
     setLoading(true);
+    setAlert({ type: '', message: '' });
     try {
       const terminal = getTerminal();
       const payload = { terminal };
@@ -107,43 +108,161 @@ export default function OrderManagementPage() {
         payload.status = filter;
       }
       
+      console.log('Fetching orders with params:', payload);
       const result = await apiPost('/getOrders.php', payload);
+      console.log('Orders API response:', result);
       
+      // Handle multiple possible response structures
+      let ordersData = [];
+      let dataSource = '';
+      
+      // Check if result.data is an array directly
       if (result.data && Array.isArray(result.data)) {
-        // Map API response - matching actual database structure
-        // Map API response - matching actual database structure
-        const mappedOrders = result.data.map((order) => {
-          const orderId = order.order_id || order.id;
-          const orderNumber = order.order_id ? `ORD-${order.order_id}` : (order.orderid || order.order_number || `ORD-${order.id || order.order_id}`);
-          
-          return {
-            id: orderId,
-            order_id: orderId,
-            order_number: orderNumber,
-            orderid: order.orderid || orderNumber, // Ensure orderid is always formatted string like "ORD-123"
-            order_type: order.order_type || 'Dine In',
-            table_id: order.table_id || order.tableid || '-',
-            table_number: order.table_number || order.table_id || '-',
-            hall_id: order.hall_id || '-',
-            hall_name: order.hall_name || '-',
-            shop_name: order.shopname || '-',
-            customer_name: order.customer_name || order.customer || '-',
-            total: parseFloat(order.g_total_amount || order.total || 0),
-            discount: parseFloat(order.discount_amount || order.discount || 0),
-            service_charge: parseFloat(order.service_charge || 0),
-            netTotal: parseFloat(order.net_total_amount || order.netTotal || order.total || 0),
-            status: (order.order_status || order.status || 'Pending').toLowerCase(),
-            payment_mode: order.payment_mode || 'Cash',
-            created_at: order.created_at || order.date || '',
-            terminal: order.terminal || terminal,
-          };
-        });
-        setOrders(mappedOrders);
-      } else if (result.data && result.data.success === false) {
+        ordersData = result.data;
+        dataSource = 'result.data';
+        console.log('Found orders in result.data (array):', ordersData.length);
+      }
+      // Check if result.data.data is an array (nested structure)
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        dataSource = 'result.data.data';
+        console.log('Found orders in result.data.data:', ordersData.length);
+      }
+      // Check if result.data.orders is an array
+      else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
+        ordersData = result.data.orders;
+        dataSource = 'result.data.orders';
+        console.log('Found orders in result.data.orders:', ordersData.length);
+      }
+      // Check if result.data.success and result.data.data is an array
+      else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        ordersData = result.data.data;
+        dataSource = 'result.data.success.data';
+        console.log('Found orders in result.data.success.data:', ordersData.length);
+      }
+      // Check if result.success and result.data is an array
+      else if (result.success && result.data && Array.isArray(result.data)) {
+        ordersData = result.data;
+        dataSource = 'result.success.data';
+        console.log('Found orders in result.success.data:', ordersData.length);
+      }
+      // Try to find any array in result.data object
+      else if (result.data && typeof result.data === 'object') {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            ordersData = result.data[key];
+            dataSource = `result.data.${key}`;
+            console.log(`Found orders in result.data.${key}:`, ordersData.length);
+            break;
+          }
+        }
+      }
+      // Check if response has success field with false
+      else if (result.data && result.data.success === false) {
+        console.error('Orders API returned error:', result.data);
         setAlert({ type: 'error', message: result.data.message || 'Failed to load orders' });
         setOrders([]);
+        setLoading(false);
+        return;
+      }
+      // Check if result is not successful
+      else if (!result.success) {
+        console.error('Orders API request failed:', result);
+        setAlert({ 
+          type: 'error', 
+          message: result.data?.message || result.data?.error || 'Failed to load orders. Please check your connection.' 
+        });
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      
+      // Debug: Log sample order from API
+      if (ordersData.length > 0) {
+        console.log('✅ Orders data received:', ordersData.length, 'orders');
+        console.log('Sample order from API:', JSON.stringify(ordersData[0], null, 2));
+      } else {
+        console.warn('⚠️ No orders found in API response. Full response:', result);
+        if (result.data && typeof result.data === 'object') {
+          console.warn('result.data keys:', Object.keys(result.data));
+        }
+      }
+      
+      if (ordersData.length > 0) {
+        // Map API response - matching actual database structure
+        const mappedOrders = ordersData
+          .filter(order => order !== null && order !== undefined) // Filter out null/undefined orders
+          .map((order, index) => {
+            try {
+              // Extract order ID - try multiple fields
+              const orderId = order.order_id || order.id || order.OrderID || index + 1;
+              
+              // Extract order number - try multiple formats
+              let orderNumber = '';
+              if (order.order_id) {
+                orderNumber = `ORD-${order.order_id}`;
+              } else if (order.orderid) {
+                orderNumber = order.orderid;
+              } else if (order.order_number) {
+                orderNumber = order.order_number;
+              } else if (order.id) {
+                orderNumber = `ORD-${order.id}`;
+              } else {
+                orderNumber = `ORD-${orderId}`;
+              }
+              
+              // Calculate totals with fallbacks
+              const gTotalAmount = parseFloat(order.g_total_amount || order.total || order.grand_total || 0);
+              const discountAmount = parseFloat(order.discount_amount || order.discount || 0);
+              const serviceCharge = parseFloat(order.service_charge || 0);
+              let netTotalAmount = parseFloat(order.net_total_amount || order.net_total || order.netTotal || order.grand_total || 0);
+              
+              // If netTotal is 0 but we have a total, use total as fallback
+              if (netTotalAmount === 0 && gTotalAmount > 0) {
+                netTotalAmount = gTotalAmount;
+              }
+              
+              // Extract status - prioritize order_status field (from database), then status field
+              // Keep original case for display, but normalize for comparison
+              const rawStatus = order.order_status || order.status || order.Status || 'Pending';
+              const normalizedStatus = String(rawStatus).toLowerCase().trim();
+              
+              return {
+                id: orderId,
+                order_id: orderId,
+                order_number: orderNumber,
+                orderid: order.orderid || orderNumber, // Ensure orderid is always formatted string like "ORD-123"
+                order_type: order.order_type || 'Dine In',
+                table_id: order.table_id || order.tableid || '-',
+                table_number: order.table_number || order.table_id || '-',
+                hall_id: order.hall_id || '-',
+                hall_name: order.hall_name || '-',
+                shop_name: order.shopname || '-',
+                customer_name: order.customer_name || order.customer || '-',
+                total: gTotalAmount,
+                discount: discountAmount,
+                service_charge: serviceCharge,
+                netTotal: netTotalAmount,
+                status: normalizedStatus,
+                order_status: rawStatus, // Preserve original status from API
+                original_status: rawStatus, // Keep original for reference
+                payment_mode: order.payment_mode || 'Cash',
+                created_at: order.created_at || order.date || '',
+                terminal: order.terminal || terminal,
+              };
+            } catch (error) {
+              console.error('Error mapping order:', error, order);
+              return null;
+            }
+          })
+          .filter(order => order !== null); // Remove any null entries from mapping errors
+        
+        setOrders(mappedOrders);
       } else {
         setOrders([]);
+        if (result.data && result.data.message) {
+          setAlert({ type: 'info', message: result.data.message || 'No orders found.' });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -163,11 +282,15 @@ export default function OrderManagementPage() {
       // Prepare order ID - prefer numeric order_id over orderid string
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
+      console.log('Fetching order details for:', { orderId, orderNumber, orderIdParam });
+      
       // Fetch order details - send both order_id (numeric) and orderid (string) for flexibility
       const orderResult = await apiPost('/get_ordersbyid.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
+      
+      console.log('Order details API response:', orderResult);
       
       // Fetch order items - send both order_id (numeric) and orderid (string) for flexibility
       const itemsResult = await apiPost('/get_orderdetails.php', { 
@@ -175,11 +298,19 @@ export default function OrderManagementPage() {
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
       
+      console.log('Order items API response:', itemsResult);
+      
       let orderData = null;
-      if (orderResult.data) {
+      
+      // Handle multiple response structures for order data
+      if (orderResult.success && orderResult.data) {
         if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
           orderData = orderResult.data[0];
-        } else if (!Array.isArray(orderResult.data)) {
+        } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
+          orderData = orderResult.data.data[0];
+        } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
+          orderData = orderResult.data.order;
+        } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
           orderData = orderResult.data;
         }
       }
@@ -251,12 +382,35 @@ export default function OrderManagementPage() {
       setOrderDetails(orderData);
       setExistingBill(billData); // Store bill data
       
-      // Set order items
-      if (itemsResult.data && Array.isArray(itemsResult.data)) {
-        setOrderItems(itemsResult.data);
-      } else {
-        setOrderItems([]);
+      // Handle multiple response structures for order items
+      let itemsData = [];
+      if (itemsResult.success && itemsResult.data) {
+        if (Array.isArray(itemsResult.data)) {
+          itemsData = itemsResult.data;
+          console.log('Found items in itemsResult.data (array):', itemsData.length);
+        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+          itemsData = itemsResult.data.data;
+          console.log('Found items in itemsResult.data.data:', itemsData.length);
+        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+          itemsData = itemsResult.data.items;
+          console.log('Found items in itemsResult.data.items:', itemsData.length);
+        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+          itemsData = itemsResult.data.order_items;
+          console.log('Found items in itemsResult.data.order_items:', itemsData.length);
+        } else if (typeof itemsResult.data === 'object') {
+          // Try to find any array in the response
+          for (const key in itemsResult.data) {
+            if (Array.isArray(itemsResult.data[key])) {
+              itemsData = itemsResult.data[key];
+              console.log(`Found items in itemsResult.data.${key}:`, itemsData.length);
+              break;
+            }
+          }
+        }
       }
+      
+      setOrderItems(itemsData);
+      console.log('Setting order items:', itemsData.length);
       
       setDetailsModalOpen(true);
     } catch (error) {
