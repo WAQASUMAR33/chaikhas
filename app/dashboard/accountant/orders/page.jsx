@@ -1642,7 +1642,59 @@ export default function OrderManagementPage() {
               })() && (
                 <div className="pt-2">
                   <Button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Ensure orderItems are loaded before opening bill modal
+                      if (!orderItems || orderItems.length === 0) {
+                        console.log('⚠️ Order items not loaded, fetching now...');
+                        try {
+                          const orderId = orderDetails.order_id || orderDetails.id;
+                          const orderNumber = orderDetails.orderid || orderDetails.order_number || (orderId ? `ORD-${orderId}` : '');
+                          
+                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                            order_id: orderId,
+                            orderid: orderNumber
+                          });
+                          
+                          // Extract items from response
+                          let itemsData = [];
+                          if (itemsResult.success && itemsResult.data) {
+                            if (Array.isArray(itemsResult.data)) {
+                              itemsData = itemsResult.data;
+                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                              itemsData = itemsResult.data.data;
+                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                              itemsData = itemsResult.data.items;
+                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                              itemsData = itemsResult.data.order_items;
+                            } else if (typeof itemsResult.data === 'object') {
+                              for (const key in itemsResult.data) {
+                                if (Array.isArray(itemsResult.data[key])) {
+                                  itemsData = itemsResult.data[key];
+                                  break;
+                                }
+                              }
+                            }
+                          }
+                          
+                          if (itemsData.length > 0) {
+                            setOrderItems(itemsData);
+                            console.log('✅ Loaded order items before opening bill modal:', itemsData.length);
+                          } else {
+                            console.warn('⚠️ No items found when preparing to open bill modal');
+                            setAlert({ 
+                              type: 'warning', 
+                              message: 'Warning: No items found for this order. The bill may not generate correctly.' 
+                            });
+                          }
+                        } catch (error) {
+                          console.error('Error fetching items before opening bill modal:', error);
+                          setAlert({ 
+                            type: 'warning', 
+                            message: 'Could not fetch order items. The bill may not generate correctly.' 
+                          });
+                        }
+                      }
+                      
                       setBillOrder(orderDetails);
                       const subtotal = parseFloat(orderDetails.g_total_amount || orderDetails.total || 0);
                       // Auto-calculate 10% service charge for Dine In only (Take Away and Delivery have 0 service charge)
@@ -2187,25 +2239,63 @@ export default function OrderManagementPage() {
                           
                           if (itemsForReceipt.length === 0) {
                             console.warn('⚠️ No items found in API response. Trying orderItems from state...');
+                            console.log('orderItems state:', orderItems);
+                            console.log('orderItems length:', orderItems?.length || 0);
+                            
                             // Fallback to orderItems from state if API returns empty
                             if (orderItems && orderItems.length > 0) {
                               itemsForReceipt = orderItems;
                               console.log('✅ Using orderItems from state:', itemsForReceipt.length);
+                            } else {
+                              // Try to fetch items one more time with different parameters
+                              console.log('⚠️ orderItems state is also empty. Trying alternative fetch...');
+                              try {
+                                const altItemsResult = await apiPost('/get_orderdetails.php', { 
+                                  order_id: orderId
+                                });
+                                console.log('Alternative fetch result:', altItemsResult);
+                                
+                                if (altItemsResult.success && altItemsResult.data) {
+                                  if (Array.isArray(altItemsResult.data)) {
+                                    itemsForReceipt = altItemsResult.data;
+                                  } else if (altItemsResult.data.data && Array.isArray(altItemsResult.data.data)) {
+                                    itemsForReceipt = altItemsResult.data.data;
+                                  } else if (altItemsResult.data.items && Array.isArray(altItemsResult.data.items)) {
+                                    itemsForReceipt = altItemsResult.data.items;
+                                  }
+                                }
+                                
+                                if (itemsForReceipt.length > 0) {
+                                  console.log('✅ Found items with alternative fetch:', itemsForReceipt.length);
+                                }
+                              } catch (altError) {
+                                console.error('❌ Alternative fetch also failed:', altError);
+                              }
                             }
                           }
                           
                           console.log('✅ Final items for receipt:', itemsForReceipt.length);
                           if (itemsForReceipt.length > 0) {
                             console.log('Sample item:', JSON.stringify(itemsForReceipt[0], null, 2));
+                          } else {
+                            console.error('❌ CRITICAL: No items found after all attempts!');
+                            console.error('Order ID:', orderId);
+                            console.error('Order Number:', orderNumber);
+                            console.error('billOrder:', billOrder);
+                            console.error('orderItems state:', orderItems);
                           }
                         } catch (error) {
                           console.error('❌ Error fetching order items for bill:', error);
+                          console.error('Error details:', error.message, error.stack);
+                          
                           // Fallback to orderItems from state if fetch fails
                           if (orderItems && orderItems.length > 0) {
                             itemsForReceipt = orderItems;
                             console.log('✅ Using orderItems from state as fallback:', itemsForReceipt.length);
                           } else {
                             console.error('❌ No items available - neither from API nor from state');
+                            console.error('orderItems state:', orderItems);
+                            console.error('billOrder:', billOrder);
                           }
                         }
                         
@@ -2226,9 +2316,17 @@ export default function OrderManagementPage() {
                         // Validate that items are present
                         if (!formattedItems || formattedItems.length === 0) {
                           console.error('❌ No items found in receipt data!');
+                          console.error('Debug info:', {
+                            itemsForReceipt: itemsForReceipt.length,
+                            orderItems: orderItems?.length || 0,
+                            billOrder: billOrder,
+                            orderId: billOrder.order_id || billOrder.id,
+                            orderNumber: billOrder.orderid || billOrder.order_number
+                          });
+                          
                           setAlert({ 
                             type: 'error', 
-                            message: 'Cannot generate receipt: No order items found. Please ensure the order has items before generating the bill.' 
+                            message: `Cannot generate receipt: No order items found for order ${billOrder.order_id ? `ORD-${billOrder.order_id}` : billOrder.orderid || 'N/A'}. Please ensure the order has items. Check the browser console for more details.` 
                           });
                           return;
                         }
