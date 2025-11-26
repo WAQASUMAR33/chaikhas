@@ -135,8 +135,21 @@ export default function PrinterManagementPage() {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
-    if (!formData.name || !formData.ip_address) {
-      setAlert({ type: 'error', message: 'Please fill in all required fields' });
+    // Validate required fields
+    if (!formData.name || !formData.name.trim()) {
+      setAlert({ type: 'error', message: 'Printer name is required' });
+      return;
+    }
+
+    if (!formData.ip_address || !formData.ip_address.trim()) {
+      setAlert({ type: 'error', message: 'IP address is required' });
+      return;
+    }
+
+    // Validate IP address format
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipRegex.test(formData.ip_address.trim())) {
+      setAlert({ type: 'error', message: 'Please enter a valid IP address (e.g., 192.168.1.100)' });
       return;
     }
 
@@ -144,35 +157,96 @@ export default function PrinterManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
+      // Ensure terminal is available
+      if (!terminal) {
+        setAlert({ type: 'error', message: 'Terminal ID is missing. Please log in again.' });
+        return;
+      }
+      
       const data = {
         printer_id: editingPrinter ? editingPrinter.printer_id : '', // Empty for create
         name: formData.name.trim(),
-        type: formData.type,
+        type: formData.type || 'receipt',
         ip_address: formData.ip_address.trim(),
         port: formData.port || '9100',
         status: formData.status || 'active',
-        terminal: terminal,
+        terminal: terminal, // Always include terminal
         action: editingPrinter ? 'update' : 'create'
       };
       
+      // Always include branch_id if available
       if (branchId) {
         data.branch_id = branchId;
       }
 
-      console.log('Saving printer with data:', data);
+      console.log('=== Saving Printer ===');
+      console.log('Form data:', formData);
+      console.log('Terminal:', terminal);
+      console.log('Branch ID:', branchId);
+      console.log('Payload being sent:', data);
+      
       const result = await apiPost('/printer_management.php', data);
-      console.log('Printer save result:', result);
+      
+      console.log('=== Printer Save Result ===');
+      console.log('Full result:', JSON.stringify(result, null, 2));
+      console.log('Result success:', result.success);
+      console.log('Result data:', result.data);
 
       // Handle different response structures
-      const isSuccess = result.success && result.data && (
-        result.data.success === true || 
-        result.data.success === 'true' || 
-        (result.data.message && result.data.message.toLowerCase().includes('success')) ||
-        (result.data.status && result.data.status === 'success')
-      );
+      // Check for success in multiple possible locations
+      let isSuccess = false;
+      let successMessage = '';
+      let errorMessage = '';
+
+      // First check: If result.data itself has success: true at top level
+      if (result.data && result.data.success === true) {
+        isSuccess = true;
+        successMessage = result.data.message || 'Printer saved successfully!';
+      }
+      // Second check: If result.data.success exists and is true
+      else if (result.success && result.data && (result.data.success === true || result.data.success === 'true')) {
+        isSuccess = true;
+        successMessage = result.data.message || 'Printer saved successfully!';
+      } 
+      // Third check: Check for success indicators in message
+      else if (result.data && result.data.message) {
+        const messageLower = result.data.message.toLowerCase();
+        if (messageLower.includes('success') || 
+            messageLower.includes('completed') || 
+            messageLower.includes('saved') ||
+            messageLower.includes('created') ||
+            messageLower.includes('updated') ||
+            messageLower.includes('setup completed')) {
+          isSuccess = true;
+          successMessage = result.data.message;
+        } else {
+          errorMessage = result.data.message;
+        }
+      }
+      // Fourth check: Check for results array (for kitchen printer setup)
+      else if (result.data && Array.isArray(result.data.results) && result.data.results.length > 0) {
+        isSuccess = true;
+        successMessage = result.data.message || 'Printer setup completed successfully';
+      }
+      // Fifth check: Check for kitchen_config array (indicates successful setup)
+      else if (result.data && Array.isArray(result.data.kitchen_config) && result.data.kitchen_config.length > 0) {
+        isSuccess = true;
+        successMessage = result.data.message || 'Printer setup completed successfully';
+      }
+      // Check for error field
+      else if (result.data && result.data.error) {
+        errorMessage = result.data.error;
+      }
+      // Check if HTTP was successful but API returned error message
+      else if (result.success && result.data && typeof result.data === 'object') {
+        // If we have a message but it's not clearly success, check if it contains required fields error
+        if (result.data.message && result.data.message.includes('required')) {
+          errorMessage = result.data.message;
+        }
+      }
 
       if (isSuccess) {
-        setAlert({ type: 'success', message: result.data.message || 'Printer saved successfully!' });
+        setAlert({ type: 'success', message: successMessage });
         setFormData({
           name: '',
           type: 'receipt',
@@ -184,7 +258,15 @@ export default function PrinterManagementPage() {
         setModalOpen(false);
         fetchPrinters(); // Refresh list
       } else {
-        setAlert({ type: 'error', message: result.data?.message || result.data?.error || 'Failed to save printer' });
+        const finalErrorMessage = errorMessage || 
+                                 result.data?.message || 
+                                 result.data?.error || 
+                                 'Failed to save printer. Please check all fields are filled correctly.';
+        setAlert({ type: 'error', message: finalErrorMessage });
+        console.error('Printer save failed:', {
+          result,
+          errorMessage: finalErrorMessage
+        });
       }
     } catch (error) {
       console.error('Error saving printer:', error);
