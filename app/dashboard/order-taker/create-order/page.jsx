@@ -596,9 +596,15 @@ export default function CreateOrderPage() {
         // Check if response has success field (nested structure)
         if (result.data.success === true && result.data.data) {
           const responseData = result.data.data;
+          // Prefer items returned by API; if missing, fall back to cart items
+          const receiptItems =
+            (Array.isArray(responseData.items) && responseData.items.length > 0)
+              ? responseData.items
+              : cart;
+
           setOrderReceipt({
             order: responseData.order || responseData,
-            items: responseData.items || [],
+            items: receiptItems,
             order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
           });
           setReceiptModalOpen(true);
@@ -631,10 +637,16 @@ export default function CreateOrderPage() {
           setAlert({ type: 'error', message: result.data.message || 'Failed to place order' });
         } else {
           // Direct data response (no nested structure)
+          const responseData = result.data;
+          const receiptItems =
+            (Array.isArray(responseData.items) && responseData.items.length > 0)
+              ? responseData.items
+              : cart;
+
           setOrderReceipt({
-            order: result.data.order || result.data,
-            items: result.data.items || [],
-            order_id: result.data.order_id || (result.data.order ? result.data.order.order_id : null),
+            order: responseData.order || responseData,
+            items: receiptItems,
+            order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
           });
           setReceiptModalOpen(true);
           
@@ -1056,97 +1068,23 @@ export default function CreateOrderPage() {
 
               {/* Kitchen Receipt - 80mm Print View (Item Name & Quantity Only) */}
               <div id="order-taker-receipt-print-area">
-                <div className="kitchen-receipt-container">
-                  <style jsx>{`
-                    .kitchen-receipt-container {
-                      width: 80mm;
-                      max-width: 80mm;
-                      min-width: 80mm;
-                      margin: 0 auto;
-                      padding: 8mm 5mm;
-                      background: #ffffff;
-                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                      font-size: 12px;
-                      line-height: 1.5;
-                      color: #000;
-                      box-sizing: border-box;
-                    }
-
-                    .kitchen-header {
-                      text-align: center;
-                      margin-bottom: 10px;
-                      border-bottom: 2px solid #000;
-                      padding-bottom: 6px;
-                    }
-
-                    .kitchen-title {
-                      font-size: 16px;
-                      font-weight: 700;
-                      text-transform: uppercase;
-                      letter-spacing: 1px;
-                    }
-
-                    .kitchen-subtitle {
-                      font-size: 11px;
-                      font-weight: 600;
-                      margin-top: 4px;
-                    }
-
-                    .kitchen-meta {
-                      margin-top: 8px;
-                      font-size: 11px;
-                    }
-
-                    .kitchen-meta-row {
-                      display: flex;
-                      justify-content: space-between;
-                      margin: 2px 0;
-                    }
-
-                    .kitchen-items {
-                      margin-top: 10px;
-                      border-top: 1px dashed #000;
-                      padding-top: 6px;
-                    }
-
-                    .kitchen-items-header {
-                      display: flex;
-                      justify-content: space-between;
-                      font-weight: 700;
-                      font-size: 12px;
-                      margin-bottom: 4px;
-                    }
-
-                    .kitchen-item-row {
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      padding: 3px 0;
-                      border-bottom: 1px dotted #ccc;
-                    }
-
-                    .kitchen-item-name {
-                      flex: 1;
-                      font-weight: 600;
-                      font-size: 12px;
-                      margin-right: 8px;
-                      text-transform: uppercase;
-                    }
-
-                    .kitchen-item-qty {
-                      width: 28px;
-                      text-align: right;
-                      font-weight: 700;
-                      font-size: 13px;
-                    }
-
-                    .kitchen-footer {
-                      margin-top: 10px;
-                      text-align: center;
-                      font-size: 10px;
-                    }
-                  `}</style>
-
+                <div
+                  className="kitchen-receipt-container"
+                  style={{
+                    width: '80mm',
+                    maxWidth: '80mm',
+                    minWidth: '80mm',
+                    margin: '0 auto',
+                    padding: '8mm 5mm',
+                    background: '#ffffff',
+                    fontFamily:
+                      'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    fontSize: '12px',
+                    lineHeight: 1.5,
+                    color: '#000',
+                    boxSizing: 'border-box',
+                  }}
+                >
                   {(() => {
                     const order = orderReceipt.order || orderReceipt || {};
                     const items = orderReceipt.items || [];
@@ -1157,31 +1095,96 @@ export default function CreateOrderPage() {
 
                     return (
                       <>
-                        <div className="kitchen-header">
-                          <div className="kitchen-title">KITCHEN ORDER</div>
-                          <div className="kitchen-subtitle">
+                        <div
+                          className="kitchen-header"
+                          style={{
+                            textAlign: 'center',
+                            marginBottom: '10px',
+                            borderBottom: '2px solid #000',
+                            paddingBottom: '6px',
+                          }}
+                        >
+                          <div
+                            className="kitchen-title"
+                            style={{
+                              fontSize: '16px',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              letterSpacing: '1px',
+                            }}
+                          >
+                            KITCHEN ORDER
+                          </div>
+                          <div
+                            className="kitchen-subtitle"
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              marginTop: '4px',
+                            }}
+                          >
                             Order #{orderId !== 'N/A' ? `ORD-${orderId}` : 'N/A'}
                           </div>
-                          <div className="kitchen-meta">
-                            <div className="kitchen-meta-row">
+                          <div
+                            className="kitchen-meta"
+                            style={{ marginTop: '8px', fontSize: '11px' }}
+                          >
+                            <div
+                              className="kitchen-meta-row"
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                margin: '2px 0',
+                              }}
+                            >
                               <span>Type:</span>
                               <span>{orderType}</span>
                             </div>
                             {tableNumber && (
-                              <div className="kitchen-meta-row">
+                              <div
+                                className="kitchen-meta-row"
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  margin: '2px 0',
+                                }}
+                              >
                                 <span>Table:</span>
                                 <span>{tableNumber}</span>
                               </div>
                             )}
-                            <div className="kitchen-meta-row">
+                            <div
+                              className="kitchen-meta-row"
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                margin: '2px 0',
+                              }}
+                            >
                               <span>Time:</span>
                               <span>{createdAt}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="kitchen-items">
-                          <div className="kitchen-items-header">
+                        <div
+                          className="kitchen-items"
+                          style={{
+                            marginTop: '10px',
+                            borderTop: '1px dashed #000',
+                            paddingTop: '6px',
+                          }}
+                        >
+                          <div
+                            className="kitchen-items-header"
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              fontWeight: 700,
+                              fontSize: '12px',
+                              marginBottom: '4px',
+                            }}
+                          >
                             <span>Item</span>
                             <span>Qty</span>
                           </div>
@@ -1198,29 +1201,91 @@ export default function CreateOrderPage() {
                                 item.qnty ||
                                 1;
                               return (
-                                <div key={index} className="kitchen-item-row">
-                                  <div className="kitchen-item-name">
+                                <div
+                                  key={index}
+                                  className="kitchen-item-row"
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    padding: '3px 0',
+                                    borderBottom: '1px dotted #ccc',
+                                  }}
+                                >
+                                  <div
+                                    className="kitchen-item-name"
+                                    style={{
+                                      flex: 1,
+                                      fontWeight: 600,
+                                      fontSize: '12px',
+                                      marginRight: '8px',
+                                      textTransform: 'uppercase',
+                                    }}
+                                  >
                                     {String(name).length > 28
                                       ? String(name).slice(0, 28) + '…'
                                       : name}
                                   </div>
-                                  <div className="kitchen-item-qty">
+                                  <div
+                                    className="kitchen-item-qty"
+                                    style={{
+                                      width: '28px',
+                                      textAlign: 'right',
+                                      fontWeight: 700,
+                                      fontSize: '13px',
+                                    }}
+                                  >
                                     {qty}
                                   </div>
                                 </div>
                               );
                             })
                           ) : (
-                            <div className="kitchen-item-row">
-                              <div className="kitchen-item-name">
+                            <div
+                              className="kitchen-item-row"
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                padding: '3px 0',
+                                borderBottom: '1px dotted #ccc',
+                              }}
+                            >
+                              <div
+                                className="kitchen-item-name"
+                                style={{
+                                  flex: 1,
+                                  fontWeight: 600,
+                                  fontSize: '12px',
+                                  marginRight: '8px',
+                                  textTransform: 'uppercase',
+                                }}
+                              >
                                 No items found
                               </div>
-                              <div className="kitchen-item-qty">0</div>
+                              <div
+                                className="kitchen-item-qty"
+                                style={{
+                                  width: '28px',
+                                  textAlign: 'right',
+                                  fontWeight: 700,
+                                  fontSize: '13px',
+                                }}
+                              >
+                                0
+                              </div>
                             </div>
                           )}
                         </div>
 
-                        <div className="kitchen-footer">
+                        <div
+                          className="kitchen-footer"
+                          style={{
+                            marginTop: '10px',
+                            textAlign: 'center',
+                            fontSize: '10px',
+                          }}
+                        >
                           *** Send to kitchen immediately ***
                         </div>
                       </>
