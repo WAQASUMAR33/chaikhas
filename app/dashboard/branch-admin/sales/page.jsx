@@ -17,7 +17,7 @@ import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiGet, apiPost, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X } from 'lucide-react';
 import logger from '@/utils/logger';
@@ -79,7 +79,10 @@ export default function SalesListPage() {
         dateRange: period === 'custom' ? { from: dateRange.fromDate, to: dateRange.toDate } : null
       });
       
-      const result = await apiGet('/get_sales.php', apiParams);
+      console.log('Fetching sales data with params:', apiParams);
+      const result = await apiPost('/get_sales.php', apiParams);
+      
+      console.log('Sales API response:', result);
       
       // Handle different response structures
       let salesData = [];
@@ -90,20 +93,30 @@ export default function SalesListPage() {
         if (Array.isArray(result.data)) {
           salesData = result.data;
           dataSource = 'result.data';
+          console.log('Found sales data in result.data (array):', salesData.length);
         } 
         // Check if data is nested: { success: true, data: [...] }
         else if (result.data.data && Array.isArray(result.data.data)) {
           salesData = result.data.data;
           dataSource = 'result.data.data';
+          console.log('Found sales data in result.data.data:', salesData.length);
         }
         // Check if data is wrapped: { success: true, data: { sales: [...] } }
         else if (result.data.sales && Array.isArray(result.data.sales)) {
           salesData = result.data.sales;
           dataSource = 'result.data.sales';
+          console.log('Found sales data in result.data.sales:', salesData.length);
         }
-        // Check if response has success field
+        // Check if response has orders array
+        else if (result.data.orders && Array.isArray(result.data.orders)) {
+          salesData = result.data.orders;
+          dataSource = 'result.data.orders';
+          console.log('Found sales data in result.data.orders:', salesData.length);
+        }
+        // Check if response has success field with false
         else if (result.data.success === false) {
           logger.error('Sales API returned error', result.data);
+          console.error('Sales API returned error:', result.data);
           setAlert({ type: 'error', message: result.data.message || 'Failed to load sales data' });
           setSales([]);
           setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
@@ -115,6 +128,33 @@ export default function SalesListPage() {
           setLastUpdated(new Date());
           return;
         }
+        // Try to find any array in the response
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              salesData = result.data[key];
+              dataSource = `result.data.${key}`;
+              console.log(`Found sales data in result.data.${key}:`, salesData.length);
+              break;
+            }
+          }
+        }
+      } else if (!result.success) {
+        logger.error('Sales API request failed', result);
+        console.error('Sales API request failed:', result);
+        setAlert({ 
+          type: 'error', 
+          message: result.data?.message || 'Failed to load sales data. Please check your connection.' 
+        });
+        setSales([]);
+        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        if (showRefreshing) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        setLastUpdated(new Date());
+        return;
       }
       
       if (salesData.length > 0) {
@@ -126,6 +166,7 @@ export default function SalesListPage() {
           fullResponse: result.data 
         });
         logger.logMissingData('sales data', 'get_sales.php response');
+        console.warn('No sales data found in response. Full response:', result);
       }
 
       // Process and format sales data

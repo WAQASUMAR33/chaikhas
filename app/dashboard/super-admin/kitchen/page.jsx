@@ -106,7 +106,9 @@ export default function KitchenManagementPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const branchId = selectedBranchId || getBranchId();
+      // For super admin: only use selectedBranchId if it's explicitly set (not empty)
+      // Don't fall back to getBranchId() when "All Branches" is selected
+      const branchId = selectedBranchId && selectedBranchId !== '' ? selectedBranchId : null;
       
       console.log('=== Fetching Kitchens (Super Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId, selectedBranchId });
@@ -367,7 +369,11 @@ export default function KitchenManagementPage() {
     setLoadingOrders(true);
     try {
       const terminal = getTerminal();
-      const branchId = selectedBranchId || getBranchId() || 1;
+      // Get branch_id from selected kitchen or selectedBranchId, don't use getBranchId() fallback
+      const selectedKitchenData = kitchens.find(k => k.kitchen_id == selectedKitchen);
+      const branchId = selectedBranchId && selectedBranchId !== '' 
+        ? selectedBranchId 
+        : (selectedKitchenData?.branch_id || null);
       
       console.log('Fetching kitchen orders:', { kitchen_id: selectedKitchen, branch_id: branchId, terminal });
       
@@ -437,7 +443,10 @@ export default function KitchenManagementPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = selectedBranchId || getBranchId();
+      // When editing, use the kitchen's branch_id; when creating, require selectedBranchId
+      const branchId = editingKitchen 
+        ? (editingKitchen.branch_id || selectedBranchId)
+        : (selectedBranchId && selectedBranchId !== '' ? selectedBranchId : null);
       
       if (!branchId) {
         setAlert({ type: 'error', message: 'Please select a branch before adding a kitchen.' });
@@ -505,7 +514,9 @@ export default function KitchenManagementPage() {
 
     try {
       const terminal = getTerminal();
-      const branchId = selectedBranchId || getBranchId();
+      // Get branch_id from the kitchen being deleted
+      const kitchenToDelete = kitchens.find(k => k.kitchen_id == kitchenId);
+      const branchId = kitchenToDelete?.branch_id || (selectedBranchId && selectedBranchId !== '' ? selectedBranchId : null);
       const result = await apiDelete('/kitchen_management.php', { 
         kitchen_id: kitchenId,
         terminal,
@@ -558,7 +569,11 @@ export default function KitchenManagementPage() {
    */
   const handlePrintReceipt = async (orderId) => {
     try {
-      const branchId = selectedBranchId || getBranchId() || 1;
+      // Get branch_id from selected kitchen
+      const selectedKitchenData = kitchens.find(k => k.kitchen_id == selectedKitchen);
+      const branchId = selectedBranchId && selectedBranchId !== '' 
+        ? selectedBranchId 
+        : (selectedKitchenData?.branch_id || null);
       const result = await apiPost('/get_kitchen_receipt.php', {
         order_id: orderId,
         kitchen_id: selectedKitchen,
@@ -822,10 +837,39 @@ export default function KitchenManagementPage() {
                     <div className={`text-xs ${isSelected ? 'text-orange-100' : 'text-gray-500'}`}>
                       Code: {kitchen.code || `K${kitchen.kitchen_id}`}
                     </div>
+                    {kitchen.branch_name && (
+                      <div className={`text-xs mt-1 font-medium ${isSelected ? 'text-orange-200' : 'text-gray-600'}`}>
+                        Branch: {kitchen.branch_name}
+                      </div>
+                    )}
                   </div>
                 </button>
               );
             })}
+            {kitchens.length === 0 && !loading && (
+              <div className="col-span-full text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                <ChefHat className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No Kitchens Found</h3>
+                <p className="text-gray-600 mb-4">
+                  {selectedBranchId && selectedBranchId !== '' 
+                    ? 'No kitchens found for the selected branch.' 
+                    : 'No kitchens found. Try selecting a specific branch or add a new kitchen.'}
+                </p>
+                {branches.length > 0 && (
+                  <Button
+                    onClick={() => {
+                      setEditingKitchen(null);
+                      setKitchenFormData({ title: '', code: '', printer: '' });
+                      setKitchenModalOpen(true);
+                    }}
+                    size="sm"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Kitchen
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

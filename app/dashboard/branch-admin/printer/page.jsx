@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { Printer, TestTube } from 'lucide-react';
 
 export default function PrinterManagementPage() {
@@ -40,28 +40,83 @@ export default function PrinterManagementPage() {
    */
   const fetchPrinters = async () => {
     setLoading(true);
+    setAlert({ type: '', message: '' });
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_printers.php', { terminal });
+      const branchId = getBranchId();
       
-      if (result.success && result.data && Array.isArray(result.data)) {
-        // Map API response
-        const mappedPrinters = result.data.map((printer) => ({
-          id: printer.printer_id,
-          printer_id: printer.printer_id,
-          name: printer.name || '',
-          type: printer.type || 'receipt',
-          ip_address: printer.ip_address || '',
-          port: printer.port || '9100',
-          status: printer.status || 'active',
-          terminal: printer.terminal || terminal,
-        }));
-        setPrinters(mappedPrinters);
-      } else if (result.data && result.data.success === false) {
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load printers' });
+      const params = { terminal };
+      if (branchId) {
+        params.branch_id = branchId;
+      }
+      
+      console.log('Fetching printers with params:', params);
+      const result = await apiPost('/get_printers.php', params);
+      console.log('Printers API response:', result);
+      
+      let printersData = [];
+      
+      if (result.success && result.data) {
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          printersData = result.data;
+          console.log('Found printers in result.data (array):', printersData.length);
+        } 
+        // Check if data is nested: { success: true, data: [...] }
+        else if (result.data.data && Array.isArray(result.data.data)) {
+          printersData = result.data.data;
+          console.log('Found printers in result.data.data:', printersData.length);
+        }
+        // Check if data is wrapped: { success: true, data: { printers: [...] } }
+        else if (result.data.printers && Array.isArray(result.data.printers)) {
+          printersData = result.data.printers;
+          console.log('Found printers in result.data.printers:', printersData.length);
+        }
+        // Check if response has success field with false
+        else if (result.data.success === false) {
+          console.error('Printers API returned error:', result.data);
+          setAlert({ type: 'error', message: result.data.message || 'Failed to load printers' });
+          setPrinters([]);
+          setLoading(false);
+          return;
+        }
+        // Try to find any array in the response
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              printersData = result.data[key];
+              console.log(`Found printers in result.data.${key}:`, printersData.length);
+              break;
+            }
+          }
+        }
+      } else if (!result.success) {
+        console.error('Printers API request failed:', result);
+        setAlert({ 
+          type: 'error', 
+          message: result.data?.message || 'Failed to load printers. Please check your connection.' 
+        });
         setPrinters([]);
-      } else {
-        setPrinters([]);
+        setLoading(false);
+        return;
+      }
+      
+      // Map API response
+      const mappedPrinters = printersData.map((printer) => ({
+        id: printer.printer_id || printer.id,
+        printer_id: printer.printer_id || printer.id,
+        name: printer.name || printer.printer_name || '',
+        type: printer.type || printer.printer_type || 'receipt',
+        ip_address: printer.ip_address || printer.ip || '',
+        port: printer.port || '9100',
+        status: printer.status || 'active',
+        terminal: printer.terminal || terminal,
+        branch_id: printer.branch_id || branchId,
+      }));
+      
+      setPrinters(mappedPrinters);
+      if (mappedPrinters.length === 0) {
+        console.warn('No printers found in response. Full response:', result);
       }
       setLoading(false);
     } catch (error) {
@@ -80,21 +135,43 @@ export default function PrinterManagementPage() {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
+    if (!formData.name || !formData.ip_address) {
+      setAlert({ type: 'error', message: 'Please fill in all required fields' });
+      return;
+    }
+
     try {
       const terminal = getTerminal();
+      const branchId = getBranchId();
+      
       const data = {
         printer_id: editingPrinter ? editingPrinter.printer_id : '', // Empty for create
-        name: formData.name,
+        name: formData.name.trim(),
         type: formData.type,
-        ip_address: formData.ip_address,
-        port: formData.port,
-        status: formData.status,
+        ip_address: formData.ip_address.trim(),
+        port: formData.port || '9100',
+        status: formData.status || 'active',
         terminal: terminal,
+        action: editingPrinter ? 'update' : 'create'
       };
+      
+      if (branchId) {
+        data.branch_id = branchId;
+      }
 
+      console.log('Saving printer with data:', data);
       const result = await apiPost('/printer_management.php', data);
+      console.log('Printer save result:', result);
 
-      if (result.success && result.data && result.data.success) {
+      // Handle different response structures
+      const isSuccess = result.success && result.data && (
+        result.data.success === true || 
+        result.data.success === 'true' || 
+        (result.data.message && result.data.message.toLowerCase().includes('success')) ||
+        (result.data.status && result.data.status === 'success')
+      );
+
+      if (isSuccess) {
         setAlert({ type: 'success', message: result.data.message || 'Printer saved successfully!' });
         setFormData({
           name: '',
@@ -107,7 +184,7 @@ export default function PrinterManagementPage() {
         setModalOpen(false);
         fetchPrinters(); // Refresh list
       } else {
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to save printer' });
+        setAlert({ type: 'error', message: result.data?.message || result.data?.error || 'Failed to save printer' });
       }
     } catch (error) {
       console.error('Error saving printer:', error);
@@ -157,10 +234,39 @@ export default function PrinterManagementPage() {
    */
   const testPrinter = async (printerId) => {
     try {
-      // This would call a test printer API endpoint
-      setAlert({ type: 'success', message: 'Test print sent successfully! (Feature coming soon)' });
+      const terminal = getTerminal();
+      const branchId = getBranchId();
+      
+      const params = {
+        printer_id: printerId,
+        terminal: terminal,
+        action: 'test'
+      };
+      
+      if (branchId) {
+        params.branch_id = branchId;
+      }
+      
+      console.log('Testing printer with params:', params);
+      const result = await apiPost('/printer_management.php', params);
+      console.log('Test printer result:', result);
+      
+      if (result.success && result.data) {
+        const isSuccess = result.data.success === true || 
+                         result.data.success === 'true' || 
+                         (result.data.message && result.data.message.toLowerCase().includes('success'));
+        
+        if (isSuccess) {
+          setAlert({ type: 'success', message: result.data.message || 'Test print sent successfully!' });
+        } else {
+          setAlert({ type: 'error', message: result.data.message || 'Failed to send test print' });
+        }
+      } else {
+        setAlert({ type: 'error', message: 'Failed to send test print. Please check printer connection.' });
+      }
     } catch (error) {
-      setAlert({ type: 'error', message: 'Failed to send test print' });
+      console.error('Error testing printer:', error);
+      setAlert({ type: 'error', message: 'Failed to send test print: ' + (error.message || 'Network error') });
     }
   };
 
