@@ -38,19 +38,29 @@ export default function OrderTakerLayout({ children }) {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-      if (window.innerWidth >= 768) {
-        setSidebarOpen(true);
-      } else {
+    // Set initial state based on screen size
+    const initialMobile = window.innerWidth < 768;
+    setIsMobile(initialMobile);
+    // Only open sidebar on desktop initially, closed on mobile
+    if (!initialMobile) {
+      setSidebarOpen(true);
+    }
+    
+    // Handle resize - only update mobile state
+    // Don't force sidebar open/closed - let user control it
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      // Only auto-close when switching to mobile (for UX)
+      // But never force it open on desktop - respect user's choice
+      if (mobile) {
         setSidebarOpen(false);
       }
     };
     
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []); // Only run on mount
 
   useEffect(() => {
     // Verify user has order_taker role
