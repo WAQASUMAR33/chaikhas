@@ -6,7 +6,7 @@
  * Uses real APIs: get_halls.php, get_tables.php, get_products.php, create_order.php
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import OrderTakerLayout from '@/components/order-taker/OrderTakerLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -34,6 +34,83 @@ export default function CreateOrderPage() {
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [orderReceipt, setOrderReceipt] = useState(null);
+
+  /**
+   * Handle printing of receipt (80mm thermal printer)
+   * Opens a new window with just the receipt content for clean printing
+   */
+  const handlePrintReceipt = useCallback(() => {
+    if (!orderReceipt) return;
+
+    try {
+      const printArea = document.getElementById('order-taker-receipt-print-area');
+      if (!printArea) {
+        // Fallback to window.print if print area not found
+        window.print();
+        return;
+      }
+
+      const printContent = printArea.innerHTML;
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        window.print();
+        return;
+      }
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Receipt - Restaurant Khas</title>
+            <style>
+              @media print {
+                @page {
+                  size: 80mm auto;
+                  margin: 0;
+                }
+                body {
+                  margin: 0;
+                  padding: 0;
+                }
+              }
+              body {
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                margin: 0;
+                padding: 0;
+              }
+            </style>
+          </head>
+          <body>${printContent}</body>
+        </html>
+      `);
+      printWindow.document.close();
+
+      // Give the browser a moment to render before printing
+      setTimeout(() => {
+        try {
+          printWindow.print();
+        } finally {
+          printWindow.close();
+        }
+      }, 250);
+    } catch (error) {
+      console.error('Error printing receipt:', error);
+      // Fallback
+      window.print();
+    }
+  }, [orderReceipt]);
+
+  /**
+   * Auto-print receipt when order is placed and receipt modal opens
+   */
+  useEffect(() => {
+    if (receiptModalOpen && orderReceipt) {
+      const timer = setTimeout(() => {
+        handlePrintReceipt();
+      }, 400); // Small delay to ensure DOM is ready
+      return () => clearTimeout(timer);
+    }
+  }, [receiptModalOpen, orderReceipt, handlePrintReceipt]);
 
   useEffect(() => {
     fetchHalls();
@@ -969,56 +1046,191 @@ export default function CreateOrderPage() {
         >
           {orderReceipt && (
             <div className="space-y-4">
-              {/* Receipt Header */}
-              <div className="text-center border-b pb-4">
-                <h3 className="text-xl font-bold text-gray-900">Order Receipt</h3>
-                <p className="text-sm text-gray-600 mt-1">Order #{orderReceipt.order_id || orderReceipt.orderid || 'N/A'}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Type: {orderReceipt.order?.order_type || 'Dine In'} | 
-                  Status: {orderReceipt.order?.order_status || 'Running'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {orderReceipt.order?.created_at || new Date().toLocaleString()}
-                </p>
-              </div>
-
-              {/* Order Items */}
-              <div className="space-y-2">
-                {orderReceipt.items && orderReceipt.items.length > 0 && orderReceipt.items.map((item, index) => (
-                  <div key={index} className="flex justify-between text-sm py-2 border-b">
-                    <div>
-                      <p className="font-medium">{item.dish_name || item.title || 'Item'}</p>
-                      <p className="text-xs text-gray-500">
-                        {formatPKR(item.price || item.rate || 0)} x {item.quantity || item.qnty || 0}
-                      </p>
-                    </div>
-                    <p className="font-semibold">{formatPKR(item.total_amount || item.total || 0)}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Receipt Totals */}
-              <div className="border-t pt-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span className="font-medium">{formatPKR(orderReceipt.order?.g_total_amount || orderReceipt.order?.total || 0)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span className="text-[#FF5F15]">
-                    {formatPKR(orderReceipt.order?.net_total_amount || orderReceipt.order?.netTotal || orderReceipt.order?.total || 0)}
-                  </span>
-                </div>
-              </div>
-
               {/* Success Message */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
                 <Check className="w-5 h-5 text-green-600" />
-                <p className="text-sm text-green-800 font-medium">Order placed successfully and sent to kitchen!</p>
+                <p className="text-sm text-green-800 font-medium">
+                  Order placed successfully and sent to kitchen! Receipt will print automatically.
+                </p>
+              </div>
+
+              {/* Kitchen Receipt - 80mm Print View (Item Name & Quantity Only) */}
+              <div id="order-taker-receipt-print-area">
+                <div className="kitchen-receipt-container">
+                  <style jsx>{`
+                    .kitchen-receipt-container {
+                      width: 80mm;
+                      max-width: 80mm;
+                      min-width: 80mm;
+                      margin: 0 auto;
+                      padding: 8mm 5mm;
+                      background: #ffffff;
+                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                      font-size: 12px;
+                      line-height: 1.5;
+                      color: #000;
+                      box-sizing: border-box;
+                    }
+
+                    .kitchen-header {
+                      text-align: center;
+                      margin-bottom: 10px;
+                      border-bottom: 2px solid #000;
+                      padding-bottom: 6px;
+                    }
+
+                    .kitchen-title {
+                      font-size: 16px;
+                      font-weight: 700;
+                      text-transform: uppercase;
+                      letter-spacing: 1px;
+                    }
+
+                    .kitchen-subtitle {
+                      font-size: 11px;
+                      font-weight: 600;
+                      margin-top: 4px;
+                    }
+
+                    .kitchen-meta {
+                      margin-top: 8px;
+                      font-size: 11px;
+                    }
+
+                    .kitchen-meta-row {
+                      display: flex;
+                      justify-content: space-between;
+                      margin: 2px 0;
+                    }
+
+                    .kitchen-items {
+                      margin-top: 10px;
+                      border-top: 1px dashed #000;
+                      padding-top: 6px;
+                    }
+
+                    .kitchen-items-header {
+                      display: flex;
+                      justify-content: space-between;
+                      font-weight: 700;
+                      font-size: 12px;
+                      margin-bottom: 4px;
+                    }
+
+                    .kitchen-item-row {
+                      display: flex;
+                      justify-content: space-between;
+                      align-items: center;
+                      padding: 3px 0;
+                      border-bottom: 1px dotted #ccc;
+                    }
+
+                    .kitchen-item-name {
+                      flex: 1;
+                      font-weight: 600;
+                      font-size: 12px;
+                      margin-right: 8px;
+                      text-transform: uppercase;
+                    }
+
+                    .kitchen-item-qty {
+                      width: 28px;
+                      text-align: right;
+                      font-weight: 700;
+                      font-size: 13px;
+                    }
+
+                    .kitchen-footer {
+                      margin-top: 10px;
+                      text-align: center;
+                      font-size: 10px;
+                    }
+                  `}</style>
+
+                  {(() => {
+                    const order = orderReceipt.order || orderReceipt || {};
+                    const items = orderReceipt.items || [];
+                    const orderId = order.order_id || order.id || order.orderid || 'N/A';
+                    const tableNumber = order.table_number || order.table || '';
+                    const orderType = order.order_type || 'Dine In';
+                    const createdAt = order.created_at || new Date().toLocaleString();
+
+                    return (
+                      <>
+                        <div className="kitchen-header">
+                          <div className="kitchen-title">KITCHEN ORDER</div>
+                          <div className="kitchen-subtitle">
+                            Order #{orderId !== 'N/A' ? `ORD-${orderId}` : 'N/A'}
+                          </div>
+                          <div className="kitchen-meta">
+                            <div className="kitchen-meta-row">
+                              <span>Type:</span>
+                              <span>{orderType}</span>
+                            </div>
+                            {tableNumber && (
+                              <div className="kitchen-meta-row">
+                                <span>Table:</span>
+                                <span>{tableNumber}</span>
+                              </div>
+                            )}
+                            <div className="kitchen-meta-row">
+                              <span>Time:</span>
+                              <span>{createdAt}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="kitchen-items">
+                          <div className="kitchen-items-header">
+                            <span>Item</span>
+                            <span>Qty</span>
+                          </div>
+                          {items && items.length > 0 ? (
+                            items.map((item, index) => {
+                              const name =
+                                item.dish_name ||
+                                item.name ||
+                                item.title ||
+                                'Item';
+                              const qty =
+                                item.quantity ||
+                                item.qty ||
+                                item.qnty ||
+                                1;
+                              return (
+                                <div key={index} className="kitchen-item-row">
+                                  <div className="kitchen-item-name">
+                                    {String(name).length > 28
+                                      ? String(name).slice(0, 28) + '…'
+                                      : name}
+                                  </div>
+                                  <div className="kitchen-item-qty">
+                                    {qty}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="kitchen-item-row">
+                              <div className="kitchen-item-name">
+                                No items found
+                              </div>
+                              <div className="kitchen-item-qty">0</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="kitchen-footer">
+                          *** Send to kitchen immediately ***
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
 
               {/* Actions */}
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 border-t">
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -1034,10 +1246,10 @@ export default function CreateOrderPage() {
                   New Order
                 </Button>
                 <Button
-                  onClick={() => window.print()}
+                  onClick={handlePrintReceipt}
                   className="flex-1"
                 >
-                  Print Receipt
+                  Re-Print Receipt
                 </Button>
               </div>
             </div>
