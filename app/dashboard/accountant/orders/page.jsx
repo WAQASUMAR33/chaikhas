@@ -43,6 +43,7 @@ export default function OrderManagementPage() {
     change: 0,
   });
   const [generatedBill, setGeneratedBill] = useState(null);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [formData, setFormData] = useState({
     status: 'Pending',
     table_id: '',
@@ -1156,6 +1157,12 @@ export default function OrderManagementPage() {
       return;
     }
     
+    // Prevent multiple simultaneous print requests
+    if (isPrinting) {
+      console.log('Print already in progress, ignoring duplicate request');
+      return;
+    }
+    
     // Validate that items are present
     const items = generatedBill.items || [];
     if (!items || items.length === 0) {
@@ -1168,6 +1175,7 @@ export default function OrderManagementPage() {
       return;
     }
     
+    setIsPrinting(true);
     console.log('=== Printing Receipt ===');
     console.log('Items count:', items.length);
     console.log('Items:', items);
@@ -1177,6 +1185,7 @@ export default function OrderManagementPage() {
       const printContent = document.getElementById('receipt-print-area');
       if (!printContent) {
         setAlert({ type: 'error', message: 'Receipt content not found' });
+        setIsPrinting(false);
         return;
       }
 
@@ -1193,9 +1202,13 @@ export default function OrderManagementPage() {
       console.log('Receipt HTML length:', receiptHTML.length);
       console.log('Category IDs:', categoryIds);
       
-      // Call backend API to print directly to network printers
-      // Backend will handle printing to two default printers based on category
-      const printResult = await apiPost('/print_receipt_direct.php', {
+      // Create a timeout promise to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Print request timed out after 10 seconds')), 10000);
+      });
+      
+      // Call backend API to print directly to network printers with timeout
+      const printPromise = apiPost('/print_receipt_direct.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
         receipt_content: receiptHTML,
@@ -1210,6 +1223,59 @@ export default function OrderManagementPage() {
         terminal: getTerminal(),
         branch_id: getBranchId() || getTerminal()
       });
+      
+      let printResult;
+      try {
+        // Race between print API and timeout
+        printResult = await Promise.race([printPromise, timeoutPromise]);
+      } catch (timeoutError) {
+        console.warn('Print API timed out or failed, using fallback print method');
+        // Fallback to window.print() if API fails or times out
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Receipt - Restaurant Khas</title>
+                <style>
+                  @media print {
+                    @page {
+                      size: 80mm auto;
+                      margin: 0;
+                    }
+                    body {
+                      margin: 0;
+                      padding: 0;
+                    }
+                  }
+                  body {
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    margin: 0;
+                    padding: 0;
+                  }
+                </style>
+              </head>
+              <body>${receiptHTML}</body>
+            </html>
+          `);
+          printWindow.document.close();
+          setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+          }, 250);
+        } else {
+          // If popup blocked, use direct window.print
+          window.print();
+        }
+        
+        setAlert({ 
+          type: 'warning', 
+          message: 'Print API unavailable. Using browser print dialog instead.' 
+        });
+        setIsPrinting(false);
+        return;
+      }
 
       if (printResult.success && printResult.data) {
         const response = printResult.data;
@@ -1241,23 +1307,149 @@ export default function OrderManagementPage() {
             }
           }
         } else {
+          // API returned but with error, fallback to window.print
+          console.warn('Print API returned error, using fallback');
+          const printWindow = window.open('', '_blank');
+          if (printWindow) {
+            printWindow.document.write(`
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <title>Receipt - Restaurant Khas</title>
+                  <style>
+                    @media print {
+                      @page {
+                        size: 80mm auto;
+                        margin: 0;
+                      }
+                      body {
+                        margin: 0;
+                        padding: 0;
+                      }
+                    }
+                    body {
+                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                      margin: 0;
+                      padding: 0;
+                    }
+                  </style>
+                </head>
+                <body>${receiptHTML}</body>
+              </html>
+            `);
+            printWindow.document.close();
+            setTimeout(() => {
+              printWindow.print();
+              printWindow.close();
+            }, 250);
+          } else {
+            window.print();
+          }
+          
           setAlert({ 
             type: 'warning', 
-            message: response.message || 'Print job sent, but some printers may not be available' 
+            message: response.message || 'Print API unavailable. Using browser print dialog instead.' 
           });
         }
       } else {
+        // API call failed, fallback to window.print
+        console.warn('Print API failed, using fallback');
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Receipt - Restaurant Khas</title>
+                <style>
+                  @media print {
+                    @page {
+                      size: 80mm auto;
+                      margin: 0;
+                    }
+                    body {
+                      margin: 0;
+                      padding: 0;
+                    }
+                  }
+                  body {
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    margin: 0;
+                    padding: 0;
+                  }
+                </style>
+              </head>
+              <body>${receiptHTML}</body>
+            </html>
+          `);
+          printWindow.document.close();
+          setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+          }, 250);
+        } else {
+          window.print();
+        }
+        
         setAlert({ 
           type: 'warning', 
-          message: 'Print job sent, but some printers may not be available' 
+          message: 'Print API unavailable. Using browser print dialog instead.' 
         });
       }
     } catch (error) {
       console.error('Error printing receipt:', error);
+      
+      // Fallback to window.print on any error
+      try {
+        const printContent = document.getElementById('receipt-print-area');
+        if (printContent) {
+          const printWindow = window.open('', '_blank');
+          if (printWindow) {
+            printWindow.document.write(`
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <title>Receipt - Restaurant Khas</title>
+                  <style>
+                    @media print {
+                      @page {
+                        size: 80mm auto;
+                        margin: 0;
+                      }
+                      body {
+                        margin: 0;
+                        padding: 0;
+                      }
+                    }
+                    body {
+                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                      margin: 0;
+                      padding: 0;
+                    }
+                  </style>
+                </head>
+                <body>${printContent.innerHTML}</body>
+              </html>
+            `);
+            printWindow.document.close();
+            setTimeout(() => {
+              printWindow.print();
+              printWindow.close();
+            }, 250);
+        } else {
+          window.print();
+        }
+        }
+      } catch (fallbackError) {
+        console.error('Fallback print also failed:', fallbackError);
+      }
+      
       setAlert({ 
         type: 'error', 
-        message: 'Error printing receipt. Please try again or contact support.' 
+        message: 'Error printing receipt. Using browser print dialog instead.' 
       });
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -2912,10 +3104,23 @@ export default function OrderManagementPage() {
                   </Button>
                   <Button
                     onClick={handlePrintReceipt}
-                    className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold"
+                    disabled={isPrinting}
+                    className="flex-1 bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Printer className="w-4 h-4 mr-2" />
-                    Print Receipt
+                    {isPrinting ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                        </svg>
+                        Printing...
+                      </>
+                    ) : (
+                      <>
+                        <Printer className="w-4 h-4 mr-2" />
+                        Print Receipt
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
