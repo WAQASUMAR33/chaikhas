@@ -29,7 +29,8 @@ import {
   PlusCircle,
   ShoppingCart,
   Network,
-  Settings
+  Settings,
+  FileBarChart
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
 
@@ -47,6 +48,7 @@ const menuItems = [
   { icon: Printer, label: 'Printers', path: '/dashboard/super-admin/printer' },
   { icon: FileText, label: 'Orders', path: '/dashboard/super-admin/order' },
   { icon: TrendingUp, label: 'Sales List', path: '/dashboard/super-admin/sales' },
+  { icon: FileBarChart, label: 'Sales Report', path: '/dashboard/super-admin/sales-report' },
   { icon: BarChart3, label: 'Menu Sales', path: '/dashboard/super-admin/menu-sales' },
   { icon: Receipt, label: 'Expenses', path: '/dashboard/super-admin/expenses' },
   { icon: Building2, label: 'Halls', path: '/dashboard/super-admin/halls' },

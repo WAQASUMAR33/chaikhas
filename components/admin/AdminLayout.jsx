@@ -28,7 +28,9 @@ import {
   LogOut,
   PlusCircle,
   ShoppingCart,
-  Settings
+  Settings,
+  FileBarChart,
+  Clock
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
 import LogPanel from '@/components/ui/LogPanel';
@@ -47,8 +49,10 @@ const menuItems = [
   { icon: Printer, label: 'Printers', path: '/dashboard/branch-admin/printer' },
   { icon: FileText, label: 'Orders', path: '/dashboard/branch-admin/order' },
   { icon: TrendingUp, label: 'Sales List', path: '/dashboard/branch-admin/sales' },
+  { icon: FileBarChart, label: 'Sales Report', path: '/dashboard/branch-admin/sales-report' },
   { icon: BarChart3, label: 'Menu Sales', path: '/dashboard/branch-admin/menu-sales' },
   { icon: Receipt, label: 'Expenses', path: '/dashboard/branch-admin/expenses' },
+  { icon: Clock, label: 'Day End', path: '/dashboard/branch-admin/dayend' },
   { icon: Building2, label: 'Halls', path: '/dashboard/branch-admin/halls' },
   { icon: Table2, label: 'Tables', path: '/dashboard/branch-admin/tables' },
   { icon: Users, label: 'Accounts', path: '/dashboard/branch-admin/accounts' },

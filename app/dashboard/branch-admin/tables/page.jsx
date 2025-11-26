@@ -81,12 +81,48 @@ export default function TableManagementPage() {
         branch_id: branchId  // Always include branch_id for branch-admin
       });
       
-      // The API returns a plain JSON array
+      console.log('=== get_tables.php Response ===', result);
+      
+      // Handle multiple possible response structures
+      let tablesData = [];
+      
+      // Case 1: Direct array in result.data
       if (result.data && Array.isArray(result.data)) {
-        logger.logDataFetch('Tables', result.data, result.data.length);
+        tablesData = result.data;
+        console.log('✅ Found tables in result.data (array), count:', tablesData.length);
+      } 
+      // Case 2: Array in result.data.data
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+        console.log('✅ Found tables in result.data.data (array), count:', tablesData.length);
+      }
+      // Case 3: Array in result.data.tables
+      else if (result.data && result.data.tables && Array.isArray(result.data.tables)) {
+        tablesData = result.data.tables;
+        console.log('✅ Found tables in result.data.tables (array), count:', tablesData.length);
+      }
+      // Case 4: Success object with data array
+      else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+        console.log('✅ Found tables in result.data.success.data (array), count:', tablesData.length);
+      }
+      // Case 5: Search for any array in result.data object
+      else if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            tablesData = result.data[key];
+            console.log(`✅ Found tables in result.data.${key} (array), count:`, tablesData.length);
+            break;
+          }
+        }
+      }
+      
+      // If we found tables data, map it
+      if (tablesData.length > 0) {
+        logger.logDataFetch('Tables', tablesData, tablesData.length);
         
         // Map API response to match our table structure
-        const mappedTables = result.data.map((table) => {
+        const mappedTables = tablesData.map((table) => {
           // Log missing fields
           if (!table.table_id && !table.id && !table.TableID) {
             logger.logMissingData('table_id', 'table');
@@ -110,17 +146,35 @@ export default function TableManagementPage() {
         
         logger.logDataMapping('API Tables', 'Mapped Tables', mappedTables.length);
         logger.success(`Successfully loaded ${mappedTables.length} tables`, { 
-          totalReceived: result.data.length,
+          totalReceived: tablesData.length,
           successfullyMapped: mappedTables.length 
         });
         setTables(mappedTables);
-      } else if (result.data && result.data.success === false) {
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } 
+      // Case: Empty array - no tables found (valid response)
+      else if (result.success && (Array.isArray(result.data) || (result.data && Array.isArray(result.data)))) {
+        console.log('✅ Empty tables array (no tables found)');
+        setTables([]);
+        setAlert({ type: '', message: '' });
+      }
+      // Case: Error response
+      else if (result.data && result.data.success === false) {
         logger.error('Failed to load tables', result.data);
         setAlert({ type: 'error', message: result.data.message || 'Failed to load tables' });
         setTables([]);
-      } else {
+      } 
+      // Case: Unexpected response structure
+      else {
+        console.warn('⚠️ Empty or unexpected tables response structure:', result);
         logger.warning('Empty tables response', result);
-        setTables([]);
+        // Try to show helpful message
+        if (result.success === false || (result.data && result.data.success === false)) {
+          setAlert({ type: 'error', message: result.data?.message || 'Failed to load tables' });
+        } else {
+          // If API call succeeded but no data, it might just be empty
+          setTables([]);
+        }
       }
       setLoading(false);
     } catch (error) {

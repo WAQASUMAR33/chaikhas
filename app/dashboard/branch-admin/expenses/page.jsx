@@ -1,10 +1,12 @@
 'use client';
 
 /**
- * Expense Management Page
- * Full CRUD operations for expense titles
- * Uses real APIs: get_expense_title.php, expense_title_management.php
- * Database: expense_title table (id, title, terminal, created_at, updated_at)
+ * Expense Management Page - Branch Admin
+ * Full CRUD operations for expenses with amounts
+ * Shows only expenses for the current branch
+ * Users can enter expense title directly - it will be created if it doesn't exist
+ * Uses APIs: get_expenses.php, expense_management.php, expense_title_management.php, get_expense_title.php
+ * Database: expenses table (id, expense_title_id, amount, branch_id, description, created_at, updated_at)
  */
 
 import { useEffect, useState } from 'react';
@@ -14,8 +16,9 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal } from '@/utils/api';
-import { Receipt, Plus, Edit, Trash2, Search, X } from 'lucide-react';
+import { apiPost, apiDelete, apiGet, getBranchId } from '@/utils/api';
+import { formatPKR } from '@/utils/format';
+import { Receipt, Plus, Edit, Trash2, Search, X, DollarSign } from 'lucide-react';
 
 export default function ExpenseManagementPage() {
   const [expenses, setExpenses] = useState([]);
@@ -25,7 +28,9 @@ export default function ExpenseManagementPage() {
   const [editingExpense, setEditingExpense] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
-    title: '',
+    expense_title: '',
+    amount: '',
+    description: '',
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
@@ -38,40 +43,114 @@ export default function ExpenseManagementPage() {
     if (searchTerm.trim() === '') {
       setFilteredExpenses(expenses);
     } else {
-      const filtered = expenses.filter(expense =>
-        expense.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        expense.id.toString().includes(searchTerm)
-      );
+      const filtered = expenses.filter(expense => {
+        const title = expense.expense_title?.toLowerCase() || '';
+        const description = expense.description?.toLowerCase() || '';
+        const amount = expense.amount?.toString() || '';
+        const searchLower = searchTerm.toLowerCase();
+        return (
+          title.includes(searchLower) ||
+          description.includes(searchLower) ||
+          amount.includes(searchLower) ||
+          expense.id.toString().includes(searchTerm)
+        );
+      });
       setFilteredExpenses(filtered);
     }
   }, [searchTerm, expenses]);
 
   /**
-   * Fetch all expense titles from API
-   * API: get_expense_title.php (POST with terminal parameter)
+   * Get or create expense title and return its ID
+   */
+  const getOrCreateExpenseTitle = async (title) => {
+    if (!title || title.trim() === '') {
+      return null;
+    }
+
+    try {
+      // First, try to find existing expense title
+      const searchResult = await apiPost('/get_expense_title.php', { terminal: 1 });
+      let titlesData = [];
+      
+      if (searchResult.success && searchResult.data) {
+        if (Array.isArray(searchResult.data)) {
+          titlesData = searchResult.data;
+        } else if (searchResult.data.data && Array.isArray(searchResult.data.data)) {
+          titlesData = searchResult.data.data;
+        }
+      }
+
+      // Check if title already exists
+      const existingTitle = titlesData.find(
+        t => (t.title || t.expense_title || '').toLowerCase().trim() === title.toLowerCase().trim()
+      );
+
+      if (existingTitle) {
+        return existingTitle.id || existingTitle.expense_id;
+      }
+
+      // Create new expense title if it doesn't exist
+      const createResult = await apiPost('/expense_title_management.php', {
+        id: '',
+        title: title.trim(),
+        terminal: 1,
+      });
+
+      if (createResult.success && createResult.data) {
+        // Try to get the ID from response
+        if (createResult.data.id) {
+          return createResult.data.id;
+        }
+        // If ID not in response, fetch again to get it
+        const refreshResult = await apiPost('/get_expense_title.php', { terminal: 1 });
+        let refreshData = [];
+        if (refreshResult.success && refreshResult.data) {
+          if (Array.isArray(refreshResult.data)) {
+            refreshData = refreshResult.data;
+          } else if (refreshResult.data.data && Array.isArray(refreshResult.data.data)) {
+            refreshData = refreshResult.data.data;
+          }
+        }
+        const newTitle = refreshData.find(
+          t => (t.title || t.expense_title || '').toLowerCase().trim() === title.toLowerCase().trim()
+        );
+        return newTitle ? (newTitle.id || newTitle.expense_id) : null;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error getting/creating expense title:', error);
+      return null;
+    }
+  };
+
+  /**
+   * Fetch all expenses for current branch
+   * API: get_expenses.php (POST with branch_id)
    */
   const fetchExpenses = async () => {
     setLoading(true);
     setAlert({ type: '', message: '' });
     
     try {
-      const terminal = getTerminal();
-      const result = await apiPost('/get_expense_title.php', { terminal });
+      const branchId = getBranchId();
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        setLoading(false);
+        return;
+      }
+
+      const result = await apiPost('/get_expenses.php', { branch_id: branchId });
       
       // Handle different response structures
       let expensesData = [];
       
       if (result.success && result.data) {
-        // Check if data is an array directly
         if (Array.isArray(result.data)) {
           expensesData = result.data;
-        }
-        // Check if data is nested: { success: true, data: [...] }
-        else if (result.data.data && Array.isArray(result.data.data)) {
+        } else if (result.data.data && Array.isArray(result.data.data)) {
           expensesData = result.data.data;
-        }
-        // Check if response has success field
-        else if (result.data.success === false) {
+        } else if (result.data.success === false) {
           setAlert({ type: 'error', message: result.data.message || 'Failed to load expenses' });
           setExpenses([]);
           setFilteredExpenses([]);
@@ -80,11 +159,9 @@ export default function ExpenseManagementPage() {
         }
       }
 
-      // Map API response to match database schema
+      // Map API response
       const mappedExpenses = expensesData.map((expense) => {
-        // Format dates
         let formattedCreatedAt = expense.created_at || '';
-        let formattedUpdatedAt = expense.updated_at || '';
         
         if (formattedCreatedAt) {
           try {
@@ -102,33 +179,18 @@ export default function ExpenseManagementPage() {
             // Keep original format if parsing fails
           }
         }
-        
-        if (formattedUpdatedAt) {
-          try {
-            const date = new Date(formattedUpdatedAt);
-            if (!isNaN(date.getTime())) {
-              formattedUpdatedAt = date.toLocaleDateString('en-GB', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-            }
-          } catch (e) {
-            // Keep original format if parsing fails
-          }
-        }
 
         return {
           id: expense.id || expense.expense_id,
           expense_id: expense.id || expense.expense_id,
-          title: expense.title || '',
-          terminal: expense.terminal || terminal,
+          expense_title_id: expense.expense_title_id || '',
+          expense_title: expense.expense_title || expense.title || '',
+          amount: parseFloat(expense.amount || 0),
+          description: expense.description || '',
+          branch_id: expense.branch_id || branchId,
+          branch_name: expense.branch_name || '',
           created_at: formattedCreatedAt || expense.created_at || 'N/A',
-          updated_at: formattedUpdatedAt || expense.updated_at || 'N/A',
           raw_created_at: expense.created_at || '',
-          raw_updated_at: expense.updated_at || '',
         };
       });
 
@@ -152,27 +214,47 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle form submission (Create or Update)
-   * API: expense_title_management.php (POST)
+   * API: expense_management.php (POST)
    */
   const handleSubmit = async (e) => {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
     // Validate form
-    if (!formData.title || formData.title.trim() === '') {
+    if (!formData.expense_title || formData.expense_title.trim() === '') {
       setAlert({ type: 'error', message: 'Expense title is required' });
       return;
     }
 
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      setAlert({ type: 'error', message: 'Valid amount is required' });
+      return;
+    }
+
     try {
-      const terminal = getTerminal();
+      const branchId = getBranchId();
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        return;
+      }
+
+      // Get or create expense title
+      const expenseTitleId = await getOrCreateExpenseTitle(formData.expense_title.trim());
+      
+      if (!expenseTitleId) {
+        setAlert({ type: 'error', message: 'Failed to create or find expense title. Please try again.' });
+        return;
+      }
+
       const data = {
         id: editingExpense ? editingExpense.id : '', // Empty for create
-        title: formData.title.trim(),
-        terminal: terminal,
+        expense_title_id: expenseTitleId,
+        amount: parseFloat(formData.amount),
+        description: formData.description.trim(),
+        branch_id: branchId,
       };
 
-      const result = await apiPost('/expense_title_management.php', data);
+      const result = await apiPost('/expense_management.php', data);
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (
@@ -185,7 +267,7 @@ export default function ExpenseManagementPage() {
           type: 'success', 
           message: result.data.message || (editingExpense ? 'Expense updated successfully!' : 'Expense created successfully!')
         });
-        setFormData({ title: '' });
+        setFormData({ expense_title: '', amount: '', description: '' });
         setEditingExpense(null);
         setModalOpen(false);
         fetchExpenses(); // Refresh list
@@ -210,22 +292,24 @@ export default function ExpenseManagementPage() {
   const handleEdit = (expense) => {
     setEditingExpense(expense);
     setFormData({
-      title: expense.title || '',
+      expense_title: expense.expense_title || '',
+      amount: expense.amount?.toString() || '',
+      description: expense.description || '',
     });
     setModalOpen(true);
   };
 
   /**
    * Handle delete button click
-   * API: expense_title_management.php (DELETE)
+   * API: expense_management.php (DELETE)
    */
   const handleDelete = async (expenseId) => {
-    if (!window.confirm('Are you sure you want to delete this expense title? This action cannot be undone.')) {
+    if (!window.confirm('Are you sure you want to delete this expense? This action cannot be undone.')) {
       return;
     }
 
     try {
-      const result = await apiDelete('/expense_title_management.php', { id: expenseId });
+      const result = await apiDelete('/expense_management.php', { id: expenseId });
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (
@@ -261,6 +345,10 @@ export default function ExpenseManagementPage() {
     setSearchTerm('');
   };
 
+  // Calculate total expenses
+  const totalExpenses = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+  const filteredTotal = filteredExpenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+
   /**
    * Table columns configuration
    */
@@ -273,24 +361,23 @@ export default function ExpenseManagementPage() {
     },
     {
       header: 'Expense Title',
-      accessor: 'title',
+      accessor: 'expense_title',
       className: 'min-w-[200px] font-medium',
     },
     {
-      header: 'Terminal',
-      accessor: 'terminal',
-      className: 'w-24 text-center',
+      header: 'Amount',
+      accessor: (row) => <span className="font-semibold text-[#FF5F15]">{formatPKR(row.amount || 0)}</span>,
+      className: 'w-32 text-right',
       wrap: false,
     },
     {
-      header: 'Created At',
+      header: 'Description',
+      accessor: 'description',
+      className: 'min-w-[200px] text-gray-600',
+    },
+    {
+      header: 'Date',
       accessor: 'created_at',
-      className: 'w-48 text-sm text-gray-600',
-      wrap: false,
-    },
-    {
-      header: 'Updated At',
-      accessor: 'updated_at',
       className: 'w-48 text-sm text-gray-600',
       wrap: false,
     },
@@ -330,19 +417,19 @@ export default function ExpenseManagementPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Expense Management</h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1">
-              Manage expense titles and categories
+              Manage expenses for your branch
             </p>
           </div>
           <Button
             onClick={() => {
               setEditingExpense(null);
-              setFormData({ title: '' });
+              setFormData({ expense_title: '', amount: '', description: '' });
               setModalOpen(true);
             }}
             className="flex items-center gap-2 w-full sm:w-auto"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Expense Title</span>
+            <span>Add Expense</span>
           </Button>
         </div>
 
@@ -364,7 +451,7 @@ export default function ExpenseManagementPage() {
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by title or ID..."
+                placeholder="Search by title, description, amount, or ID..."
                 className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
               />
               {searchTerm && (
@@ -379,7 +466,7 @@ export default function ExpenseManagementPage() {
           </div>
         </div>
 
-        {/* Summary Card */}
+        {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between">
@@ -398,13 +485,13 @@ export default function ExpenseManagementPage() {
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Filtered Results</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {filteredExpenses.length}
+                <p className="text-sm font-medium text-gray-600">Total Amount</p>
+                <p className="text-2xl font-bold text-[#FF5F15] mt-1">
+                  {formatPKR(totalExpenses)}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                <Search className="w-6 h-6 text-green-600" />
+                <DollarSign className="w-6 h-6 text-green-600" />
               </div>
             </div>
           </div>
@@ -412,13 +499,13 @@ export default function ExpenseManagementPage() {
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Terminal</p>
+                <p className="text-sm font-medium text-gray-600">Filtered Total</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {getTerminal()}
+                  {formatPKR(filteredTotal)}
                 </p>
               </div>
               <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
-                <Receipt className="w-6 h-6 text-orange-600" />
+                <Search className="w-6 h-6 text-orange-600" />
               </div>
             </div>
           </div>
@@ -441,7 +528,7 @@ export default function ExpenseManagementPage() {
               emptyMessage={
                 searchTerm
                   ? `No expenses found matching "${searchTerm}"`
-                  : "No expenses found. Click 'Add Expense Title' to create one."
+                  : "No expenses found. Click 'Add Expense' to create one."
               }
             />
           </div>
@@ -453,28 +540,52 @@ export default function ExpenseManagementPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingExpense(null);
-            setFormData({ title: '' });
+            setFormData({ expense_title: '', amount: '', description: '' });
             setAlert({ type: '', message: '' });
           }}
-          title={editingExpense ? 'Edit Expense Title' : 'Add New Expense Title'}
+          title={editingExpense ? 'Edit Expense' : 'Add New Expense'}
           size="md"
           showCloseButton={true}
         >
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
               label="Expense Title"
-              name="title"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              name="expense_title"
+              value={formData.expense_title}
+              onChange={(e) => setFormData({ ...formData, expense_title: e.target.value })}
               placeholder="e.g., Groceries, Utilities, Rent, Supplies"
               required
               autoFocus
             />
 
+            <Input
+              label="Amount (PKR)"
+              name="amount"
+              type="number"
+              step="0.01"
+              min="0"
+              value={formData.amount}
+              onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+              placeholder="0.00"
+              required
+            />
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Optional description..."
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+              />
+            </div>
+
             {editingExpense && (
               <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-600">
                 <p><strong>ID:</strong> {editingExpense.id}</p>
-                <p><strong>Terminal:</strong> {editingExpense.terminal}</p>
                 {editingExpense.raw_created_at && (
                   <p><strong>Created:</strong> {editingExpense.created_at}</p>
                 )}
@@ -488,7 +599,7 @@ export default function ExpenseManagementPage() {
                 onClick={() => {
                   setModalOpen(false);
                   setEditingExpense(null);
-                  setFormData({ title: '' });
+                  setFormData({ expense_title: '', amount: '', description: '' });
                   setAlert({ type: '', message: '' });
                 }}
                 className="w-full sm:w-auto"

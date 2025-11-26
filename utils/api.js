@@ -2,12 +2,19 @@
  * API Helper Utility
  * Handles GET/POST requests to the PHP backend
  * Manages authentication tokens in headers
+ * Automatically falls back to localhost when live server is unavailable
  */
 
 import logger from './logger';
 
-// Get API base URL from environment variable, fallback to default
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost/restuarent/api';
+// Primary API URL (live/production) - from environment variable
+const PRIMARY_API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+
+// Fallback API URL (local development)
+const FALLBACK_API_URL = 'http://localhost/restuarent/api';
+
+// Storage key for caching working API URL
+const WORKING_API_URL_KEY = 'working_api_url';
 
 // Development mode flag - only log in development and client-side
 const IS_DEVELOPMENT = typeof window !== 'undefined' && process.env.NODE_ENV === 'development';
@@ -24,6 +31,141 @@ const devError = (...args) => {
   if (IS_DEVELOPMENT) {
     console.error(...args);
   }
+};
+
+/**
+ * Get the current working API URL
+ * Checks localStorage cache first, then determines primary/fallback
+ * @returns {string} The API base URL to use
+ */
+const getWorkingApiUrl = () => {
+  if (typeof window === 'undefined') {
+    // Server-side: use primary or fallback
+    return PRIMARY_API_URL || FALLBACK_API_URL;
+  }
+
+  // Check if we have a cached working URL
+  const cachedUrl = localStorage.getItem(WORKING_API_URL_KEY);
+  if (cachedUrl) {
+    return cachedUrl;
+  }
+
+  // Determine which URL to try first
+  // If PRIMARY_API_URL is set and not localhost, use it as primary
+  // Otherwise, use fallback as default
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+
+  return shouldTryPrimary ? PRIMARY_API_URL : FALLBACK_API_URL;
+};
+
+/**
+ * Set the working API URL in cache
+ * @param {string} url - The working API URL
+ */
+const setWorkingApiUrl = (url) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(WORKING_API_URL_KEY, url);
+    if (IS_DEVELOPMENT) {
+      console.log('✅ Cached working API URL:', url);
+    }
+  }
+};
+
+/**
+ * Clear the cached working API URL (force re-detection)
+ */
+export const resetApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(WORKING_API_URL_KEY);
+    if (IS_DEVELOPMENT) {
+      console.log('🔄 Cleared cached API URL - will re-detect on next request');
+    }
+  }
+};
+
+/**
+ * Get the currently working API URL (for debugging)
+ * @returns {string} Current working API URL
+ */
+export const getCurrentApiUrl = () => {
+  return getWorkingApiUrl();
+};
+
+/**
+ * Test if an API URL is reachable with a quick HEAD request
+ * @param {string} baseUrl - The API base URL to test
+ * @param {string} testEndpoint - Endpoint to test (default: '/test_connection.php')
+ * @returns {Promise<boolean>} True if URL is reachable
+ */
+const testApiUrl = async (baseUrl, testEndpoint = '/test_connection.php') => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+    const response = await fetch(`${baseUrl}${testEndpoint}`, {
+      method: 'HEAD',
+      mode: 'cors',
+      credentials: 'omit',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    return response.ok || response.status < 500; // Accept 200-499 as "reachable"
+  } catch (error) {
+    return false;
+  }
+};
+
+/**
+ * Try fetching with multiple URLs (primary then fallback)
+ * @param {Array<string>} urls - Array of URLs to try
+ * @param {Function} createFetchPromise - Function that takes a URL and returns a fetch Promise
+ * @returns {Promise<Response>} Fetch response from first working URL
+ */
+const fetchWithFallback = async (urls, createFetchPromise) => {
+  let lastError = null;
+  const previousWorkingUrl = getWorkingApiUrl();
+
+  for (const url of urls) {
+    try {
+      const response = await createFetchPromise(url);
+      
+      // If we got a response, cache this URL as working
+      setWorkingApiUrl(url);
+      
+      if (IS_DEVELOPMENT && url !== previousWorkingUrl) {
+        console.log(`✅ API URL working: ${url} (switched from ${previousWorkingUrl || 'none'})`);
+      }
+      
+      return response;
+    } catch (error) {
+      // Network/CORS errors mean server is unreachable - try next URL
+      if (error.message === 'Failed to fetch' || 
+          error.name === 'TypeError' || 
+          error.name === 'AbortError' ||
+          error.message.includes('CORS') ||
+          error.message.includes('network')) {
+        
+        lastError = error;
+        
+        if (IS_DEVELOPMENT) {
+          console.warn(`⚠️ ${url} unreachable, trying fallback...`);
+        }
+        
+        continue;
+      } else {
+        // Other errors mean server responded (even with error)
+        // Cache this URL and re-throw for proper error handling
+        setWorkingApiUrl(url);
+        throw error;
+      }
+    }
+  }
+
+  // All URLs failed
+  throw lastError || new Error('Cannot connect to any API server');
 };
 
 /**
@@ -199,7 +341,7 @@ export const clearAuth = () => {
 };
 
 /**
- * Make GET request to API
+ * Make GET request to API with automatic fallback to localhost
  * @param {string} endpoint - API endpoint (e.g., '/users')
  * @param {Object} params - Query parameters (will be converted to query string)
  * @param {Object} options - Additional fetch options
@@ -226,20 +368,47 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
   
-  const fullUrl = queryString 
-    ? `${API_BASE_URL}${normalizedEndpoint}?${queryString}`
-    : `${API_BASE_URL}${normalizedEndpoint}`;
+  // Determine URLs to try (cached working URL first, then primary, then fallback)
+  const currentWorkingUrl = getWorkingApiUrl();
+  const urlsToTry = [currentWorkingUrl];
+  
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+  
+  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
+    urlsToTry.push(PRIMARY_API_URL);
+  }
+  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
+    urlsToTry.push(FALLBACK_API_URL);
+  }
+
+  // Log API base URL in development for debugging
+  if (IS_DEVELOPMENT) {
+    console.log('🔧 Trying API URLs:', urlsToTry);
+    console.log('🔧 Current working URL:', currentWorkingUrl);
+  }
 
   // Log API request
   logger.logAPI('GET', normalizedEndpoint, params);
 
   try {
-    const response = await fetch(fullUrl, {
-      method: 'GET',
-      mode: 'cors', // Explicitly enable CORS
-      credentials: 'omit', // Don't send credentials to avoid CORS issues
-      headers,
-      ...options,
+    const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
+      const fullUrl = queryString 
+        ? `${baseUrl}${normalizedEndpoint}?${queryString}`
+        : `${baseUrl}${normalizedEndpoint}`;
+      
+      if (IS_DEVELOPMENT) {
+        console.log('🔧 Attempting GET:', fullUrl);
+      }
+      
+      return fetch(fullUrl, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit',
+        headers,
+        ...options,
+      });
     });
 
     const data = await response.json();
@@ -257,15 +426,22 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
     // Provide more detailed error messages
     let errorMessage = error.message || 'Network error';
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-      errorMessage = 'Cannot connect to server. Please ensure WAMP server is running and API is accessible.';
+      errorMessage = 'Cannot connect to server. Tried both live and localhost servers.';
     }
+    
+    const currentUrl = getWorkingApiUrl();
+    const attemptedUrl = queryString 
+      ? `${currentUrl}${normalizedEndpoint}?${queryString}`
+      : `${currentUrl}${normalizedEndpoint}`;
+    
     return {
       success: false,
       data: { 
         success: false,
         message: errorMessage,
         endpoint: normalizedEndpoint,
-        apiUrl: fullUrl
+        apiUrl: attemptedUrl,
+        triedUrls: urlsToTry
       },
       status: 0,
     };
@@ -280,6 +456,12 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
  * @returns {Promise<Object>} JSON response
  */
 export const apiPost = async (endpoint, body, options = {}) => {
+  // Validate body is provided
+  if (body === undefined || body === null) {
+    console.error('❌ apiPost: body is required but was', body);
+    throw new Error('Request body is required for POST requests');
+  }
+  
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -290,29 +472,98 @@ export const apiPost = async (endpoint, body, options = {}) => {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-
+  
+  // Ensure Content-Type is always set
+  if (!headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  
+  // Validate and stringify body BEFORE using it
+  let bodyString;
+  try {
+    if (typeof body === 'string') {
+      // If already a string, validate it's valid JSON
+      JSON.parse(body);
+      bodyString = body;
+    } else {
+      // Stringify object/array
+      bodyString = JSON.stringify(body);
+    }
+  } catch (stringifyError) {
+    console.error('❌ apiPost: Failed to stringify body:', body, stringifyError);
+    throw new Error(`Invalid request body: ${stringifyError.message}`);
+  }
+  
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   
-  // Construct full URL
-  const fullUrl = `${API_BASE_URL}${normalizedEndpoint}`;
-  devLog('POST Request:', fullUrl);
+  // Determine URLs to try (cached working URL first, then primary, then fallback)
+  const currentWorkingUrl = getWorkingApiUrl();
+  const urlsToTry = [currentWorkingUrl];
+  
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+  
+  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
+    urlsToTry.push(PRIMARY_API_URL);
+  }
+  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
+    urlsToTry.push(FALLBACK_API_URL);
+  }
+
+  // Log API base URL in development for debugging
+  if (IS_DEVELOPMENT) {
+    console.log('🔧 Trying API URLs:', urlsToTry);
+    console.log('🔧 Current working URL:', currentWorkingUrl);
+  }
   
   // Log API request
   logger.logAPI('POST', normalizedEndpoint, body);
   
   try {
-    // Try to make the request
-    const response = await fetch(fullUrl, {
-      method: 'POST',
-      mode: 'cors', // Explicitly enable CORS
-      credentials: 'omit', // Don't send credentials to avoid CORS issues
-      headers,
-      body: JSON.stringify(body),
-      ...options,
-    }).catch((fetchError) => {
-      // If fetch fails completely (network error, CORS blocked, etc.)
-      throw fetchError;
+    // Try to make the request with fallback
+    const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
+      const fullUrl = `${baseUrl}${normalizedEndpoint}`;
+      
+      if (IS_DEVELOPMENT) {
+        console.log('🔧 Attempting POST:', fullUrl);
+        console.log('🔧 Request body:', body);
+        console.log('🔧 Request body (stringified):', bodyString);
+        console.log('🔧 Request headers:', headers);
+      }
+      
+      // Ensure method is always POST and cannot be overridden
+      const fetchOptions = {
+        method: 'POST', // Always POST, cannot be overridden
+        mode: 'cors',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
+        body: bodyString, // Use pre-validated stringified body
+        ...options,
+      };
+      
+      // Explicitly set method again after spreading options to prevent override
+      fetchOptions.method = 'POST';
+      
+      // Ensure Content-Type is set
+      if (!fetchOptions.headers['Content-Type']) {
+        fetchOptions.headers['Content-Type'] = 'application/json';
+      }
+      
+      if (IS_DEVELOPMENT) {
+        console.log('🔧 Final fetch options:', {
+          method: fetchOptions.method,
+          headers: fetchOptions.headers,
+          hasBody: !!fetchOptions.body,
+          bodyLength: fetchOptions.body ? fetchOptions.body.length : 0
+        });
+      }
+      
+      return fetch(fullUrl, fetchOptions);
     });
 
     // Get response text first to check if it's valid JSON
@@ -500,16 +751,19 @@ export const apiPost = async (endpoint, body, options = {}) => {
     let errorMessage = error.message || 'Network error';
     let detailedMessage = '';
     
+    const currentUrl = getWorkingApiUrl();
+    const attemptedUrl = `${currentUrl}${normalizedEndpoint}`;
+    
     // Check for specific error types
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-      errorMessage = 'Cannot connect to server (CORS or Network Issue)';
-      detailedMessage = `Unable to reach the API server at: ${fullUrl}\n\n⚠️ MOST LIKELY ISSUE: CORS Headers Missing\n\nYour PHP API file (login.php) needs CORS headers at the top.\n\nQuick Fix - Add these lines to the TOP of your login.php file:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n\nif ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {\n    http_response_code(200);\n    exit();\n}\n\nSee API_CORS_FIX.md for complete instructions.\n\nOther Troubleshooting Steps:\n\n1. Check WAMP Server Status:\n   - Open WAMP server control panel\n   - Ensure Apache and MySQL services are running (green icon)\n   - If red, click "Start All Services"\n\n2. Verify API Folder Location:\n   - Check if folder exists: C:\\wamp64\\www\\restuarent\\api\\\n   - Ensure login.php file exists in that folder\n\n3. Test API in Browser:\n   - Open: http://localhost/restuarent/api/login.php\n   - You should see a response (even if it's an error message)\n   - If you see "404 Not Found", the path is incorrect\n   - If page doesn't load, Apache might not be running\n\n4. Check Browser Network Tab:\n   - Press F12 → Network tab\n   - Try to login again\n   - Look for the login.php request\n   - If it shows "CORS error" or "blocked", add CORS headers to PHP file`;
+      errorMessage = 'Cannot connect to server (CORS or Network Issue) - Tried all available servers';
+      detailedMessage = `Unable to reach any API server. Tried: ${urlsToTry.join(', ')}\n\n⚠️ MOST LIKELY ISSUE: CORS Headers Missing or Server Down\n\nYour PHP API file (login.php) needs CORS headers at the top.\n\nQuick Fix - Add these lines to the TOP of your login.php file:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n\nif ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {\n    http_response_code(200);\n    exit();\n}\n\nSee API_CORS_FIX.md for complete instructions.\n\nOther Troubleshooting Steps:\n\n1. Check WAMP Server Status:\n   - Open WAMP server control panel\n   - Ensure Apache and MySQL services are running (green icon)\n   - If red, click "Start All Services"\n\n2. Verify API Folder Location:\n   - Check if folder exists: C:\\wamp64\\www\\restuarent\\api\\\n   - Ensure login.php file exists in that folder\n\n3. Test API in Browser:\n   - Open: http://localhost/restuarent/api/login.php\n   - You should see a response (even if it's an error message)\n   - If you see "404 Not Found", the path is incorrect\n   - If page doesn't load, Apache might not be running\n\n4. Check Browser Network Tab:\n   - Press F12 → Network tab\n   - Try to login again\n   - Look for the login.php request\n   - If it shows "CORS error" or "blocked", add CORS headers to PHP file`;
     } else if (error.message.includes('CORS')) {
       errorMessage = 'CORS (Cross-Origin) Error';
-      detailedMessage = `The server is blocking the request due to CORS policy.\n\nSolution: Add CORS headers to your PHP API files:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n?>\n\nAPI URL: ${fullUrl}`;
+      detailedMessage = `The server is blocking the request due to CORS policy.\n\nSolution: Add CORS headers to your PHP API files:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n?>\n\nTried URLs: ${urlsToTry.join(', ')}`;
     } else if (error.message.includes('timeout')) {
       errorMessage = 'Request Timeout';
-      detailedMessage = `The server took too long to respond.\n\nPossible causes:\n- Server is overloaded\n- Database connection issues\n- Network problems\n\nAPI URL: ${fullUrl}`;
+      detailedMessage = `The server took too long to respond.\n\nPossible causes:\n- Server is overloaded\n- Database connection issues\n- Network problems\n\nTried URLs: ${urlsToTry.join(', ')}`;
     }
     
     return {
@@ -519,7 +773,8 @@ export const apiPost = async (endpoint, body, options = {}) => {
         message: errorMessage,
         details: detailedMessage || errorMessage,
         endpoint: normalizedEndpoint,
-        apiUrl: fullUrl,
+        apiUrl: attemptedUrl,
+        triedUrls: urlsToTry,
         errorType: error.name || 'Unknown',
         troubleshooting: true,
       },
@@ -529,7 +784,7 @@ export const apiPost = async (endpoint, body, options = {}) => {
 };
 
 /**
- * Make PUT request to API (Update)
+ * Make PUT request to API (Update) with automatic fallback to localhost
  * @param {string} endpoint - API endpoint (e.g., '/categories/update.php')
  * @param {Object} body - Request body
  * @param {Object} options - Additional fetch options
@@ -549,16 +804,38 @@ export const apiPut = async (endpoint, body, options = {}) => {
 
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const fullUrl = `${API_BASE_URL}${normalizedEndpoint}`;
+  
+  // Determine URLs to try (cached working URL first, then primary, then fallback)
+  const currentWorkingUrl = getWorkingApiUrl();
+  const urlsToTry = [currentWorkingUrl];
+  
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+  
+  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
+    urlsToTry.push(PRIMARY_API_URL);
+  }
+  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
+    urlsToTry.push(FALLBACK_API_URL);
+  }
 
   try {
-    const response = await fetch(fullUrl, {
-      method: 'PUT',
-      mode: 'cors', // Explicitly enable CORS
-      credentials: 'omit', // Don't send credentials to avoid CORS issues
-      headers,
-      body: JSON.stringify(body),
-      ...options,
+    const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
+      const fullUrl = `${baseUrl}${normalizedEndpoint}`;
+      
+      if (IS_DEVELOPMENT) {
+        console.log('🔧 Attempting PUT:', fullUrl);
+      }
+      
+      return fetch(fullUrl, {
+        method: 'PUT',
+        mode: 'cors',
+        credentials: 'omit',
+        headers,
+        body: JSON.stringify(body),
+        ...options,
+      });
     });
 
     const data = await response.json();
@@ -568,15 +845,20 @@ export const apiPut = async (endpoint, body, options = {}) => {
     // Provide more detailed error messages
     let errorMessage = error.message || 'Network error';
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-      errorMessage = 'Cannot connect to server. Please ensure WAMP server is running and API is accessible.';
+      errorMessage = 'Cannot connect to server. Tried both live and localhost servers.';
     }
+    
+    const currentUrl = getWorkingApiUrl();
+    const attemptedUrl = `${currentUrl}${normalizedEndpoint}`;
+    
     return {
       success: false,
       data: { 
         success: false,
         message: errorMessage,
         endpoint: normalizedEndpoint,
-        apiUrl: fullUrl
+        apiUrl: attemptedUrl,
+        triedUrls: urlsToTry
       },
       status: 0,
     };
@@ -584,7 +866,7 @@ export const apiPut = async (endpoint, body, options = {}) => {
 };
 
 /**
- * Make DELETE request to API
+ * Make DELETE request to API with automatic fallback to localhost
  * @param {string} endpoint - API endpoint (e.g., '/categories/delete.php')
  * @param {Object} body - Request body (optional)
  * @param {Object} options - Additional fetch options
@@ -604,25 +886,45 @@ export const apiDelete = async (endpoint, body = null, options = {}) => {
 
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const fullUrl = `${API_BASE_URL}${normalizedEndpoint}`;
+  
+  // Determine URLs to try (cached working URL first, then primary, then fallback)
+  const currentWorkingUrl = getWorkingApiUrl();
+  const urlsToTry = [currentWorkingUrl];
+  
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+  
+  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
+    urlsToTry.push(PRIMARY_API_URL);
+  }
+  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
+    urlsToTry.push(FALLBACK_API_URL);
+  }
 
   try {
-    const fetchOptions = {
-      method: 'DELETE',
-      headers,
-      ...options,
-    };
+    const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
+      const fullUrl = `${baseUrl}${normalizedEndpoint}`;
+      
+      if (IS_DEVELOPMENT) {
+        console.log('🔧 Attempting DELETE:', fullUrl);
+      }
+      
+      const fetchOptions = {
+        method: 'DELETE',
+        mode: 'cors',
+        credentials: 'omit',
+        headers,
+        ...options,
+      };
 
-    // Include body if provided (some DELETE requests need body)
-    if (body) {
-      fetchOptions.body = JSON.stringify(body);
-    }
-
-    // Add CORS settings to fetch options
-    fetchOptions.mode = 'cors';
-    fetchOptions.credentials = 'omit';
-    
-    const response = await fetch(fullUrl, fetchOptions);
+      // Include body if provided (some DELETE requests need body)
+      if (body) {
+        fetchOptions.body = JSON.stringify(body);
+      }
+      
+      return fetch(fullUrl, fetchOptions);
+    });
 
     const data = await response.json();
     return { success: response.ok, data, status: response.status };
@@ -631,15 +933,20 @@ export const apiDelete = async (endpoint, body = null, options = {}) => {
     // Provide more detailed error messages
     let errorMessage = error.message || 'Network error';
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-      errorMessage = 'Cannot connect to server. Please ensure WAMP server is running and API is accessible.';
+      errorMessage = 'Cannot connect to server. Tried both live and localhost servers.';
     }
+    
+    const currentUrl = getWorkingApiUrl();
+    const attemptedUrl = `${currentUrl}${normalizedEndpoint}`;
+    
     return {
       success: false,
       data: { 
         success: false,
         message: errorMessage,
         endpoint: normalizedEndpoint,
-        apiUrl: fullUrl
+        apiUrl: attemptedUrl,
+        triedUrls: urlsToTry
       },
       status: 0,
     };
@@ -665,16 +972,35 @@ export const generateToken = () => {
 };
 
 /**
- * Test API connection
+ * Test API connection with automatic fallback
  * @returns {Promise<Object>} Connection test result
  */
 export const testConnection = async () => {
+  // Determine URLs to try
+  const currentWorkingUrl = getWorkingApiUrl();
+  const urlsToTry = [currentWorkingUrl];
+  
+  const shouldTryPrimary = PRIMARY_API_URL && 
+                           !PRIMARY_API_URL.includes('localhost') && 
+                           PRIMARY_API_URL.trim() !== '';
+  
+  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
+    urlsToTry.push(PRIMARY_API_URL);
+  }
+  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
+    urlsToTry.push(FALLBACK_API_URL);
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/test_connection.php`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+    const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
+      return fetch(`${baseUrl}/test_connection.php`, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
     });
     
     const text = await response.text();
@@ -686,11 +1012,14 @@ export const testConnection = async () => {
       data = { success: false, message: 'Invalid response', raw: text.substring(0, 200) };
     }
     
+    const workingUrl = getWorkingApiUrl();
+    
     return {
       success: response.ok,
       data,
       status: response.status,
-      url: `${API_BASE_URL}/test_connection.php`,
+      url: `${workingUrl}/test_connection.php`,
+      testedUrls: urlsToTry,
     };
   } catch (error) {
     return {
@@ -698,10 +1027,11 @@ export const testConnection = async () => {
       data: {
         success: false,
         message: error.message,
-        error: 'Cannot connect to API server',
+        error: 'Cannot connect to any API server',
       },
       status: 0,
-      url: `${API_BASE_URL}/test_connection.php`,
+      url: `${getWorkingApiUrl()}/test_connection.php`,
+      testedUrls: urlsToTry,
     };
   }
 };

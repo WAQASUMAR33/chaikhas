@@ -279,14 +279,21 @@ export default function CreateOrderPage() {
       console.log('result.data type:', typeof result.data);
       console.log('result.data is array:', Array.isArray(result.data));
       
-      // Check for SQL errors in the response
-      if (result.data) {
+      // Check for SQL errors in the response - only check for actual error messages, not successful responses
+      // Only check if response indicates an error (not successful response with data)
+      if (result.data && (result.data.success === false || result.data.error || result.data.message)) {
         const errorString = JSON.stringify(result.data).toLowerCase();
-        if (errorString.includes('unknown column') || errorString.includes('sql syntax')) {
+        // Only trigger error if it's an actual SQL error message pattern
+        const isSQLError = (errorString.includes('unknown column') && 
+                           (errorString.includes('in \'select\'') || errorString.includes('in \'field list\''))) ||
+                          errorString.includes('sql syntax error') ||
+                          errorString.includes('sqlstate');
+        
+        if (isSQLError) {
           console.error('❌ SQL Error detected in get_categories.php:', result.data);
           setAlert({ 
             type: 'error', 
-            message: 'Database Error detected. Please check the backend SQL queries in get_categories.php.' 
+            message: result.data.message || result.data.error || 'Database Error: SQL query error detected.' 
           });
           setCategories([]);
           setLoading(false);
@@ -307,30 +314,39 @@ export default function CreateOrderPage() {
       let categoriesData = [];
       
       // Handle multiple possible response structures
-      if (result.data && Array.isArray(result.data)) {
-        categoriesData = result.data;
-        console.log('✅ Found categories in result.data (array)');
-      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        categoriesData = result.data.data;
-        console.log('✅ Found categories in result.data.success.data');
-      } else if (result.data && Array.isArray(result.data.categories)) {
-        categoriesData = result.data.categories;
-        console.log('✅ Found categories in result.data.categories');
-      } else if (result.data && Array.isArray(result.data.data)) {
-        categoriesData = result.data.data;
-        console.log('✅ Found categories in result.data.data');
-      } else if (result.data && typeof result.data === 'object') {
-        // Try to extract array from any property
-        for (const key in result.data) {
-          if (Array.isArray(result.data[key])) {
-            categoriesData = result.data[key];
-            console.log(`✅ Found categories in result.data.${key}`);
-            break;
+      // API returns: { success: true, data: [...], count: ... }
+      // apiPost wraps it: { success: true, data: { success: true, data: [...], count: ... } }
+      if (result.success && result.data) {
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          categoriesData = result.data;
+          console.log('✅ Found categories in result.data (array)');
+        } 
+        // Check if data.success is true and data.data is an array (most common structure)
+        else if (result.data.success === true && Array.isArray(result.data.data)) {
+          categoriesData = result.data.data;
+          console.log('✅ Found categories in result.data.data');
+        }
+        // Check if data is an object with a data property that's an array
+        else if (typeof result.data === 'object' && Array.isArray(result.data.data)) {
+          categoriesData = result.data.data;
+          console.log('✅ Found categories in result.data.data');
+        }
+        // Check for categories property
+        else if (Array.isArray(result.data.categories)) {
+          categoriesData = result.data.categories;
+          console.log('✅ Found categories in result.data.categories');
+        }
+        // Try to find any array property in result.data
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key]) && key !== 'details' && key !== 'count') {
+              categoriesData = result.data[key];
+              console.log(`✅ Found categories in result.data.${key}`);
+              break;
+            }
           }
         }
-      } else if (Array.isArray(result)) {
-        categoriesData = result;
-        console.log('✅ Found categories in result (direct array)');
       }
       
       console.log(`Total categories found: ${categoriesData.length}`);
@@ -407,14 +423,22 @@ export default function CreateOrderPage() {
       
       console.log('get_products.php response:', result);
       
-      // Check for SQL errors in the response
-      if (result.data) {
+      // Check for SQL errors in the response - only check for actual error messages, not data fields
+      // Don't check for "kitchen_id" as it's a normal field in product data
+      if (result.data && (result.data.success === false || result.data.error)) {
         const errorString = JSON.stringify(result.data).toLowerCase();
-        if (errorString.includes('unknown column') || errorString.includes('kitchen_id') || errorString.includes('sql syntax')) {
+        // Only trigger error if it's an actual SQL error message pattern
+        // Not just the presence of "kitchen_id" which is a normal data field
+        const isSQLError = errorString.includes('unknown column') && 
+                          (errorString.includes('in \'select\'') || errorString.includes('in \'field list\'')) ||
+                          errorString.includes('sql syntax error') ||
+                          errorString.includes('sqlstate');
+        
+        if (isSQLError) {
           console.error('❌ SQL Error detected in get_products.php:', result.data);
           setAlert({ 
             type: 'error', 
-            message: 'Database Error: Unknown column error. Please fix the SQL query in get_products.php. See BACKEND_FIX_GUIDE.md for details.' 
+            message: result.data.message || result.data.error || 'Database Error: SQL query error detected.' 
           });
           setDishes([]);
           setLoading(false);
@@ -435,18 +459,31 @@ export default function CreateOrderPage() {
       let dishesData = [];
       
       // Handle multiple possible response structures
-      if (result.data && Array.isArray(result.data)) {
-        dishesData = result.data;
-        console.log('✅ Found dishes in result.data (array)');
-      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        dishesData = result.data.data;
-        console.log('✅ Found dishes in result.data.success.data');
-      } else if (result.data && typeof result.data === 'object') {
-        for (const key in result.data) {
-          if (Array.isArray(result.data[key])) {
-            dishesData = result.data[key];
-            console.log(`✅ Found dishes in result.data.${key}`);
-            break;
+      // API returns: { success: true, data: [...], count: ... }
+      if (result.success && result.data) {
+        // Check if data is an array directly
+        if (Array.isArray(result.data)) {
+          dishesData = result.data;
+          console.log('✅ Found dishes in result.data (array)');
+        } 
+        // Check if data.success is true and data.data is an array
+        else if (result.data.success === true && Array.isArray(result.data.data)) {
+          dishesData = result.data.data;
+          console.log('✅ Found dishes in result.data.data');
+        }
+        // Check if data is an object with a data property that's an array
+        else if (typeof result.data === 'object' && Array.isArray(result.data.data)) {
+          dishesData = result.data.data;
+          console.log('✅ Found dishes in result.data.data');
+        }
+        // Try to find any array property in result.data
+        else if (typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key]) && key !== 'details') {
+              dishesData = result.data[key];
+              console.log(`✅ Found dishes in result.data.${key}`);
+              break;
+            }
           }
         }
       }
@@ -455,10 +492,21 @@ export default function CreateOrderPage() {
         console.log(`✅ Total dishes found: ${dishesData.length}`);
         setDishes(dishesData);
         setAlert({ type: '', message: '' }); // Clear any previous errors
-      } else {
-        console.warn('⚠️ No dishes found for this branch');
+      } else if (result.success && result.data && result.data.success === true) {
+        // API returned success but no dishes (empty result)
+        console.warn('⚠️ No dishes found for this branch (empty result)');
         setDishes([]);
         setAlert({ type: 'warning', message: 'No dishes found. Please add dishes in the Menu Management page.' });
+      } else {
+        // Actual error case
+        console.warn('⚠️ No dishes found - API response structure:', result);
+        setDishes([]);
+        if (!result.success) {
+          const errorMsg = result.data?.message || result.data?.error || 'Failed to load products';
+          setAlert({ type: 'error', message: errorMsg });
+        } else {
+          setAlert({ type: 'warning', message: 'No dishes found. Please add dishes in the Menu Management page.' });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -598,175 +646,199 @@ export default function CreateOrderPage() {
       // Use kitchen routing API for automatic kitchen assignment
       const result = await apiPost('/create_order_with_kitchen.php', orderData);
 
-      // Handle response - check for empty response first
-      if (!result.data) {
-        logger.error('Empty response from create_order_with_kitchen.php', orderData);
-        setAlert({ type: 'error', message: 'Server returned an empty response. Please check your connection and try again.' });
+      console.log('🔍 Create Order API Response:', JSON.stringify(result, null, 2));
+      console.log('🔍 result.success:', result.success);
+      console.log('🔍 result.data:', result.data);
+      console.log('🔍 result.status:', result.status);
+
+      // Check 1: Verify HTTP response was successful
+      if (!result.success && result.status !== 200) {
+        logger.error('HTTP Error creating order', { 
+          status: result.status, 
+          data: result.data,
+          orderData 
+        });
+        setAlert({ 
+          type: 'error', 
+          message: result.data?.message || result.data?.error || `HTTP Error ${result.status}: Failed to create order. Please check your connection.` 
+        });
+        setPlacing(false);
         return;
       }
 
-      // Handle nested response structure: result.data.success and result.data.data
-      if (result.success && result.data) {
-        // Check if response has success field (nested structure)
-        if (result.data.success === true && result.data.data) {
-          const responseData = result.data.data;
-          logger.success('Order created successfully', { 
-            order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
-            itemsCount: responseData.items?.length || 0,
-            responseData 
-          });
-          
-          // Format items for receipt display
-          const formattedItems = (responseData.items || []).map(item => ({
-            dish_id: item.dish_id || item.id,
-            dish_name: item.dish_name || item.name || item.title || 'Item',
-            name: item.dish_name || item.name || item.title || 'Item',
-            price: parseFloat(item.price || item.rate || item.unit_price || 0),
-            quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
-            qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-            total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
-            total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
-          }));
-          
-          // Format order data for receipt
-          const orderData = responseData.order || responseData;
-          const formattedOrder = {
-            ...orderData,
-            order_id: orderData.order_id || responseData.order_id || null,
-            orderid: orderData.orderid || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
-            order_number: orderData.order_number || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
-            order_type: orderData.order_type || orderType,
-            table_number: orderData.table_number || (orderType === 'Dine In' && selectedTable ? tables.find(t => t.table_id == selectedTable)?.table_number : ''),
-            g_total_amount: parseFloat(orderData.g_total_amount || orderData.total || subtotal || 0),
-            total: parseFloat(orderData.total || orderData.g_total_amount || subtotal || 0),
-            subtotal: parseFloat(orderData.subtotal || orderData.g_total_amount || orderData.total || subtotal || 0),
-            service_charge: parseFloat(orderData.service_charge || 0),
-            discount_amount: parseFloat(orderData.discount_amount || orderData.discount || 0),
-            net_total_amount: parseFloat(orderData.net_total_amount || orderData.netTotal || orderData.grand_total || subtotal || 0),
-            netTotal: parseFloat(orderData.netTotal || orderData.net_total_amount || orderData.grand_total || subtotal || 0),
-            grand_total: parseFloat(orderData.grand_total || orderData.net_total_amount || orderData.netTotal || subtotal || 0),
-            payment_method: orderData.payment_method || orderData.payment_mode || 'Cash',
-            payment_status: orderData.payment_status || 'Unpaid',
-            created_at: orderData.created_at || orderData.date || new Date().toISOString(),
-          };
-          
-          setOrderReceipt({
-            order: formattedOrder,
-            items: formattedItems,
-            order_id: formattedOrder.order_id || responseData.order_id || null,
-          });
-          setReceiptModalOpen(true);
-          
-          // Update table status to "Running" for Dine In orders
-          if (orderType === 'Dine In' && selectedTable) {
-            try {
-              const terminal = getTerminal();
-              const branchId = getBranchId();
-              logger.info('Updating table status to Running', { table_id: selectedTable, hall_id: selectedHall });
-              await apiPost('/table_management.php', {
-                table_id: parseInt(selectedTable),
-                hall_id: parseInt(selectedHall),
-                table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
-                capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
-                status: 'Running',
-                terminal: terminal,
-                branch_id: branchId, // Include branch_id for branch-admin
-              });
-            } catch (error) {
-              logger.error('Error updating table status', { error: error.message, table_id: selectedTable });
-              // Don't show error to user, table status update is secondary
-            }
-          }
-          
-          // Reset form
-          setCart([]);
-          setOrderType('Dine In');
-          setSelectedHall('');
-          setSelectedTable('');
-          setComments('');
-          setAlert({ type: 'success', message: result.data.message || 'Order placed successfully!' });
-        } else if (result.data.success === false) {
-          // API returned an error
-          logger.error('Failed to create order', { error: result.data.message, orderData });
-          setAlert({ type: 'error', message: result.data.message || 'Failed to place order' });
-        } else {
-          // Direct data response (no nested structure)
-          // Format items for receipt display
-          const formattedItems = (result.data.items || []).map(item => ({
-            dish_id: item.dish_id || item.id,
-            dish_name: item.dish_name || item.name || item.title || 'Item',
-            name: item.dish_name || item.name || item.title || 'Item',
-            price: parseFloat(item.price || item.rate || item.unit_price || 0),
-            quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
-            qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-            total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
-            total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
-          }));
-          
-          // Format order data for receipt
-          const orderData = result.data.order || result.data;
-          const formattedOrder = {
-            ...orderData,
-            order_id: orderData.order_id || result.data.order_id || null,
-            orderid: orderData.orderid || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
-            order_number: orderData.order_number || (orderData.order_id ? `ORD-${orderData.order_id}` : null),
-            order_type: orderData.order_type || orderType,
-            table_number: orderData.table_number || (orderType === 'Dine In' && selectedTable ? tables.find(t => t.table_id == selectedTable)?.table_number : ''),
-            g_total_amount: parseFloat(orderData.g_total_amount || orderData.total || subtotal || 0),
-            total: parseFloat(orderData.total || orderData.g_total_amount || subtotal || 0),
-            subtotal: parseFloat(orderData.subtotal || orderData.g_total_amount || orderData.total || subtotal || 0),
-            service_charge: parseFloat(orderData.service_charge || 0),
-            discount_amount: parseFloat(orderData.discount_amount || orderData.discount || 0),
-            net_total_amount: parseFloat(orderData.net_total_amount || orderData.netTotal || orderData.grand_total || subtotal || 0),
-            netTotal: parseFloat(orderData.netTotal || orderData.net_total_amount || orderData.grand_total || subtotal || 0),
-            grand_total: parseFloat(orderData.grand_total || orderData.net_total_amount || orderData.netTotal || subtotal || 0),
-            payment_method: orderData.payment_method || orderData.payment_mode || 'Cash',
-            payment_status: orderData.payment_status || 'Unpaid',
-            created_at: orderData.created_at || orderData.date || new Date().toISOString(),
-          };
-          
-          setOrderReceipt({
-            order: formattedOrder,
-            items: formattedItems,
-            order_id: formattedOrder.order_id || result.data.order_id || null,
-          });
-          setReceiptModalOpen(true);
-          
-          // Update table status to "Running" for Dine In orders
-          if (orderType === 'Dine In' && selectedTable) {
-            try {
-              const terminal = getTerminal();
-              const branchId = getBranchId();
-              await apiPost('/table_management.php', {
-                table_id: parseInt(selectedTable),
-                hall_id: parseInt(selectedHall),
-                table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
-                capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
-                status: 'Running',
-                terminal: terminal,
-                branch_id: branchId, // Include branch_id for branch-admin
-              });
-            } catch (error) {
-              console.error('Error updating table status:', error);
-              // Don't show error to user, table status update is secondary
-            }
-          }
-          
-          // Reset form
-          setCart([]);
-          setOrderType('Dine In');
-          setSelectedHall('');
-          setSelectedTable('');
-          setComments('');
-          setAlert({ type: 'success', message: 'Order placed successfully!' });
-        }
-      } else {
-        setAlert({ type: 'error', message: result.data?.message || result.data?.rawResponse || 'Failed to place order' });
+      // Check 2: Verify response data exists
+      if (!result.data) {
+        logger.error('Empty response from create_order_with_kitchen.php', { orderData, result });
+        setAlert({ 
+          type: 'error', 
+          message: 'Server returned an empty response. Please check your connection and try again.' 
+        });
+        setPlacing(false);
+        return;
       }
+
+      // Check 3: Verify API-level success flag
+      if (result.data.success === false) {
+        logger.error('API Error creating order', { 
+          error: result.data.message || result.data.error, 
+          orderData,
+          fullResponse: result.data
+        });
+        setAlert({ 
+          type: 'error', 
+          message: result.data.message || result.data.error || 'Failed to create order. Please try again.' 
+        });
+        setPlacing(false);
+        return;
+      }
+
+      // Check 4: Handle nested response structure: result.data.success and result.data.data
+      let responseData = null;
+      let orderId = null;
+
+      if (result.data.success === true && result.data.data) {
+        // Nested structure: { success: true, data: { order_id: ..., items: [...] } }
+        responseData = result.data.data;
+        orderId = responseData.order_id || (responseData.order ? responseData.order.order_id : null);
+        console.log('✅ Found order in nested structure, order_id:', orderId);
+      } else if (result.data.order_id || result.data.id) {
+        // Direct structure: { order_id: ..., items: [...] }
+        responseData = result.data;
+        orderId = responseData.order_id || responseData.id;
+        console.log('✅ Found order in direct structure, order_id:', orderId);
+      } else if (result.data.order && (result.data.order.order_id || result.data.order.id)) {
+        // Wrapped structure: { order: { order_id: ... }, items: [...] }
+        responseData = result.data;
+        orderId = result.data.order.order_id || result.data.order.id;
+        console.log('✅ Found order in wrapped structure, order_id:', orderId);
+      }
+
+      // Check 5: CRITICAL - Verify order_id exists (order was actually created in database)
+      if (!orderId) {
+        logger.error('Order creation failed - No order_id in response', { 
+          result: result,
+          resultData: result.data,
+          orderData 
+        });
+        setAlert({ 
+          type: 'error', 
+          message: 'Order creation failed: No order ID returned from server. The order may not have been saved to the database. Please check server logs and try again.' 
+        });
+        setPlacing(false);
+        return;
+      }
+
+      // Check 6: Verify items were saved
+      const itemsCount = responseData?.items?.length || result.data?.items?.length || 0;
+      if (itemsCount === 0 && cart.length > 0) {
+        logger.warning('Order created but no items returned', { 
+          orderId, 
+          cartLength: cart.length,
+          responseData 
+        });
+        // Don't fail, but log warning
+      }
+
+      // ✅ All checks passed - Order was successfully created
+      logger.success('Order created successfully', { 
+        order_id: orderId,
+        itemsCount: itemsCount,
+        responseData 
+      });
+
+      // Use responseData if we extracted it, otherwise use result.data
+      const finalResponseData = responseData || result.data;
+          
+      // Format items for receipt display
+      const formattedItems = (finalResponseData.items || []).map(item => ({
+        dish_id: item.dish_id || item.id,
+        dish_name: item.dish_name || item.name || item.title || 'Item',
+        name: item.dish_name || item.name || item.title || 'Item',
+        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || 0) * parseInt(item.quantity || 1))),
+      }));
+      
+      // Format order data for receipt
+      const orderDataFromResponse = finalResponseData.order || finalResponseData;
+      const formattedOrder = {
+        ...orderDataFromResponse,
+        order_id: orderId, // Use validated order_id
+        id: orderId,
+        orderid: orderDataFromResponse.orderid || `ORD-${orderId}`,
+        order_number: orderDataFromResponse.order_number || `ORD-${orderId}`,
+        order_type: orderDataFromResponse.order_type || orderType,
+        table_number: orderDataFromResponse.table_number || (orderType === 'Dine In' && selectedTable ? tables.find(t => t.table_id == selectedTable)?.table_number : ''),
+        g_total_amount: parseFloat(orderDataFromResponse.g_total_amount || orderDataFromResponse.total || subtotal || 0),
+        total: parseFloat(orderDataFromResponse.total || orderDataFromResponse.g_total_amount || subtotal || 0),
+        subtotal: parseFloat(orderDataFromResponse.subtotal || orderDataFromResponse.g_total_amount || orderDataFromResponse.total || subtotal || 0),
+        service_charge: parseFloat(orderDataFromResponse.service_charge || 0),
+        discount_amount: parseFloat(orderDataFromResponse.discount_amount || orderDataFromResponse.discount || 0),
+        net_total_amount: parseFloat(orderDataFromResponse.net_total_amount || orderDataFromResponse.netTotal || orderDataFromResponse.grand_total || subtotal || 0),
+        netTotal: parseFloat(orderDataFromResponse.netTotal || orderDataFromResponse.net_total_amount || orderDataFromResponse.grand_total || subtotal || 0),
+        grand_total: parseFloat(orderDataFromResponse.grand_total || orderDataFromResponse.net_total_amount || orderDataFromResponse.netTotal || subtotal || 0),
+        payment_method: orderDataFromResponse.payment_method || orderDataFromResponse.payment_mode || 'Cash',
+        payment_status: orderDataFromResponse.payment_status || 'Unpaid',
+        created_at: orderDataFromResponse.created_at || orderDataFromResponse.date || new Date().toISOString(),
+      };
+      
+      console.log('✅ Formatted order for receipt:', formattedOrder);
+      console.log('✅ Order ID confirmed:', orderId);
+      
+      setOrderReceipt({
+        order: formattedOrder,
+        items: formattedItems,
+        order_id: orderId, // Use validated order_id
+      });
+      setReceiptModalOpen(true);
+      
+      // Update table status to "Running" for Dine In orders
+      if (orderType === 'Dine In' && selectedTable) {
+        try {
+          const terminal = getTerminal();
+          const branchId = getBranchId();
+          logger.info('Updating table status to Running', { table_id: selectedTable, hall_id: selectedHall });
+          const tableUpdateResult = await apiPost('/table_management.php', {
+            table_id: parseInt(selectedTable),
+            hall_id: parseInt(selectedHall),
+            table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
+            capacity: tables.find(t => t.table_id == selectedTable)?.capacity || 0,
+            status: 'running', // Use lowercase to match API
+            terminal: terminal,
+            branch_id: branchId, // Include branch_id for branch-admin
+          });
+          console.log('✅ Table status updated:', tableUpdateResult);
+        } catch (error) {
+          logger.error('Error updating table status', { error: error.message, table_id: selectedTable });
+          // Don't show error to user, table status update is secondary
+        }
+      }
+      
+      // Reset form
+      setCart([]);
+      setOrderType('Dine In');
+      setSelectedHall('');
+      setSelectedTable('');
+      setComments('');
+      setAlert({ 
+        type: 'success', 
+        message: result.data?.message || `Order #${orderId} placed successfully!` 
+      });
+      setPlacing(false);
     } catch (error) {
-      console.error('Error placing order:', error);
-      setAlert({ type: 'error', message: 'Failed to place order: ' + (error.message || 'Network error') });
-    } finally {
+      // Handle any unexpected errors
+      console.error('❌ Unexpected error creating order:', error);
+      logger.error('Unexpected error creating order', { 
+        error: error.message, 
+        stack: error.stack,
+        orderData 
+      });
+      setAlert({ 
+        type: 'error', 
+        message: `Failed to create order: ${error.message || 'Unknown error occurred. Please try again.'}` 
+      });
       setPlacing(false);
     }
   };
