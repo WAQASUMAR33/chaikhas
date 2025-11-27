@@ -80,7 +80,8 @@ export default function SalesListPage() {
       });
       
       console.log('Fetching sales data with params:', apiParams);
-      const result = await apiPost('/get_sales.php', apiParams);
+      // Sales endpoints are typically in pos/ folder
+      const result = await apiPost('pos/get_sales.php', apiParams);
       
       console.log('Sales API response:', result);
       
@@ -117,7 +118,18 @@ export default function SalesListPage() {
         else if (result.data.success === false) {
           logger.error('Sales API returned error', result.data);
           console.error('Sales API returned error:', result.data);
-          setAlert({ type: 'error', message: result.data.message || 'Failed to load sales data' });
+          const errorMessage = result.data.message || result.data.error || 'Failed to load sales data';
+          // Check for database connection errors
+          if (errorMessage.toLowerCase().includes('database') || 
+              errorMessage.toLowerCase().includes('connection') ||
+              errorMessage.toLowerCase().includes('db')) {
+            setAlert({ 
+              type: 'error', 
+              message: `Database Connection Error: ${errorMessage}. Please check your database configuration.` 
+            });
+          } else {
+            setAlert({ type: 'error', message: errorMessage });
+          }
           setSales([]);
           setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
           if (showRefreshing) {
@@ -142,10 +154,21 @@ export default function SalesListPage() {
       } else if (!result.success) {
         logger.error('Sales API request failed', result);
         console.error('Sales API request failed:', result);
-        setAlert({ 
-          type: 'error', 
-          message: result.data?.message || 'Failed to load sales data. Please check your connection.' 
-        });
+        const errorMessage = result.data?.message || result.data?.error || 'Failed to load sales data. Please check your connection.';
+        // Check for database connection errors
+        if (errorMessage.toLowerCase().includes('database') || 
+            errorMessage.toLowerCase().includes('connection') ||
+            errorMessage.toLowerCase().includes('db')) {
+          setAlert({ 
+            type: 'error', 
+            message: `Database Connection Error: ${errorMessage}. Please verify the API endpoint and database configuration.` 
+          });
+        } else {
+          setAlert({ 
+            type: 'error', 
+            message: errorMessage 
+          });
+        }
         setSales([]);
         setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
         if (showRefreshing) {
@@ -225,10 +248,21 @@ export default function SalesListPage() {
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Error fetching sales:', error);
-      setAlert({ 
-        type: 'error', 
-        message: 'Failed to load sales data: ' + (error.message || 'Network error') 
-      });
+      const errorMessage = error.message || 'Network error';
+      // Check for database connection errors in error message
+      if (errorMessage.toLowerCase().includes('database') || 
+          errorMessage.toLowerCase().includes('connection') ||
+          errorMessage.toLowerCase().includes('db')) {
+        setAlert({ 
+          type: 'error', 
+          message: `Database Connection Error: ${errorMessage}. Please check your API endpoint path (api/ or pos/) and database configuration.` 
+        });
+      } else {
+        setAlert({ 
+          type: 'error', 
+          message: 'Failed to load sales data: ' + errorMessage 
+        });
+      }
       setSales([]);
       setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
     } finally {
@@ -553,16 +587,17 @@ export default function SalesListPage() {
           </div>
           
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <Button
               variant="secondary"
               size="sm"
               onClick={handleRefresh}
               disabled={refreshing || loading}
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 w-full sm:w-auto justify-center"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Refresh</span>
+              <span className="sm:hidden">Refresh</span>
             </Button>
             
             {(period === 'monthly' || period === 'custom') && (
@@ -570,7 +605,7 @@ export default function SalesListPage() {
                 variant="primary"
                 size="sm"
                 onClick={downloadPDFReport}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 w-full sm:w-auto justify-center"
                 disabled={period === 'custom' && (!dateRange.fromDate || !dateRange.toDate)}
               >
                 <Download className="w-4 h-4" />
@@ -591,9 +626,9 @@ export default function SalesListPage() {
         )}
 
         {/* Period Selector & Auto-Refresh Toggle */}
-        <div className="flex flex-col gap-4 bg-white rounded-lg shadow p-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-4 bg-white rounded-lg shadow p-3 sm:p-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
               {['daily', 'weekly', 'monthly'].map((p) => (
                 <Button
                   key={p}
@@ -621,19 +656,19 @@ export default function SalesListPage() {
               </Button>
             </div>
             
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+              <label className="flex items-center gap-2 text-xs sm:text-sm text-gray-700 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={autoRefresh}
                   onChange={(e) => setAutoRefresh(e.target.checked)}
                   className="w-4 h-4 text-[#FF5F15] border-gray-300 rounded focus:ring-[#FF5F15]"
                 />
-                <span>Auto-refresh (30s)</span>
+                <span className="whitespace-nowrap">Auto-refresh (30s)</span>
               </label>
               
               {lastUpdated && (
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-500 whitespace-nowrap">
                   Last updated: {lastUpdated.toLocaleTimeString()}
                 </span>
               )}
@@ -643,10 +678,10 @@ export default function SalesListPage() {
           {/* Date Range Selector */}
           {showDateRange && (
             <div className="border-t pt-4 mt-2">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-1">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
+                    <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
                       From Date:
                     </label>
                     <input
@@ -654,12 +689,12 @@ export default function SalesListPage() {
                       value={dateRange.fromDate}
                       onChange={(e) => handleDateRangeChange('fromDate', e.target.value)}
                       max={dateRange.toDate || new Date().toISOString().split('T')[0]}
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                      className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
                     />
                   </div>
                   
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
+                    <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
                       To Date:
                     </label>
                     <input
@@ -668,18 +703,18 @@ export default function SalesListPage() {
                       onChange={(e) => handleDateRangeChange('toDate', e.target.value)}
                       min={dateRange.fromDate}
                       max={new Date().toISOString().split('T')[0]}
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                      className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
                     />
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="primary"
                     size="sm"
                     onClick={fetchCustomDateRange}
                     disabled={!dateRange.fromDate || !dateRange.toDate}
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-2 w-full sm:w-auto"
                   >
                     <Search className="w-4 h-4" />
                     <span>Search</span>
@@ -690,7 +725,7 @@ export default function SalesListPage() {
                       variant="secondary"
                       size="sm"
                       onClick={clearDateRange}
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2 w-full sm:w-auto"
                     >
                       <X className="w-4 h-4" />
                       <span>Clear</span>
@@ -701,7 +736,7 @@ export default function SalesListPage() {
               
               {period === 'custom' && dateRange.fromDate && dateRange.toDate && (
                 <div className="mt-3 pt-3 border-t">
-                  <p className="text-sm text-gray-600">
+                  <p className="text-xs sm:text-sm text-gray-600 break-words">
                     Showing sales from <span className="font-semibold">{new Date(dateRange.fromDate).toLocaleDateString()}</span> to <span className="font-semibold">{new Date(dateRange.toDate).toLocaleDateString()}</span>
                   </p>
                 </div>
@@ -711,39 +746,39 @@ export default function SalesListPage() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-600">Total Sales</h3>
-              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <DollarSign className="w-5 h-5 text-green-600" />
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Total Sales</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
               </div>
             </div>
-            <p className="text-xl sm:text-2xl font-bold text-gray-900">
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 break-words">
               {formatPKR(summary.totalSales)}
             </p>
           </div>
 
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-600">Total Orders</h3>
-              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <FileText className="w-5 h-5 text-blue-600" />
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Total Orders</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
               </div>
             </div>
-            <p className="text-xl sm:text-2xl font-bold text-gray-900">
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">
               {summary.totalOrders}
             </p>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-600">Average Order</h3>
-              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <BarChart3 className="w-5 h-5 text-orange-600" />
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Average Order</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-orange-600" />
               </div>
             </div>
-            <p className="text-xl sm:text-2xl font-bold text-gray-900">
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 break-words">
               {formatPKR(summary.averageOrder)}
             </p>
           </div>
