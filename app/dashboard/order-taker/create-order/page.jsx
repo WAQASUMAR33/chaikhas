@@ -37,78 +37,90 @@ export default function CreateOrderPage() {
   const [printingStatus, setPrintingStatus] = useState(null);
 
   /**
-   * Handle printing of receipt (80mm thermal printer)
-   * Opens a new window with just the receipt content for clean printing
+   * Handle printing of KOT (Kitchen Order Ticket) receipt
+   * Prints KOT to respective kitchens automatically
    */
-  const handlePrintReceipt = useCallback(() => {
-    if (!orderReceipt) return;
+  const handlePrintReceipt = useCallback(async () => {
+    if (!orderReceipt || !orderReceipt.order_id) {
+      setAlert({ type: 'error', message: 'No order data available to print KOT' });
+      return;
+    }
 
     try {
-      const printArea = document.getElementById('order-taker-receipt-print-area');
-      if (!printArea) {
-        // Fallback to window.print if print area not found
-        window.print();
+      const orderId = orderReceipt.order_id;
+      const items = orderReceipt.items || [];
+      
+      if (items.length === 0) {
+        setAlert({ type: 'error', message: 'No items found to print KOT' });
         return;
       }
 
-      const printContent = printArea.innerHTML;
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) {
-        window.print();
+      // Get unique kitchen/category IDs from items
+      const kitchenIds = [...new Set(
+        items
+          .map(item => item.category_id || item.kitchen_id || item.kitchen)
+          .filter(Boolean)
+      )];
+
+      if (kitchenIds.length === 0) {
+        setAlert({ type: 'error', message: 'No kitchen information found in items' });
         return;
       }
 
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Receipt - Restaurant Khas</title>
-            <style>
-              @media print {
-                @page {
-                  size: 80mm auto;
-                  margin: 0;
-                }
-                body {
-                  margin: 0;
-                  padding: 0;
-                }
-              }
-              body {
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                margin: 0;
-                padding: 0;
-              }
-            </style>
-          </head>
-          <body>${printContent}</body>
-        </html>
-      `);
-      printWindow.document.close();
-
-      // Give the browser a moment to render before printing
-      setTimeout(() => {
+      // Print KOT to each kitchen
+      const branchId = getBranchId() || getTerminal();
+      let printSuccess = false;
+      const printPromises = kitchenIds.map(async (kitchenId) => {
         try {
-          printWindow.print();
-        } finally {
-          printWindow.close();
+          const result = await apiPost('pos/print_kitchen_receipt.php', {
+            order_id: orderId,
+            kitchen_id: kitchenId,
+            branch_id: branchId
+          });
+
+          if (result.success && result.data && result.data.success === true) {
+            printSuccess = true;
+            return { kitchenId, success: true, message: result.data.message };
+          }
+          return { kitchenId, success: false, message: result.data?.message || 'Failed to print' };
+        } catch (error) {
+          console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
+          return { kitchenId, success: false, message: error.message || 'Network error' };
         }
-      }, 250);
+      });
+
+      const results = await Promise.all(printPromises);
+      const successful = results.filter(r => r.success);
+      
+      if (successful.length > 0) {
+        setAlert({ 
+          type: 'success', 
+          message: `KOT sent to ${successful.length} kitchen(s) successfully` 
+        });
+      } else {
+        setAlert({ 
+          type: 'warning', 
+          message: 'KOT printing failed. Please try again or contact support.' 
+        });
+      }
     } catch (error) {
-      console.error('Error printing receipt:', error);
-      // Fallback
-      window.print();
+      console.error('Error printing KOT:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing KOT: ' + (error.message || 'Network error') 
+      });
     }
   }, [orderReceipt]);
 
   /**
-   * Auto-print receipt when order is placed and receipt modal opens
+   * Auto-print KOT when order is placed and receipt modal opens
    */
   useEffect(() => {
-    if (receiptModalOpen && orderReceipt) {
+    if (receiptModalOpen && orderReceipt && orderReceipt.order_id) {
+      // Auto-print KOT after a short delay
       const timer = setTimeout(() => {
         handlePrintReceipt();
-      }, 400); // Small delay to ensure DOM is ready
+      }, 500); // Small delay to ensure order is fully created
       return () => clearTimeout(timer);
     }
   }, [receiptModalOpen, orderReceipt, handlePrintReceipt]);
@@ -1392,7 +1404,7 @@ export default function CreateOrderPage() {
                   onClick={handlePrintReceipt}
                   className="flex-1"
                 >
-                  Re-Print Receipt
+                  Re-Print KOT
                 </Button>
               </div>
             </div>

@@ -1149,11 +1149,85 @@ export default function OrderManagementPage() {
   };
 
   /**
-   * Handle print receipt - Print the receipt (may be unpaid or paid)
+   * Handle print KOT (Kitchen Order Ticket) for an order
+   */
+  const handlePrintKOT = async (orderId, orderItems) => {
+    if (!orderId || !orderItems || orderItems.length === 0) {
+      setAlert({ type: 'error', message: 'No order data available to print KOT' });
+      return;
+    }
+
+    try {
+      // Get unique kitchen/category IDs from items
+      const kitchenIds = [...new Set(
+        orderItems
+          .map(item => item.category_id || item.kitchen_id || item.kitchen)
+          .filter(Boolean)
+      )];
+
+      if (kitchenIds.length === 0) {
+        setAlert({ type: 'error', message: 'No kitchen information found in items' });
+        return;
+      }
+
+      // Print KOT to each kitchen
+      const branchId = getBranchId() || getTerminal();
+      const printPromises = kitchenIds.map(async (kitchenId) => {
+        try {
+          const result = await apiPost('pos/print_kitchen_receipt.php', {
+            order_id: orderId,
+            kitchen_id: kitchenId,
+            branch_id: branchId
+          });
+
+          if (result.success && result.data && result.data.success === true) {
+            return { kitchenId, success: true, message: result.data.message };
+          }
+          return { kitchenId, success: false, message: result.data?.message || 'Failed to print' };
+        } catch (error) {
+          console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
+          return { kitchenId, success: false, message: error.message || 'Network error' };
+        }
+      });
+
+      const results = await Promise.all(printPromises);
+      const successful = results.filter(r => r.success);
+      
+      if (successful.length > 0) {
+        setAlert({ 
+          type: 'success', 
+          message: `KOT sent to ${successful.length} kitchen(s) successfully` 
+        });
+      } else {
+        setAlert({ 
+          type: 'warning', 
+          message: 'KOT printing failed. Please try again or contact support.' 
+        });
+      }
+    } catch (error) {
+      console.error('Error printing KOT:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing KOT: ' + (error.message || 'Network error') 
+      });
+    }
+  };
+
+  /**
+   * Handle print receipt - Print bill receipt if bill exists, otherwise print KOT
    */
   const handlePrintReceipt = async () => {
+    // If no bill, try to print KOT from order details
     if (!generatedBill) {
-      setAlert({ type: 'error', message: 'No receipt data available to print' });
+      // Try to get order details from the currently selected order
+      if (orderDetails && orderDetails.order_id) {
+        const items = orderItems || orderDetails.items || [];
+        if (items.length > 0) {
+          await handlePrintKOT(orderDetails.order_id, items);
+          return;
+        }
+      }
+      setAlert({ type: 'error', message: 'No receipt data available to print. Please generate a bill first or select an order.' });
       return;
     }
     
@@ -2574,11 +2648,16 @@ export default function OrderManagementPage() {
                         // Refresh orders list
                         fetchOrders();
                         
-                        // Show receipt modal for printing (don't auto-print, let user click print button)
+                        // Show receipt modal for printing
                         setReceiptModalOpen(true);
                         setDetailsModalOpen(false);
                         
-                        setAlert({ type: 'success', message: 'Bill generated successfully! Click "Print Receipt" to print.' });
+                        // Auto-print bill receipt after a short delay
+                        setTimeout(() => {
+                          handlePrintReceipt();
+                        }, 500);
+                        
+                        setAlert({ type: 'success', message: 'Bill generated successfully! Printing receipt...' });
                       } else {
                         // More detailed error message - check all possible error locations
                         let errorMsg = 'Failed to generate bill';
