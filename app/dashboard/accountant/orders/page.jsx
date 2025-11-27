@@ -1156,12 +1156,56 @@ export default function OrderManagementPage() {
     }
 
     try {
-      // Get unique kitchen/category IDs from items
+      // Get unique kitchen IDs from items
+      // Create a map of category_id to kitchen_id from categories
+      console.log('Order items for KOT printing:', orderItems);
+      console.log('Available categories:', categories);
+      
+      const categoryToKitchenMap = {};
+      categories.forEach(cat => {
+        const catId = cat.category_id || cat.id;
+        const kitchenId = cat.kitchen_id || cat.kitchen;
+        if (catId && kitchenId) {
+          categoryToKitchenMap[catId] = kitchenId;
+        }
+      });
+      
+      console.log('Category to Kitchen Map:', categoryToKitchenMap);
+      
       const kitchenIds = [...new Set(
         orderItems
-          .map(item => item.category_id || item.kitchen_id || item.kitchen)
+          .map((item, index) => {
+            // Priority 1: Direct kitchen_id from item
+            if (item.kitchen_id) {
+              console.log(`Item ${index} has direct kitchen_id:`, item.kitchen_id);
+              return item.kitchen_id;
+            }
+            
+            // Priority 2: kitchen field from item
+            if (item.kitchen) {
+              console.log(`Item ${index} has kitchen field:`, item.kitchen);
+              return item.kitchen;
+            }
+            
+            // Priority 3: Look up kitchen_id from category using category_id
+            const categoryId = item.category_id || item.cat_id;
+            if (categoryId) {
+              const kitchenId = categoryToKitchenMap[categoryId];
+              if (kitchenId) {
+                console.log(`Item ${index} category_id ${categoryId} maps to kitchen_id:`, kitchenId);
+                return kitchenId;
+              } else {
+                console.warn(`Item ${index} has category_id ${categoryId} but no kitchen_id found in categories map`);
+              }
+            }
+            
+            console.warn(`Item ${index} has no kitchen information:`, item);
+            return null;
+          })
           .filter(Boolean)
       )];
+      
+      console.log('Extracted kitchen IDs:', kitchenIds);
 
       if (kitchenIds.length === 0) {
         setAlert({ type: 'error', message: 'No kitchen information found in items' });

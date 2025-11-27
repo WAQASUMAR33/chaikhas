@@ -41,6 +41,8 @@ export default function CreateOrderPage() {
    * Prints KOT to respective kitchens automatically
    */
   const handlePrintReceipt = useCallback(async () => {
+    // Access categories from component scope
+    const currentCategories = categories;
     if (!orderReceipt || !orderReceipt.order_id) {
       setAlert({ type: 'error', message: 'No order data available to print KOT' });
       return;
@@ -72,39 +74,79 @@ export default function CreateOrderPage() {
         return;
       }
 
-      // Get unique kitchen/category IDs from items
-      // Categories are linked to kitchens, so we use category_id as kitchen_id
+      // Get unique kitchen IDs from items
+      // Categories are linked to kitchens via kitchen_id field
       console.log('Raw items for KOT printing:', items);
+      console.log('Available categories:', currentCategories);
+      
+      // Create a map of category_id to kitchen_id from categories
+      const categoryToKitchenMap = {};
+      currentCategories.forEach(cat => {
+        const catId = cat.category_id || cat.id;
+        const kitchenId = cat.kitchen_id || cat.kitchen;
+        if (catId && kitchenId) {
+          categoryToKitchenMap[catId] = kitchenId;
+        }
+      });
+      
+      console.log('Category to Kitchen Map:', categoryToKitchenMap);
       
       const kitchenIds = [...new Set(
         items
           .map((item, index) => {
-            // Try multiple fields to find kitchen/category ID
-            const kitchenId = item.category_id || 
-                             item.kitchen_id || 
-                             item.kitchen || 
-                             item.kitchen_category_id ||
-                             item.cat_id ||
-                             (item.category && item.category.kitchen_id) ||
-                             (item.category && item.category.id) ||
-                             (item.category && item.category.category_id);
-            
-            if (!kitchenId) {
-              console.warn(`Item ${index} has no kitchen/category ID:`, item);
+            // Priority 1: Direct kitchen_id from item
+            if (item.kitchen_id) {
+              console.log(`Item ${index} (${item.dish_name || item.name}) has direct kitchen_id:`, item.kitchen_id);
+              return item.kitchen_id;
             }
             
-            return kitchenId;
+            // Priority 2: kitchen field from item
+            if (item.kitchen) {
+              console.log(`Item ${index} (${item.dish_name || item.name}) has kitchen field:`, item.kitchen);
+              return item.kitchen;
+            }
+            
+            // Priority 3: Look up kitchen_id from category using category_id
+            const categoryId = item.category_id || item.cat_id || (item.category && item.category.id) || (item.category && item.category.category_id);
+            if (categoryId) {
+              const kitchenId = categoryToKitchenMap[categoryId];
+              if (kitchenId) {
+                console.log(`Item ${index} (${item.dish_name || item.name}) category_id ${categoryId} maps to kitchen_id:`, kitchenId);
+                return kitchenId;
+              } else {
+                console.warn(`Item ${index} (${item.dish_name || item.name}) has category_id ${categoryId} but no kitchen_id found in categories map`);
+              }
+            }
+            
+            // Priority 4: Try nested category object
+            if (item.category) {
+              if (item.category.kitchen_id) {
+                console.log(`Item ${index} (${item.dish_name || item.name}) has category.kitchen_id:`, item.category.kitchen_id);
+                return item.category.kitchen_id;
+              }
+              if (item.category.kitchen) {
+                console.log(`Item ${index} (${item.dish_name || item.name}) has category.kitchen:`, item.category.kitchen);
+                return item.category.kitchen;
+              }
+            }
+            
+            console.warn(`Item ${index} (${item.dish_name || item.name}) has no kitchen information:`, item);
+            return null;
           })
           .filter(Boolean)
       )];
 
       console.log('Extracted kitchen IDs:', kitchenIds);
-      console.log('Order items with kitchen info:', items.map(item => ({
-        name: item.dish_name || item.name,
-        category_id: item.category_id,
-        kitchen_id: item.kitchen_id,
-        kitchen: item.kitchen
-      })));
+      console.log('Order items with kitchen info:', items.map(item => {
+        const categoryId = item.category_id || item.cat_id;
+        const kitchenId = categoryId ? categoryToKitchenMap[categoryId] : null;
+        return {
+          name: item.dish_name || item.name,
+          category_id: categoryId,
+          kitchen_id: item.kitchen_id || kitchenId,
+          kitchen: item.kitchen
+        };
+      }));
 
       if (kitchenIds.length === 0) {
         console.error('No kitchen IDs found in items:', items);
@@ -295,7 +337,7 @@ export default function CreateOrderPage() {
         message: 'Error printing KOT: ' + (error.message || 'Network error') 
       });
     }
-  }, [orderReceipt]);
+  }, [orderReceipt, categories]);
 
   /**
    * Auto-print KOT when order is placed and receipt modal opens
