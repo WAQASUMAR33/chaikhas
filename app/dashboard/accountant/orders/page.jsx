@@ -1172,38 +1172,114 @@ export default function OrderManagementPage() {
 
       // Print KOT to each kitchen
       const branchId = getBranchId() || getTerminal();
+      const terminal = getTerminal();
       const printPromises = kitchenIds.map(async (kitchenId) => {
         try {
-          const result = await apiPost('pos/print_kitchen_receipt.php', {
-            order_id: orderId,
-            kitchen_id: kitchenId,
-            branch_id: branchId
-          });
-
-          if (result.success && result.data && result.data.success === true) {
-            return { kitchenId, success: true, message: result.data.message };
+          console.log(`Printing KOT to kitchen ${kitchenId} for order ${orderId}`);
+          console.log('Print parameters:', { order_id: orderId, kitchen_id: kitchenId, branch_id: branchId, terminal });
+          
+          // Try pos/ folder first, fallback to api/ folder
+          let result;
+          
+          try {
+            result = await apiPost('pos/print_kitchen_receipt.php', {
+              order_id: orderId,
+              kitchen_id: kitchenId,
+              branch_id: branchId,
+              terminal: terminal
+            });
+          } catch (posError) {
+            console.warn(`Failed to print from pos/print_kitchen_receipt.php, trying api/:`, posError);
+            try {
+              result = await apiPost('api/print_kitchen_receipt.php', {
+                order_id: orderId,
+                kitchen_id: kitchenId,
+                branch_id: branchId,
+                terminal: terminal
+              });
+            } catch (apiError2) {
+              console.error(`Both API paths failed for kitchen ${kitchenId}:`, apiError2);
+              throw apiError2;
+            }
           }
-          return { kitchenId, success: false, message: result.data?.message || 'Failed to print' };
+
+          console.log(`KOT print result for kitchen ${kitchenId}:`, result);
+
+          // Handle different response structures
+          if (result && result.success !== false) {
+            if (result.data) {
+              if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
+                const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
+                const printerIp = result.data.printer_ip || result.data.printer || '';
+                return { 
+                  kitchenId, 
+                  kitchenName,
+                  printerIp,
+                  success: true, 
+                  message: result.data.message || 'Printed successfully' 
+                };
+              }
+              if (result.data.message || result.data.error) {
+                return { 
+                  kitchenId, 
+                  success: false, 
+                  message: result.data.message || result.data.error || 'Failed to print' 
+                };
+              }
+            }
+            if (result.success === true) {
+              return { 
+                kitchenId, 
+                kitchenName: `Kitchen ${kitchenId}`,
+                printerIp: '',
+                success: true, 
+                message: 'Printed successfully' 
+              };
+            }
+          }
+          
+          console.warn(`Unexpected response structure for kitchen ${kitchenId}:`, result);
+          return { 
+            kitchenId, 
+            success: false, 
+            message: result?.data?.message || result?.message || 'Unexpected response from server' 
+          };
         } catch (error) {
           console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
-          return { kitchenId, success: false, message: error.message || 'Network error' };
+          const errorMessage = error.message || error.data?.message || 'Network error';
+          return { 
+            kitchenId, 
+            success: false, 
+            message: errorMessage 
+          };
         }
       });
 
       const results = await Promise.all(printPromises);
       const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
       
       if (successful.length > 0) {
+        const kitchenNames = successful.map(r => {
+          const name = r.kitchenName || `Kitchen ${r.kitchenId}`;
+          const printer = r.printerIp ? ` (${r.printerIp})` : '';
+          return `${name}${printer}`;
+        }).join(', ');
+        
         setAlert({ 
           type: 'success', 
-          message: `KOT sent to ${successful.length} kitchen(s) successfully` 
+          message: `KOT sent successfully to ${successful.length} kitchen(s): ${kitchenNames}` 
         });
       } else {
+        const errorMessages = failed.map(r => `Kitchen ${r.kitchenId}: ${r.message}`).join('; ');
         setAlert({ 
-          type: 'warning', 
-          message: 'KOT printing failed. Please try again or contact support.' 
+          type: 'error', 
+          message: `KOT printing failed for all kitchens. ${errorMessages}` 
         });
       }
+      
+      // Log results for debugging
+      console.log('KOT Print Results:', { successful, failed });
     } catch (error) {
       console.error('Error printing KOT:', error);
       setAlert({ 

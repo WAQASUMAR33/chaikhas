@@ -48,7 +48,24 @@ export default function CreateOrderPage() {
 
     try {
       const orderId = orderReceipt.order_id;
-      const items = orderReceipt.items || [];
+      // Use receipt items, but if they don't have category_id, try to get from cart
+      let items = orderReceipt.items || [];
+      
+      // If items don't have category_id, try to merge with cart items that have category info
+      if (items.length > 0 && !items[0].category_id && cart.length > 0) {
+        items = items.map(receiptItem => {
+          const cartItem = cart.find(c => c.dish_id === receiptItem.dish_id || c.dish_id === receiptItem.id);
+          if (cartItem) {
+            return {
+              ...receiptItem,
+              category_id: cartItem.category_id || receiptItem.category_id,
+              kitchen_id: cartItem.kitchen_id || receiptItem.kitchen_id,
+              kitchen: cartItem.kitchen || receiptItem.kitchen
+            };
+          }
+          return receiptItem;
+        });
+      }
       
       if (items.length === 0) {
         setAlert({ type: 'error', message: 'No items found to print KOT' });
@@ -56,53 +73,165 @@ export default function CreateOrderPage() {
       }
 
       // Get unique kitchen/category IDs from items
+      // Categories are linked to kitchens, so we use category_id as kitchen_id
+      console.log('Raw items for KOT printing:', items);
+      
       const kitchenIds = [...new Set(
         items
-          .map(item => item.category_id || item.kitchen_id || item.kitchen)
+          .map((item, index) => {
+            // Try multiple fields to find kitchen/category ID
+            const kitchenId = item.category_id || 
+                             item.kitchen_id || 
+                             item.kitchen || 
+                             item.kitchen_category_id ||
+                             item.cat_id ||
+                             (item.category && item.category.kitchen_id) ||
+                             (item.category && item.category.id) ||
+                             (item.category && item.category.category_id);
+            
+            if (!kitchenId) {
+              console.warn(`Item ${index} has no kitchen/category ID:`, item);
+            }
+            
+            return kitchenId;
+          })
           .filter(Boolean)
       )];
 
+      console.log('Extracted kitchen IDs:', kitchenIds);
+      console.log('Order items with kitchen info:', items.map(item => ({
+        name: item.dish_name || item.name,
+        category_id: item.category_id,
+        kitchen_id: item.kitchen_id,
+        kitchen: item.kitchen
+      })));
+
       if (kitchenIds.length === 0) {
-        setAlert({ type: 'error', message: 'No kitchen information found in items' });
+        console.error('No kitchen IDs found in items:', items);
+        setAlert({ 
+          type: 'error', 
+          message: 'No kitchen information found in items. Please ensure items have category/kitchen assigned. Check console for details.' 
+        });
         return;
       }
 
       // Print KOT to each kitchen
       const branchId = getBranchId() || getTerminal();
-      let printSuccess = false;
+      const terminal = getTerminal();
       const printPromises = kitchenIds.map(async (kitchenId) => {
         try {
-          const result = await apiPost('pos/print_kitchen_receipt.php', {
-            order_id: orderId,
-            kitchen_id: kitchenId,
-            branch_id: branchId
-          });
-
-          if (result.success && result.data && result.data.success === true) {
-            printSuccess = true;
-            return { kitchenId, success: true, message: result.data.message };
+          console.log(`Printing KOT to kitchen ${kitchenId} for order ${orderId}`);
+          console.log('Print parameters:', { order_id: orderId, kitchen_id: kitchenId, branch_id: branchId, terminal });
+          
+          // Try pos/ folder first, fallback to api/ folder
+          let result;
+          let apiError = null;
+          
+          try {
+            result = await apiPost('pos/print_kitchen_receipt.php', {
+              order_id: orderId,
+              kitchen_id: kitchenId,
+              branch_id: branchId,
+              terminal: terminal
+            });
+          } catch (posError) {
+            console.warn(`Failed to print from pos/print_kitchen_receipt.php, trying api/:`, posError);
+            apiError = posError;
+            try {
+              result = await apiPost('api/print_kitchen_receipt.php', {
+                order_id: orderId,
+                kitchen_id: kitchenId,
+                branch_id: branchId,
+                terminal: terminal
+              });
+            } catch (apiError2) {
+              console.error(`Both API paths failed for kitchen ${kitchenId}:`, apiError2);
+              throw apiError2;
+            }
           }
-          return { kitchenId, success: false, message: result.data?.message || 'Failed to print' };
+
+          console.log(`KOT print result for kitchen ${kitchenId}:`, result);
+
+          // Handle different response structures
+          if (result && result.success !== false) {
+            // Check if result.data exists and has success field
+            if (result.data) {
+              // Handle nested success field
+              if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
+                const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
+                const printerIp = result.data.printer_ip || result.data.printer || '';
+                return { 
+                  kitchenId, 
+                  kitchenName,
+                  printerIp,
+                  success: true, 
+                  message: result.data.message || 'Printed successfully' 
+                };
+              }
+              // Check if result.data has error message
+              if (result.data.message || result.data.error) {
+                return { 
+                  kitchenId, 
+                  success: false, 
+                  message: result.data.message || result.data.error || 'Failed to print' 
+                };
+              }
+            }
+            // If result.success is true but no data structure, assume success
+            if (result.success === true) {
+              return { 
+                kitchenId, 
+                kitchenName: `Kitchen ${kitchenId}`,
+                printerIp: '',
+                success: true, 
+                message: 'Printed successfully' 
+              };
+            }
+          }
+          
+          // If we get here, the response structure is unexpected
+          console.warn(`Unexpected response structure for kitchen ${kitchenId}:`, result);
+          return { 
+            kitchenId, 
+            success: false, 
+            message: result?.data?.message || result?.message || 'Unexpected response from server' 
+          };
         } catch (error) {
           console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
-          return { kitchenId, success: false, message: error.message || 'Network error' };
+          const errorMessage = error.message || error.data?.message || 'Network error';
+          return { 
+            kitchenId, 
+            success: false, 
+            message: errorMessage 
+          };
         }
       });
 
       const results = await Promise.all(printPromises);
       const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
       
       if (successful.length > 0) {
+        const kitchenNames = successful.map(r => {
+          const name = r.kitchenName || `Kitchen ${r.kitchenId}`;
+          const printer = r.printerIp ? ` (${r.printerIp})` : '';
+          return `${name}${printer}`;
+        }).join(', ');
+        
         setAlert({ 
           type: 'success', 
-          message: `KOT sent to ${successful.length} kitchen(s) successfully` 
+          message: `KOT sent successfully to ${successful.length} kitchen(s): ${kitchenNames}` 
         });
       } else {
+        const errorMessages = failed.map(r => `Kitchen ${r.kitchenId}: ${r.message}`).join('; ');
         setAlert({ 
-          type: 'warning', 
-          message: 'KOT printing failed. Please try again or contact support.' 
+          type: 'error', 
+          message: `KOT printing failed for all kitchens. ${errorMessages}` 
         });
       }
+      
+      // Log results for debugging
+      console.log('KOT Print Results:', { successful, failed });
     } catch (error) {
       console.error('Error printing KOT:', error);
       setAlert({ 
@@ -624,10 +753,31 @@ export default function CreateOrderPage() {
         if (result.data.success === true && result.data.data) {
           const responseData = result.data.data;
           // Prefer items returned by API; if missing, fall back to cart items
-          const receiptItems =
+          let receiptItems =
             (Array.isArray(responseData.items) && responseData.items.length > 0)
               ? responseData.items
               : cart;
+
+          // Merge category/kitchen info from cart if API items don't have it
+          if (receiptItems.length > 0 && cart.length > 0) {
+            receiptItems = receiptItems.map(item => {
+              const cartItem = cart.find(c => 
+                c.dish_id === item.dish_id || 
+                c.dish_id === item.id ||
+                (c.name === item.name && c.price === item.price)
+              );
+              if (cartItem) {
+                return {
+                  ...item,
+                  category_id: item.category_id || cartItem.category_id,
+                  kitchen_id: item.kitchen_id || cartItem.kitchen_id,
+                  kitchen: item.kitchen || cartItem.kitchen,
+                  category_name: item.category_name || cartItem.category_name
+                };
+              }
+              return item;
+            });
+          }
 
           setOrderReceipt({
             order: responseData.order || responseData,
@@ -685,10 +835,31 @@ export default function CreateOrderPage() {
         } else {
           // Direct data response (no nested structure)
           const responseData = result.data;
-          const receiptItems =
+          let receiptItems =
             (Array.isArray(responseData.items) && responseData.items.length > 0)
               ? responseData.items
               : cart;
+
+          // Merge category/kitchen info from cart if API items don't have it
+          if (receiptItems.length > 0 && cart.length > 0) {
+            receiptItems = receiptItems.map(item => {
+              const cartItem = cart.find(c => 
+                c.dish_id === item.dish_id || 
+                c.dish_id === item.id ||
+                (c.name === item.name && c.price === item.price)
+              );
+              if (cartItem) {
+                return {
+                  ...item,
+                  category_id: item.category_id || cartItem.category_id,
+                  kitchen_id: item.kitchen_id || cartItem.kitchen_id,
+                  kitchen: item.kitchen || cartItem.kitchen,
+                  category_name: item.category_name || cartItem.category_name
+                };
+              }
+              return item;
+            });
+          }
 
           setOrderReceipt({
             order: responseData.order || responseData,
@@ -1152,7 +1323,7 @@ export default function CreateOrderPage() {
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
                 <Check className="w-5 h-5 text-green-600" />
                 <p className="text-sm text-green-800 font-medium">
-                  Order placed successfully and sent to kitchen! Receipt will print automatically.
+                  Order placed successfully! KOT is being printed to kitchen printers automatically.
                 </p>
               </div>
 
