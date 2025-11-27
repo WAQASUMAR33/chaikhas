@@ -1220,30 +1220,13 @@ export default function OrderManagementPage() {
           console.log(`Printing KOT to kitchen ${kitchenId} for order ${orderId}`);
           console.log('Print parameters:', { order_id: orderId, kitchen_id: kitchenId, branch_id: branchId, terminal });
           
-          // Try pos/ folder first, fallback to api/ folder
-          let result;
-          
-          try {
-            result = await apiPost('pos/print_kitchen_receipt.php', {
-              order_id: orderId,
-              kitchen_id: kitchenId,
-              branch_id: branchId,
-              terminal: terminal
-            });
-          } catch (posError) {
-            console.warn(`Failed to print from pos/print_kitchen_receipt.php, trying api/:`, posError);
-            try {
-              result = await apiPost('api/print_kitchen_receipt.php', {
-                order_id: orderId,
-                kitchen_id: kitchenId,
-                branch_id: branchId,
-                terminal: terminal
-              });
-            } catch (apiError2) {
-              console.error(`Both API paths failed for kitchen ${kitchenId}:`, apiError2);
-              throw apiError2;
-            }
-          }
+          // Use api/print_kitchen_receipt.php (user's API is in /api/ folder)
+          const result = await apiPost('api/print_kitchen_receipt.php', {
+            order_id: orderId,
+            kitchen_id: kitchenId,
+            branch_id: branchId,
+            terminal: terminal
+          });
 
           console.log(`KOT print result for kitchen ${kitchenId}:`, result);
 
@@ -1272,22 +1255,120 @@ export default function OrderManagementPage() {
 
           // Handle successful API response
           if (result.data) {
-            if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
-              const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
-              const printerIp = result.data.printer_ip || result.data.printer || '';
+            const responseData = result.data;
+            
+            // Check for error messages first (even if success is true, there might be an error)
+            // Look for actual print errors in message, error field, or results array
+            const errorMessage = responseData.error || 
+                               (responseData.message && (
+                                 responseData.message.toLowerCase().includes('error') ||
+                                 responseData.message.toLowerCase().includes('failed') ||
+                                 responseData.message.toLowerCase().includes('timeout') ||
+                                 responseData.message.toLowerCase().includes('could not connect') ||
+                                 responseData.message.toLowerCase().includes('connection timed out') ||
+                                 responseData.message.toLowerCase().includes('connection refused')
+                               ));
+            
+            // Also check results array for errors
+            let resultsError = null;
+            if (responseData.results && Array.isArray(responseData.results)) {
+              const errorResult = responseData.results.find(r => 
+                r.status === 'error' || 
+                r.status === 'failed' ||
+                (r.message && (
+                  r.message.toLowerCase().includes('timeout') ||
+                  r.message.toLowerCase().includes('could not connect') ||
+                  r.message.toLowerCase().includes('connection timed out') ||
+                  r.message.toLowerCase().includes('connection refused')
+                ))
+              );
+              if (errorResult) {
+                resultsError = errorResult.message || errorResult.error || 'Print failed';
+              }
+            }
+            
+            if (errorMessage || resultsError) {
+              return { 
+                kitchenId, 
+                success: false, 
+                message: resultsError || errorMessage || responseData.message || 'Failed to print' 
+              };
+            }
+            
+            // Check if response indicates printer is reachable but printing might have failed
+            // Look for actual print success indicators
+            const hasPrintSuccess = responseData.printed === true || 
+                                   responseData.print_success === true ||
+                                   (responseData.message && (
+                                     responseData.message.toLowerCase().includes('printed') ||
+                                     responseData.message.toLowerCase().includes('sent to printer') ||
+                                     responseData.message.toLowerCase().includes('successfully')
+                                   ));
+            
+            // If success is true and we have printer_ip, check for actual print success
+            if (responseData.success === true && responseData.printer_ip) {
+              // Check if results array indicates successful print
+              if (responseData.results && Array.isArray(responseData.results)) {
+                const hasSuccessfulPrint = responseData.results.some(r => 
+                  r.status === 'success' && 
+                  (r.write_test === 'passed' || r.printed === true || r.print_success === true)
+                );
+                
+                if (hasSuccessfulPrint || hasPrintSuccess) {
+                  const kitchenName = responseData.kitchen_name || responseData.name || `Kitchen ${kitchenId}`;
+                  const printerIp = responseData.printer_ip || responseData.printer || '';
+                  return { 
+                    kitchenId, 
+                    kitchenName,
+                    printerIp,
+                    success: true, 
+                    message: responseData.message || 'Printed successfully' 
+                  };
+                }
+              } else if (hasPrintSuccess) {
+                // Direct print success indicator
+                const kitchenName = responseData.kitchen_name || responseData.name || `Kitchen ${kitchenId}`;
+                const printerIp = responseData.printer_ip || responseData.printer || '';
+                return { 
+                  kitchenId, 
+                  kitchenName,
+                  printerIp,
+                  success: true, 
+                  message: responseData.message || 'Printed successfully' 
+                };
+              }
+              
+              // If printer is reachable but no clear print success, it might have failed
+              // Check for timeout or connection errors in message
+              if (responseData.message && (
+                responseData.message.toLowerCase().includes('reachable') ||
+                responseData.message.toLowerCase().includes('port')
+              )) {
+                // Printer is reachable but actual print might have failed
+                // Return success for now but log a warning
+                console.warn(`Printer ${responseData.printer_ip} is reachable but print status unclear for kitchen ${kitchenId}`);
+                const kitchenName = responseData.kitchen_name || responseData.name || `Kitchen ${kitchenId}`;
+                const printerIp = responseData.printer_ip || responseData.printer || '';
+                return { 
+                  kitchenId, 
+                  kitchenName,
+                  printerIp,
+                  success: true, 
+                  message: responseData.message || 'Print sent to printer' 
+                };
+              }
+            }
+            
+            // Handle nested success field with kitchen_name
+            if (responseData.success === true || (responseData.success === undefined && responseData.kitchen_name)) {
+              const kitchenName = responseData.kitchen_name || responseData.name || `Kitchen ${kitchenId}`;
+              const printerIp = responseData.printer_ip || responseData.printer || '';
               return { 
                 kitchenId, 
                 kitchenName,
                 printerIp,
                 success: true, 
-                message: result.data.message || 'Printed successfully' 
-              };
-            }
-            if (result.data.message || result.data.error) {
-              return { 
-                kitchenId, 
-                success: false, 
-                message: result.data.message || result.data.error || 'Failed to print' 
+                message: responseData.message || 'Printed successfully' 
               };
             }
           }
@@ -1353,7 +1434,7 @@ export default function OrderManagementPage() {
         
         if (isNetworkError) {
           fullMessage += '\n\nPossible solutions:\n';
-          fullMessage += '1. Check if the API endpoint exists: pos/print_kitchen_receipt.php or api/print_kitchen_receipt.php\n';
+          fullMessage += '1. Check if the API endpoint exists: api/print_kitchen_receipt.php\n';
           fullMessage += '2. Verify CORS headers are enabled on the server\n';
           fullMessage += '3. Check server logs for errors\n';
           fullMessage += '4. Ensure the kitchen printer is configured correctly';
