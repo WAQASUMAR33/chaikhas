@@ -34,20 +34,65 @@ const devError = (...args) => {
 };
 
 /**
+ * Normalize API base URL to ensure proper formatting
+ * Ensures URL ends with a single slash for proper endpoint concatenation
+ * @param {string} url - The API base URL
+ * @returns {string} Normalized URL
+ */
+const normalizeApiUrl = (url) => {
+  if (!url) return url;
+  
+  // Trim whitespace
+  let normalized = url.trim();
+  
+  // Remove multiple trailing slashes and ensure single trailing slash
+  normalized = normalized.replace(/\/+$/, '');
+  if (normalized && !normalized.endsWith('/')) {
+    normalized = `${normalized}/`;
+  }
+  
+  return normalized;
+};
+
+/**
+ * Determine the correct API folder path for an endpoint
+ * Supports both /api/ and /pos/ folders
+ * If endpoint already includes folder (api/ or pos/), use it
+ * Otherwise, default to api/ for backward compatibility
+ * @param {string} endpoint - API endpoint (e.g., 'getOrders.php', 'api/getOrders.php', 'pos/getOrders.php')
+ * @returns {string} Endpoint with correct folder path
+ */
+const resolveApiEndpoint = (endpoint) => {
+  if (!endpoint) return endpoint;
+  
+  // Remove leading slash if present
+  let normalized = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
+  
+  // Check if endpoint already includes folder prefix (api/ or pos/)
+  if (normalized.startsWith('api/') || normalized.startsWith('pos/')) {
+    return normalized;
+  }
+  
+  // Default to api/ folder for backward compatibility
+  return `api/${normalized}`;
+};
+
+/**
  * Get the current working API URL
  * Checks localStorage cache first, then determines primary/fallback
  * @returns {string} The API base URL to use
  */
 const getWorkingApiUrl = () => {
   if (typeof window === 'undefined') {
-    // Server-side: use primary or fallback
-    return PRIMARY_API_URL || FALLBACK_API_URL;
+    // Server-side: use primary or fallback, normalize them
+    const primaryUrl = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
+    return primaryUrl || FALLBACK_API_URL;
   }
 
   // Check if we have a cached working URL
   const cachedUrl = localStorage.getItem(WORKING_API_URL_KEY);
   if (cachedUrl) {
-    return cachedUrl;
+    return normalizeApiUrl(cachedUrl);
   }
 
   // Determine which URL to try first
@@ -57,7 +102,8 @@ const getWorkingApiUrl = () => {
                            !PRIMARY_API_URL.includes('localhost') && 
                            PRIMARY_API_URL.trim() !== '';
 
-  return shouldTryPrimary ? PRIMARY_API_URL : FALLBACK_API_URL;
+  const urlToUse = shouldTryPrimary ? PRIMARY_API_URL : FALLBACK_API_URL;
+  return normalizeApiUrl(urlToUse);
 };
 
 /**
@@ -359,8 +405,8 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Ensure endpoint starts with /
-  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  // Resolve endpoint with correct folder path (api/ or pos/)
+  const normalizedEndpoint = resolveApiEndpoint(endpoint);
   
   // Convert params object to query string
   const queryString = Object.keys(params)
@@ -375,12 +421,14 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
   const shouldTryPrimary = PRIMARY_API_URL && 
                            !PRIMARY_API_URL.includes('localhost') && 
                            PRIMARY_API_URL.trim() !== '';
-  
-  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
-    urlsToTry.push(PRIMARY_API_URL);
+
+  const normalizedPrimary = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
+  if (shouldTryPrimary && normalizedPrimary && normalizedPrimary !== currentWorkingUrl) {
+    urlsToTry.push(normalizedPrimary);
   }
-  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
-    urlsToTry.push(FALLBACK_API_URL);
+  const normalizedFallback = normalizeApiUrl(FALLBACK_API_URL);
+  if (normalizedFallback !== currentWorkingUrl && (!shouldTryPrimary || normalizedPrimary !== normalizedFallback)) {
+    urlsToTry.push(normalizedFallback);
   }
 
   // Log API base URL in development for debugging
@@ -494,8 +542,8 @@ export const apiPost = async (endpoint, body, options = {}) => {
     throw new Error(`Invalid request body: ${stringifyError.message}`);
   }
   
-  // Ensure endpoint starts with /
-  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  // Resolve endpoint with correct folder path (api/ or pos/)
+  const normalizedEndpoint = resolveApiEndpoint(endpoint);
   
   // Determine URLs to try (cached working URL first, then primary, then fallback)
   const currentWorkingUrl = getWorkingApiUrl();
@@ -504,12 +552,14 @@ export const apiPost = async (endpoint, body, options = {}) => {
   const shouldTryPrimary = PRIMARY_API_URL && 
                            !PRIMARY_API_URL.includes('localhost') && 
                            PRIMARY_API_URL.trim() !== '';
-  
-  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
-    urlsToTry.push(PRIMARY_API_URL);
+
+  const normalizedPrimary = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
+  if (shouldTryPrimary && normalizedPrimary && normalizedPrimary !== currentWorkingUrl) {
+    urlsToTry.push(normalizedPrimary);
   }
-  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
-    urlsToTry.push(FALLBACK_API_URL);
+  const normalizedFallback = normalizeApiUrl(FALLBACK_API_URL);
+  if (normalizedFallback !== currentWorkingUrl && (!shouldTryPrimary || normalizedPrimary !== normalizedFallback)) {
+    urlsToTry.push(normalizedFallback);
   }
 
   // Log API base URL in development for debugging

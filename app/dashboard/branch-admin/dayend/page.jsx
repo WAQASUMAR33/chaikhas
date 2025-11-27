@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getBranchId, getFullname, getUsername } from '@/utils/api';
+import { apiPost, getBranchId, getFullname, getUsername, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { Calendar, Printer, CheckCircle, DollarSign, Search, X } from 'lucide-react';
 
@@ -45,6 +45,9 @@ export default function DayEndPage() {
     total_easypaisa: 0,
     total_bank: 0,
     total_sales: 0,
+    total_expenses: 0,
+    total_receivings: 0,
+    credit_sales: 0,
   });
   const [selectedDayend, setSelectedDayend] = useState(null);
   const printRef = useRef(null);
@@ -79,21 +82,117 @@ export default function DayEndPage() {
   const calculateTodayTotals = async () => {
     try {
       const branchId = getBranchId();
+      const terminal = getTerminal();
       if (!branchId) return;
 
-      // Get today's date
-      const today = new Date().toISOString().split('T')[0];
+      // Get today's date in YYYY-MM-DD format
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
 
-      // Fetch today's orders (you may need to create this API or use existing)
-      // For now, we'll set defaults and let user input
+      // Initialize totals
+      let totalCash = 0;
+      let totalEasypaisa = 0;
+      let totalBank = 0;
+      let totalSales = 0;
+      let totalExpenses = 0;
+      let totalReceivings = 0;
+      let creditSales = 0;
+
+      // Fetch today's orders
+      try {
+        const ordersPayload = { terminal };
+        const ordersResult = await apiPost('/getOrders.php', ordersPayload);
+        
+        let ordersData = [];
+        if (ordersResult.success && ordersResult.data) {
+          if (Array.isArray(ordersResult.data)) {
+            ordersData = ordersResult.data;
+          } else if (ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
+            ordersData = ordersResult.data.data;
+          } else if (ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
+            ordersData = ordersResult.data.orders;
+          }
+        }
+
+        // Filter today's orders and calculate totals by payment method
+        const todayOrders = ordersData.filter(order => {
+          if (!order.created_at && !order.date) return false;
+          const orderDate = new Date(order.created_at || order.date);
+          orderDate.setHours(0, 0, 0, 0);
+          return orderDate.toISOString().split('T')[0] === todayStr;
+        });
+
+        todayOrders.forEach(order => {
+          const paymentMode = (order.payment_mode || order.payment_method || 'Cash').toLowerCase();
+          const netTotal = parseFloat(order.net_total_amount || order.netTotal || order.grand_total || order.g_total_amount || order.total || 0);
+          
+          totalSales += netTotal;
+
+          if (paymentMode.includes('cash')) {
+            totalCash += netTotal;
+          } else if (paymentMode.includes('easypaisa') || paymentMode.includes('easy') || paymentMode.includes('online')) {
+            totalEasypaisa += netTotal;
+          } else if (paymentMode.includes('bank') || paymentMode.includes('card')) {
+            totalBank += netTotal;
+          } else if (paymentMode.includes('credit')) {
+            creditSales += netTotal;
+          }
+        });
+      } catch (error) {
+        console.error('Error fetching orders:', error);
+      }
+
+      // Fetch today's expenses
+      try {
+        const expensesResult = await apiPost('/get_expenses.php', { branch_id: branchId });
+        
+        let expensesData = [];
+        if (expensesResult.success && expensesResult.data) {
+          if (Array.isArray(expensesResult.data)) {
+            expensesData = expensesResult.data;
+          } else if (expensesResult.data.data && Array.isArray(expensesResult.data.data)) {
+            expensesData = expensesResult.data.data;
+          }
+        }
+
+        // Filter today's expenses
+        const todayExpenses = expensesData.filter(expense => {
+          if (!expense.created_at && !expense.date) return false;
+          const expenseDate = new Date(expense.created_at || expense.date);
+          expenseDate.setHours(0, 0, 0, 0);
+          return expenseDate.toISOString().split('T')[0] === todayStr;
+        });
+
+        todayExpenses.forEach(expense => {
+          const amount = parseFloat(expense.amount || expense.expense_amount || 0);
+          totalExpenses += amount;
+        });
+      } catch (error) {
+        console.error('Error fetching expenses:', error);
+      }
+
+      // Update calculated totals
+      setCalculatedTotals({
+        total_cash: totalCash,
+        total_easypaisa: totalEasypaisa,
+        total_bank: totalBank,
+        total_sales: totalSales,
+        total_expenses: totalExpenses,
+        total_receivings: totalReceivings,
+        credit_sales: creditSales,
+      });
+    } catch (error) {
+      console.error('Error calculating totals:', error);
       setCalculatedTotals({
         total_cash: 0,
         total_easypaisa: 0,
         total_bank: 0,
         total_sales: 0,
+        total_expenses: 0,
+        total_receivings: 0,
+        credit_sales: 0,
       });
-    } catch (error) {
-      console.error('Error calculating totals:', error);
     }
   };
 
@@ -184,16 +283,34 @@ export default function DayEndPage() {
   /**
    * Handle mark as day-end
    */
-  const handleMarkAsDayEnd = () => {
+  const handleMarkAsDayEnd = async () => {
+    // Recalculate totals before opening modal
+    await calculateTodayTotals();
+    
+    // Get the last dayend's closing balance as opening balance
+    let openingBalance = '0';
+    if (dayends.length > 0) {
+      // Sort by closing_date_time descending and get the most recent
+      const sortedDayends = [...dayends].sort((a, b) => {
+        const dateA = new Date(a.closing_date_time || a.created_at || 0);
+        const dateB = new Date(b.closing_date_time || b.created_at || 0);
+        return dateB - dateA;
+      });
+      if (sortedDayends[0] && sortedDayends[0].closing_balance) {
+        openingBalance = parseFloat(sortedDayends[0].closing_balance).toFixed(2);
+      }
+    }
+
+    // Auto-populate form with calculated totals
     setFormData({
-      opening_balance: '',
-      expences: '',
-      total_cash: '',
-      total_easypaisa: '',
-      total_bank: '',
-      credit_sales: '',
-      total_sales: '',
-      total_receivings: '',
+      opening_balance: openingBalance,
+      expences: calculatedTotals.total_expenses.toFixed(2),
+      total_cash: calculatedTotals.total_cash.toFixed(2),
+      total_easypaisa: calculatedTotals.total_easypaisa.toFixed(2),
+      total_bank: calculatedTotals.total_bank.toFixed(2),
+      credit_sales: calculatedTotals.credit_sales.toFixed(2),
+      total_sales: calculatedTotals.total_sales.toFixed(2),
+      total_receivings: calculatedTotals.total_receivings.toFixed(2),
       drawings: '',
       closing_balance: '',
       note: '',
@@ -283,7 +400,7 @@ export default function DayEndPage() {
     // Small delay to ensure state is updated before print
     setTimeout(() => {
       window.print();
-    }, 100);
+    }, 200);
   };
 
   /**
@@ -684,31 +801,43 @@ export default function DayEndPage() {
         </Modal>
 
         {/* Print View - Hidden until print */}
-        <div ref={printRef} className="hidden print:block print:visible">
-          <style jsx global>{`
-            @media print {
-              @page {
-                size: A4;
-                margin: 1.5cm 1cm;
+        {selectedDayend && (
+          <>
+            <style jsx global>{`
+              @media print {
+                @page {
+                  size: A4;
+                  margin: 1.5cm 1cm;
+                }
+                
+                body * {
+                  visibility: hidden;
+                }
+                
+                .print-container, .print-container * {
+                  visibility: visible;
+                }
+                
+                .print-container {
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  width: 100%;
+                  font-family: Arial, sans-serif;
+                }
+                
+                body {
+                  -webkit-print-color-adjust: exact;
+                  print-color-adjust: exact;
+                }
+                
+                .no-print {
+                  display: none !important;
+                }
               }
-              
-              body {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-              }
-              
-              .no-print {
-                display: none !important;
-              }
-              
-              .print-container {
-                font-family: Arial, sans-serif;
-              }
-            }
-          `}</style>
-          
-          {selectedDayend && (
-            <div className="print-container">
+            `}</style>
+            <div ref={printRef} className="hidden print:block">
+              <div className="print-container">
               {/* Header */}
               <div style={{ 
                 display: 'flex', 
@@ -813,9 +942,10 @@ export default function DayEndPage() {
               }}>
                 <p>Generated on {new Date().toLocaleDateString('en-GB')} at {new Date().toLocaleTimeString('en-GB')}</p>
               </div>
+              </div>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
