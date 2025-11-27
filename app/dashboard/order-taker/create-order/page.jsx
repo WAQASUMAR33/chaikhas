@@ -58,19 +58,22 @@ export default function CreateOrderPage() {
       // Get unique kitchen IDs from items
       // Categories are linked to kitchens via kitchen_id field
       console.log('Raw items for KOT printing:', items);
+      
+      // Access categories from component scope - ensure it's an array
+      const currentCategories = Array.isArray(categories) ? categories : [];
       console.log('Available categories:', currentCategories);
       
       // Create a map of category_id to kitchen_id from categories
-      // Access categories from component scope
-      const currentCategories = categories;
       const categoryToKitchenMap = {};
-      currentCategories.forEach(cat => {
-        const catId = cat.category_id || cat.id;
-        const kitchenId = cat.kitchen_id || cat.kitchen;
-        if (catId && kitchenId) {
-          categoryToKitchenMap[catId] = kitchenId;
-        }
-      });
+      if (currentCategories && currentCategories.length > 0) {
+        currentCategories.forEach(cat => {
+          const catId = cat.category_id || cat.id;
+          const kitchenId = cat.kitchen_id || cat.kitchen;
+          if (catId && kitchenId) {
+            categoryToKitchenMap[catId] = kitchenId;
+          }
+        });
+      }
       
       console.log('Category to Kitchen Map:', categoryToKitchenMap);
       
