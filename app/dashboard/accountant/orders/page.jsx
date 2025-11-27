@@ -61,15 +61,13 @@ export default function OrderManagementPage() {
     return () => clearInterval(interval);
   }, [filter]);
 
-  // Auto-calculate 10% service charge for Dine In orders only when bill modal opens
+  // Initialize bill data when bill modal opens (no auto-calculation)
   useEffect(() => {
     if (billModalOpen && billOrder) {
-      const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-      // Only 10% service charge for Dine In orders
-      const autoServiceCharge = billOrder.order_type === 'Dine In' ? subtotal * 0.10 : 0;
+      // Preserve existing service charge if already set, otherwise default to 0
       setBillData(prev => ({
         ...prev,
-        service_charge: autoServiceCharge,
+        service_charge: prev.service_charge || 0,
         discount_percentage: prev.discount_percentage || 0,
       }));
     }
@@ -1205,37 +1203,59 @@ export default function OrderManagementPage() {
 
           console.log(`KOT print result for kitchen ${kitchenId}:`, result);
 
-          // Handle different response structures
-          if (result && result.success !== false) {
-            if (result.data) {
-              if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
-                const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
-                const printerIp = result.data.printer_ip || result.data.printer || '';
-                return { 
-                  kitchenId, 
-                  kitchenName,
-                  printerIp,
-                  success: true, 
-                  message: result.data.message || 'Printed successfully' 
-                };
-              }
-              if (result.data.message || result.data.error) {
-                return { 
-                  kitchenId, 
-                  success: false, 
-                  message: result.data.message || result.data.error || 'Failed to print' 
-                };
-              }
-            }
-            if (result.success === true) {
+          // Check if the API call failed (network error, CORS, etc.)
+          if (!result || result.success === false) {
+            // Extract error message from result.data
+            const errorMsg = result?.data?.message || result?.data?.details || result?.message || 'Network error';
+            const errorDetails = result?.data?.details || result?.data?.error || '';
+            const triedUrls = result?.data?.triedUrls || [];
+            
+            console.error(`KOT print failed for kitchen ${kitchenId}:`, {
+              error: errorMsg,
+              details: errorDetails,
+              triedUrls: triedUrls,
+              fullResult: result
+            });
+            
+            return { 
+              kitchenId, 
+              success: false, 
+              message: errorMsg,
+              details: errorDetails,
+              triedUrls: triedUrls
+            };
+          }
+
+          // Handle successful API response
+          if (result.data) {
+            if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
+              const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
+              const printerIp = result.data.printer_ip || result.data.printer || '';
               return { 
                 kitchenId, 
-                kitchenName: `Kitchen ${kitchenId}`,
-                printerIp: '',
+                kitchenName,
+                printerIp,
                 success: true, 
-                message: 'Printed successfully' 
+                message: result.data.message || 'Printed successfully' 
               };
             }
+            if (result.data.message || result.data.error) {
+              return { 
+                kitchenId, 
+                success: false, 
+                message: result.data.message || result.data.error || 'Failed to print' 
+              };
+            }
+          }
+          
+          if (result.success === true) {
+            return { 
+              kitchenId, 
+              kitchenName: `Kitchen ${kitchenId}`,
+              printerIp: '',
+              success: true, 
+              message: 'Printed successfully' 
+            };
           }
           
           console.warn(`Unexpected response structure for kitchen ${kitchenId}:`, result);
@@ -1246,11 +1266,17 @@ export default function OrderManagementPage() {
           };
         } catch (error) {
           console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
-          const errorMessage = error.message || error.data?.message || 'Network error';
+          // If error is thrown from apiPost, it might have more details
+          const errorMessage = error.message || error.data?.message || error.data?.details || 'Network error';
+          const errorDetails = error.data?.details || error.data?.error || '';
+          const triedUrls = error.data?.triedUrls || [];
+          
           return { 
             kitchenId, 
             success: false, 
-            message: errorMessage 
+            message: errorMessage,
+            details: errorDetails,
+            triedUrls: triedUrls
           };
         }
       });
@@ -1272,9 +1298,26 @@ export default function OrderManagementPage() {
         });
       } else {
         const errorMessages = failed.map(r => `Kitchen ${r.kitchenId}: ${r.message}`).join('; ');
+        // Check if it's a CORS/network issue
+        const isNetworkError = failed.some(r => 
+          r.message?.includes('CORS') || 
+          r.message?.includes('Cannot connect') || 
+          r.message?.includes('Network')
+        );
+        
+        let fullMessage = `KOT printing failed for all kitchens. ${errorMessages}`;
+        
+        if (isNetworkError) {
+          fullMessage += '\n\nPossible solutions:\n';
+          fullMessage += '1. Check if the API endpoint exists: pos/print_kitchen_receipt.php or api/print_kitchen_receipt.php\n';
+          fullMessage += '2. Verify CORS headers are enabled on the server\n';
+          fullMessage += '3. Check server logs for errors\n';
+          fullMessage += '4. Ensure the kitchen printer is configured correctly';
+        }
+        
         setAlert({ 
           type: 'error', 
-          message: `KOT printing failed for all kitchens. ${errorMessages}` 
+          message: fullMessage 
         });
       }
       
@@ -2038,12 +2081,11 @@ export default function OrderManagementPage() {
                       }
                       
                       setBillOrder(orderDetails);
-                      const subtotal = parseFloat(orderDetails.g_total_amount || orderDetails.total || 0);
-                      // Auto-calculate 10% service charge for Dine In only (Take Away and Delivery have 0 service charge)
-                      const autoServiceCharge = (orderDetails.order_type || '').toLowerCase() === 'dine in' ? subtotal * 0.10 : 0;
+                      // Initialize with existing service charge if available, otherwise 0
+                      const existingServiceCharge = parseFloat(orderDetails.service_charge || 0);
                       setBillData({
                         discount_percentage: 0,
-                        service_charge: autoServiceCharge,
+                        service_charge: existingServiceCharge,
                         payment_mode: orderDetails.payment_mode || 'Cash',
                       });
                       setBillModalOpen(true);
@@ -2127,8 +2169,8 @@ export default function OrderManagementPage() {
                       // If bill data is missing, calculate from order (for "Bill Generated" orders)
                       if (!billToPay || !grandTotal) {
                         subtotal = parseFloat(orderDetails.g_total_amount || orderDetails.total || 0);
-                        // Calculate service charge (10% for Dine In only)
-                        serviceCharge = (orderDetails.order_type?.toLowerCase() === 'dine in') ? subtotal * 0.10 : 0;
+                        // Get service charge from order if available, otherwise 0
+                        serviceCharge = parseFloat(orderDetails.service_charge || 0);
                         // Get discount from order if available
                         discountAmount = parseFloat(orderDetails.discount_amount || orderDetails.discount || 0);
                         // Calculate grand total
@@ -2322,26 +2364,26 @@ export default function OrderManagementPage() {
                   </p>
                 </div>
 
-                {/* Service Charge - 10% for Dine In only, Disabled */}
-                {billOrder.order_type === 'Dine In' && (
-                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-xl border border-green-100">
-                    <label className="block text-sm font-medium text-green-600 mb-1.5 uppercase tracking-wide">
-                      Service Charge (10% - Auto Calculated)
-                    </label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={billData.service_charge.toFixed(2)}
-                      disabled={true}
-                      className="bg-gray-100 cursor-not-allowed text-gray-900 font-semibold"
-                      placeholder="0.00"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Automatically calculated as 10% of subtotal (Dine In orders only - Non-editable)
-                    </p>
-                  </div>
-                )}
+                {/* Service Charge - Manual Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={billData.service_charge || 0}
+                    onChange={(e) => {
+                      const serviceCharge = parseFloat(e.target.value) || 0;
+                      setBillData({ ...billData, service_charge: serviceCharge });
+                    }}
+                    placeholder="0.00"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter service charge amount (e.g., 50.00)
+                  </p>
+                </div>
 
                 {/* Discount - Percentage Input */}
                 <div>
@@ -2384,8 +2426,8 @@ export default function OrderManagementPage() {
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
                   const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                  // Step 1: Service charge (10% for Dine In only)
-                  const serviceCharge = billOrder.order_type === 'Dine In' ? subtotal * 0.10 : 0;
+                  // Step 1: Service charge (from manual input)
+                  const serviceCharge = parseFloat(billData.service_charge || 0);
                   // Step 2: Discount amount (percentage of subtotal + service charge)
                   const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
                   // Step 3: Grand total
@@ -2397,9 +2439,9 @@ export default function OrderManagementPage() {
                         <span className="text-gray-600 font-medium">Subtotal:</span>
                         <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
                       </div>
-                      {billOrder.order_type === 'Dine In' && serviceCharge > 0 && (
+                      {serviceCharge > 0 && (
                         <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Service Charge (10%):</span>
+                          <span className="text-gray-600 font-medium">Service Charge:</span>
                           <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
                         </div>
                       )}
@@ -2427,8 +2469,8 @@ export default function OrderManagementPage() {
                     try {
                       const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
                       
-                      // Step 1: Service charge (10% for Dine In only)
-                      const serviceCharge = billOrder.order_type === 'Dine In' ? subtotal * 0.10 : 0;
+                      // Step 1: Service charge (from manual input)
+                      const serviceCharge = parseFloat(billData.service_charge || 0);
                       
                       // Step 2: Discount amount (percentage of subtotal + service charge)
                       const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
@@ -3031,7 +3073,7 @@ export default function OrderManagementPage() {
                   </div>
                   {generatedBill.service_charge > 0 && generatedBill.order_type === 'Dine In' && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 font-medium">Service Charge (10%):</span>
+                      <span className="text-gray-600 font-medium">Service Charge:</span>
                       <span className="font-semibold text-gray-900">{formatPKR(generatedBill.service_charge)}</span>
                     </div>
                   )}

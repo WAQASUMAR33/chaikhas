@@ -319,8 +319,26 @@ export default function PrinterManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
+      // Find the printer in the printers array to get its details
+      const printer = printers.find(p => p.printer_id === printerId || p.id === printerId);
+      
+      if (!printer) {
+        setAlert({ type: 'error', message: 'Printer not found. Please refresh the page and try again.' });
+        return;
+      }
+      
+      // Validate that printer has required fields
+      if (!printer.name || !printer.ip_address || !terminal) {
+        setAlert({ type: 'error', message: 'Printer information is incomplete. Please check printer configuration.' });
+        return;
+      }
+      
       const params = {
         printer_id: printerId,
+        name: printer.name,
+        ip_address: printer.ip_address,
+        port: printer.port || '9100',
+        type: printer.type || 'receipt',
         terminal: terminal,
         action: 'test'
       };
@@ -330,6 +348,7 @@ export default function PrinterManagementPage() {
       }
       
       console.log('Testing printer with params:', params);
+      console.log('Printer data:', printer);
       const result = await apiPost('/printer_management.php', params);
       console.log('Test printer result:', result);
       
@@ -344,7 +363,7 @@ export default function PrinterManagementPage() {
           setAlert({ type: 'error', message: result.data.message || 'Failed to send test print' });
         }
       } else {
-        setAlert({ type: 'error', message: 'Failed to send test print. Please check printer connection.' });
+        setAlert({ type: 'error', message: result.data?.message || 'Failed to send test print. Please check printer connection.' });
       }
     } catch (error) {
       console.error('Error testing printer:', error);

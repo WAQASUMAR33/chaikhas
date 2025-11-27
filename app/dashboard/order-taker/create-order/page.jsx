@@ -135,41 +135,62 @@ export default function CreateOrderPage() {
 
           console.log(`KOT print result for kitchen ${kitchenId}:`, result);
 
-          // Handle different response structures
-          if (result && result.success !== false) {
-            // Check if result.data exists and has success field
-            if (result.data) {
-              // Handle nested success field
-              if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
-                const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
-                const printerIp = result.data.printer_ip || result.data.printer || '';
-                return { 
-                  kitchenId, 
-                  kitchenName,
-                  printerIp,
-                  success: true, 
-                  message: result.data.message || 'Printed successfully' 
-                };
-              }
-              // Check if result.data has error message
-              if (result.data.message || result.data.error) {
-                return { 
-                  kitchenId, 
-                  success: false, 
-                  message: result.data.message || result.data.error || 'Failed to print' 
-                };
-              }
-            }
-            // If result.success is true but no data structure, assume success
-            if (result.success === true) {
+          // Check if the API call failed (network error, CORS, etc.)
+          if (!result || result.success === false) {
+            // Extract error message from result.data
+            const errorMsg = result?.data?.message || result?.data?.details || result?.message || 'Network error';
+            const errorDetails = result?.data?.details || result?.data?.error || '';
+            const triedUrls = result?.data?.triedUrls || [];
+            
+            console.error(`KOT print failed for kitchen ${kitchenId}:`, {
+              error: errorMsg,
+              details: errorDetails,
+              triedUrls: triedUrls,
+              fullResult: result
+            });
+            
+            return { 
+              kitchenId, 
+              success: false, 
+              message: errorMsg,
+              details: errorDetails,
+              triedUrls: triedUrls
+            };
+          }
+
+          // Handle successful API response
+          if (result.data) {
+            // Handle nested success field
+            if (result.data.success === true || (result.data.success === undefined && result.data.kitchen_name)) {
+              const kitchenName = result.data.kitchen_name || result.data.name || `Kitchen ${kitchenId}`;
+              const printerIp = result.data.printer_ip || result.data.printer || '';
               return { 
                 kitchenId, 
-                kitchenName: `Kitchen ${kitchenId}`,
-                printerIp: '',
+                kitchenName,
+                printerIp,
                 success: true, 
-                message: 'Printed successfully' 
+                message: result.data.message || 'Printed successfully' 
               };
             }
+            // Check if result.data has error message
+            if (result.data.message || result.data.error) {
+              return { 
+                kitchenId, 
+                success: false, 
+                message: result.data.message || result.data.error || 'Failed to print' 
+              };
+            }
+          }
+          
+          // If result.success is true but no data structure, assume success
+          if (result.success === true) {
+            return { 
+              kitchenId, 
+              kitchenName: `Kitchen ${kitchenId}`,
+              printerIp: '',
+              success: true, 
+              message: 'Printed successfully' 
+            };
           }
           
           // If we get here, the response structure is unexpected
@@ -181,11 +202,17 @@ export default function CreateOrderPage() {
           };
         } catch (error) {
           console.error(`Error printing KOT for kitchen ${kitchenId}:`, error);
-          const errorMessage = error.message || error.data?.message || 'Network error';
+          // If error is thrown from apiPost, it might have more details
+          const errorMessage = error.message || error.data?.message || error.data?.details || 'Network error';
+          const errorDetails = error.data?.details || error.data?.error || '';
+          const triedUrls = error.data?.triedUrls || [];
+          
           return { 
             kitchenId, 
             success: false, 
-            message: errorMessage 
+            message: errorMessage,
+            details: errorDetails,
+            triedUrls: triedUrls
           };
         }
       });
@@ -206,10 +233,39 @@ export default function CreateOrderPage() {
           message: `KOT sent successfully to ${successful.length} kitchen(s): ${kitchenNames}` 
         });
       } else {
-        const errorMessages = failed.map(r => `Kitchen ${r.kitchenId}: ${r.message}`).join('; ');
+        // Provide more detailed error information
+        const errorMessages = failed.map(r => {
+          let msg = `Kitchen ${r.kitchenId}: ${r.message}`;
+          if (r.details && r.details.length > 0) {
+            // Add first line of details if available
+            const firstLine = r.details.split('\n')[0];
+            if (firstLine && firstLine.length < 100) {
+              msg += ` (${firstLine})`;
+            }
+          }
+          return msg;
+        }).join('; ');
+        
+        // Check if it's a CORS/network issue
+        const isNetworkError = failed.some(r => 
+          r.message?.includes('CORS') || 
+          r.message?.includes('Cannot connect') || 
+          r.message?.includes('Network')
+        );
+        
+        let fullMessage = `KOT printing failed for all kitchens. ${errorMessages}`;
+        
+        if (isNetworkError) {
+          fullMessage += '\n\nPossible solutions:\n';
+          fullMessage += '1. Check if the API endpoint exists: pos/print_kitchen_receipt.php or api/print_kitchen_receipt.php\n';
+          fullMessage += '2. Verify CORS headers are enabled on the server\n';
+          fullMessage += '3. Check server logs for errors\n';
+          fullMessage += '4. Ensure the kitchen printer is configured correctly';
+        }
+        
         setAlert({ 
           type: 'error', 
-          message: `KOT printing failed for all kitchens. ${errorMessages}` 
+          message: fullMessage 
         });
       }
       
@@ -741,7 +797,18 @@ export default function CreateOrderPage() {
           let receiptItems =
             (Array.isArray(responseData.items) && responseData.items.length > 0)
               ? responseData.items
-              : cart;
+              : cart.map(cartItem => ({
+                  dish_name: cartItem.name,
+                  name: cartItem.name,
+                  quantity: cartItem.quantity,
+                  qty: cartItem.quantity,
+                  price: cartItem.price,
+                  dish_id: cartItem.dish_id,
+                  category_id: cartItem.category_id,
+                  kitchen_id: cartItem.kitchen_id,
+                  kitchen: cartItem.kitchen,
+                  category_name: cartItem.category_name
+                }));
 
           // Merge category/kitchen info from cart if API items don't have it
           if (receiptItems.length > 0 && cart.length > 0) {
@@ -754,6 +821,10 @@ export default function CreateOrderPage() {
               if (cartItem) {
                 return {
                   ...item,
+                  dish_name: item.dish_name || cartItem.name,
+                  name: item.name || cartItem.name,
+                  quantity: item.quantity || cartItem.quantity,
+                  qty: item.qty || item.quantity || cartItem.quantity,
                   category_id: item.category_id || cartItem.category_id,
                   kitchen_id: item.kitchen_id || cartItem.kitchen_id,
                   kitchen: item.kitchen || cartItem.kitchen,
@@ -763,6 +834,20 @@ export default function CreateOrderPage() {
               return item;
             });
           }
+
+          // Ensure items always have required fields
+          receiptItems = receiptItems.map(item => ({
+            dish_name: item.dish_name || item.name || 'Item',
+            name: item.name || item.dish_name || 'Item',
+            quantity: item.quantity || item.qty || 1,
+            qty: item.qty || item.quantity || 1,
+            price: item.price || 0,
+            dish_id: item.dish_id || item.id,
+            category_id: item.category_id,
+            kitchen_id: item.kitchen_id,
+            kitchen: item.kitchen,
+            category_name: item.category_name
+          }));
 
           setOrderReceipt({
             order: responseData.order || responseData,
@@ -823,7 +908,18 @@ export default function CreateOrderPage() {
           let receiptItems =
             (Array.isArray(responseData.items) && responseData.items.length > 0)
               ? responseData.items
-              : cart;
+              : cart.map(cartItem => ({
+                  dish_name: cartItem.name,
+                  name: cartItem.name,
+                  quantity: cartItem.quantity,
+                  qty: cartItem.quantity,
+                  price: cartItem.price,
+                  dish_id: cartItem.dish_id,
+                  category_id: cartItem.category_id,
+                  kitchen_id: cartItem.kitchen_id,
+                  kitchen: cartItem.kitchen,
+                  category_name: cartItem.category_name
+                }));
 
           // Merge category/kitchen info from cart if API items don't have it
           if (receiptItems.length > 0 && cart.length > 0) {
@@ -836,6 +932,10 @@ export default function CreateOrderPage() {
               if (cartItem) {
                 return {
                   ...item,
+                  dish_name: item.dish_name || cartItem.name,
+                  name: item.name || cartItem.name,
+                  quantity: item.quantity || cartItem.quantity,
+                  qty: item.qty || item.quantity || cartItem.quantity,
                   category_id: item.category_id || cartItem.category_id,
                   kitchen_id: item.kitchen_id || cartItem.kitchen_id,
                   kitchen: item.kitchen || cartItem.kitchen,
@@ -845,6 +945,20 @@ export default function CreateOrderPage() {
               return item;
             });
           }
+
+          // Ensure items always have required fields
+          receiptItems = receiptItems.map(item => ({
+            dish_name: item.dish_name || item.name || 'Item',
+            name: item.name || item.dish_name || 'Item',
+            quantity: item.quantity || item.qty || 1,
+            qty: item.qty || item.quantity || 1,
+            price: item.price || 0,
+            dish_id: item.dish_id || item.id,
+            category_id: item.category_id,
+            kitchen_id: item.kitchen_id,
+            kitchen: item.kitchen,
+            category_name: item.category_name
+          }));
 
           setOrderReceipt({
             order: responseData.order || responseData,
@@ -1333,11 +1447,29 @@ export default function CreateOrderPage() {
                 >
                   {(() => {
                     const order = orderReceipt.order || orderReceipt || {};
-                    const items = orderReceipt.items || [];
+                    // Get items from orderReceipt, fallback to cart if empty
+                    let items = orderReceipt.items || [];
+                    
+                    // If items are empty, try to get from cart (for display purposes)
+                    if (items.length === 0 && cart.length > 0) {
+                      items = cart.map(cartItem => ({
+                        dish_name: cartItem.name,
+                        name: cartItem.name,
+                        quantity: cartItem.quantity,
+                        qty: cartItem.quantity,
+                        price: cartItem.price,
+                        dish_id: cartItem.dish_id
+                      }));
+                    }
+                    
                     const orderId = order.order_id || order.id || order.orderid || 'N/A';
                     const tableNumber = order.table_number || order.table || '';
                     const orderType = order.order_type || 'Dine In';
                     const createdAt = order.created_at || new Date().toLocaleString();
+                    
+                    console.log('KOT Receipt - Order:', order);
+                    console.log('KOT Receipt - Items:', items);
+                    console.log('KOT Receipt - Cart:', cart);
 
                     return (
                       <>
