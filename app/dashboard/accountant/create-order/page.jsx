@@ -430,21 +430,59 @@ export default function CreateOrderPage() {
     } catch (error) {
           console.error(`Exception caught while printing KOT for kitchen ${kitchenId}:`, error);
           // If error is thrown (unexpected), extract details
-          const errorMessage = error?.message || 
-                             error?.data?.message || 
-                             error?.data?.details || 
-                             'Unexpected error occurred';
-          const errorDetails = error?.data?.details || 
-                             error?.data?.error || 
-                             (error?.stack ? error.stack.substring(0, 200) : '');
-          const triedUrls = error?.data?.triedUrls || [];
+          // Safely extract error message - handle all possible error types
+          let errorMessage = 'Unexpected error occurred';
+          let errorDetails = '';
+          let triedUrls = [];
+          let endpoint = 'api/print_kitchen_receipt.php';
+          
+          // Handle different error types safely
+          if (error) {
+            if (typeof error === 'string') {
+              errorMessage = error;
+            } else if (error instanceof Error) {
+              errorMessage = error.message || error.toString() || 'Unexpected error occurred';
+              errorDetails = error.stack || '';
+            } else if (typeof error === 'object') {
+              errorMessage = error.message || 
+                           error.data?.message || 
+                           error.data?.details || 
+                           error.error ||
+                           error.toString() ||
+                           'Unexpected error occurred';
+              errorDetails = error.data?.details || 
+                           error.data?.error || 
+                           (error.data?.apiUrl ? `Tried: ${error.data.apiUrl}` : '') ||
+                           error.stack ||
+                           '';
+              triedUrls = error.data?.triedUrls || [];
+              endpoint = error.data?.endpoint || 'api/print_kitchen_receipt.php';
+            }
+          }
+          
+          // Ensure errorMessage is always a string
+          errorMessage = String(errorMessage || 'Unexpected error occurred');
+          
+          console.error(`KOT print exception for kitchen ${kitchenId}:`, {
+            error: errorMessage,
+            details: errorDetails,
+            endpoint: endpoint,
+            triedUrls: triedUrls,
+            fullError: error,
+            errorType: typeof error,
+            errorConstructor: error?.constructor?.name,
+            errorKeys: error && typeof error === 'object' ? Object.keys(error) : [],
+            errorString: String(error),
+            errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error))
+          });
           
           return { 
             kitchenId, 
             success: false, 
-            message: `Error: ${errorMessage}`,
+            message: errorMessage,
             details: errorDetails,
-            triedUrls: triedUrls
+            triedUrls: triedUrls,
+            endpoint: endpoint
           };
         }
       });
@@ -479,11 +517,12 @@ export default function CreateOrderPage() {
         }).join('; ');
         
         // Check if it's a CORS/network issue
-        const isNetworkError = failed.some(r => 
-          r.message?.includes('CORS') || 
-          r.message?.includes('Cannot connect') || 
-          r.message?.includes('Network')
-        );
+        const isNetworkError = failed.some(r => {
+          const message = r.message ? String(r.message) : '';
+          return message.includes('CORS') || 
+                 message.includes('Cannot connect') || 
+                 message.includes('Network');
+        });
         
         let fullMessage = `KOT printing failed for all kitchens. ${errorMessages}`;
         
@@ -505,9 +544,37 @@ export default function CreateOrderPage() {
       console.log('KOT Print Results:', { successful, failed });
     } catch (error) {
       console.error('Error printing KOT:', error);
+      
+      // Safely extract error message with detailed debugging
+      let errorMessage = 'Network error';
+      if (error) {
+        if (typeof error === 'string') {
+          errorMessage = error;
+        } else if (error instanceof Error) {
+          errorMessage = error.message || error.toString();
+        } else if (typeof error === 'object') {
+          errorMessage = error.message || 
+                        error.data?.message || 
+                        error.data?.details ||
+                        error.error ||
+                        error.toString() ||
+                        'Network error';
+        }
+      }
+      
+      // Log detailed error information for debugging
+      console.error('KOT Print Error Details:', {
+        error: error,
+        errorType: typeof error,
+        errorMessage: errorMessage,
+        errorConstructor: error?.constructor?.name,
+        errorStack: error?.stack,
+        errorJSON: error && typeof error === 'object' ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : String(error)
+      });
+      
       setAlert({ 
         type: 'error', 
-        message: 'Error printing KOT: ' + (error.message || 'Network error') 
+        message: `Error printing KOT: ${errorMessage}. Check console for detailed error information.` 
       });
     }
   }, [orderReceipt, categories]);
@@ -575,7 +642,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Halls (Create Order - Accountant) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_halls.php', { 
+      const result = await apiPost('api/get_halls.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for accountant
       });
@@ -664,7 +731,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Tables (Create Order - Accountant) ===');
       console.log('Params:', { terminal, branch_id: branchId, hall_id: selectedHall });
       
-      const result = await apiPost('/get_tables.php', { 
+      const result = await apiPost('api/get_tables.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for accountant
       });
@@ -753,7 +820,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Categories (Create Order - Accountant) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_categories.php', { 
+      const result = await apiPost('api/get_categories.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for accountant
       });
@@ -848,7 +915,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Products (Create Order - Accountant) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_products.php', { 
+      const result = await apiPost('api/get_products.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for accountant
       });
@@ -1010,7 +1077,7 @@ export default function CreateOrderPage() {
 
       // Use kitchen routing API for automatic kitchen assignment
       // Backend automatically prints kitchen receipts after order creation
-      const result = await apiPost('/create_order_with_kitchen.php', orderData);
+      const result = await apiPost('api/create_order_with_kitchen.php', orderData);
 
       // Handle response - check for empty response first
       if (!result.data) {
@@ -1104,7 +1171,7 @@ export default function CreateOrderPage() {
               const tableData = tables.find(t => (t.table_id || t.id) == selectedTable);
               
               console.log('🔄 Updating table status to Running for table:', selectedTable);
-              await apiPost('/table_management.php', {
+              await apiPost('api/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tableData?.table_number || tableData?.table_name || '',
@@ -1221,7 +1288,7 @@ export default function CreateOrderPage() {
               const tableData = tables.find(t => (t.table_id || t.id) == selectedTable);
               
               console.log('🔄 Updating table status to Running for table:', selectedTable);
-              await apiPost('/table_management.php', {
+              await apiPost('api/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tableData?.table_number || tableData?.table_name || '',
@@ -1263,7 +1330,45 @@ export default function CreateOrderPage() {
     } catch (error) {
       console.error('Error placing order:', error);
       setPrintingStatus(null);
-      setAlert({ type: 'error', message: 'Failed to place order: ' + (error.message || 'Network error') });
+      
+      // Safely extract error message with detailed debugging
+      let errorMessage = 'Network error';
+      if (error) {
+        if (typeof error === 'string') {
+          errorMessage = error;
+        } else if (error instanceof Error) {
+          errorMessage = error.message || error.toString();
+        } else if (typeof error === 'object') {
+          errorMessage = error.message || 
+                        error.data?.message || 
+                        error.data?.details ||
+                        error.error ||
+                        error.toString() ||
+                        'Network error';
+        }
+      }
+      
+      // Log detailed error information for debugging
+      console.error('Place Order Error Details:', {
+        error: error,
+        errorType: typeof error,
+        errorMessage: errorMessage,
+        errorConstructor: error?.constructor?.name,
+        errorStack: error?.stack,
+        errorJSON: error && typeof error === 'object' ? JSON.stringify(error, Object.getOwnPropertyNames(error)) : String(error),
+        orderData: {
+          orderType,
+          selectedHall,
+          selectedTable,
+          itemsCount: cart.length,
+          total: subtotal
+        }
+      });
+      
+      setAlert({ 
+        type: 'error', 
+        message: `Failed to place order: ${errorMessage}. Check console for detailed error information.` 
+      });
     } finally {
       setPlacing(false);
     }

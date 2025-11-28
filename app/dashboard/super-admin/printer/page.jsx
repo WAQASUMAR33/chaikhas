@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { Printer, TestTube } from 'lucide-react';
 
 export default function PrinterManagementPage() {
@@ -51,7 +51,7 @@ export default function PrinterManagementPage() {
       }
       
       console.log('Fetching printers with params:', params);
-      const result = await apiPost('/get_printers.php', params);
+      const result = await apiPost('api/get_printers.php', params);
       console.log('Printers API response:', result);
       
       let printersData = [];
@@ -112,6 +112,7 @@ export default function PrinterManagementPage() {
         status: printer.status || 'active',
         terminal: printer.terminal || terminal,
         branch_id: printer.branch_id || branchId,
+        branch_name: printer.branch_name || '',
       }));
       
       setPrinters(mappedPrinters);
@@ -156,6 +157,7 @@ export default function PrinterManagementPage() {
     try {
       const terminal = getTerminal();
       const branchId = getBranchId();
+      const branchName = getBranchName();
       
       // Ensure terminal is available
       if (!terminal) {
@@ -174,18 +176,22 @@ export default function PrinterManagementPage() {
         action: editingPrinter ? 'update' : 'create'
       };
       
-      // Always include branch_id if available
+      // Always include branch_id and branch_name if available
       if (branchId) {
         data.branch_id = branchId;
+      }
+      if (branchName) {
+        data.branch_name = branchName;
       }
 
       console.log('=== Saving Printer ===');
       console.log('Form data:', formData);
       console.log('Terminal:', terminal);
       console.log('Branch ID:', branchId);
+      console.log('Branch Name:', branchName);
       console.log('Payload being sent:', data);
       
-      const result = await apiPost('/printer_management.php', data);
+      const result = await apiPost('api/printer_management.php', data);
       
       console.log('=== Printer Save Result ===');
       console.log('Full result:', JSON.stringify(result, null, 2));
@@ -297,7 +303,7 @@ export default function PrinterManagementPage() {
     if (!confirm('Are you sure you want to delete this printer?')) return;
 
     try {
-      const result = await apiDelete('/printer_management.php', { printer_id: printerId });
+      const result = await apiDelete('api/printer_management.php', { printer_id: printerId });
 
       if (result.success && result.data && result.data.success) {
         setAlert({ type: 'success', message: result.data.message || 'Printer deleted successfully!' });
@@ -349,7 +355,7 @@ export default function PrinterManagementPage() {
       
       console.log('Testing printer with params:', params);
       console.log('Printer data:', printer);
-      const result = await apiPost('/printer_management.php', params);
+      const result = await apiPost('api/printer_management.php', params);
       console.log('Test printer result:', result);
       
       if (result.success && result.data) {
@@ -407,6 +413,11 @@ export default function PrinterManagementPage() {
       accessor: 'port',
       className: 'w-24',
       wrap: false,
+    },
+    { 
+      header: 'Branch', 
+      accessor: 'branch_name',
+      className: 'min-w-[150px]',
     },
     {
       header: 'Status',
@@ -534,6 +545,21 @@ export default function PrinterManagementPage() {
               placeholder="e.g., Receipt Printer 1"
               required
             />
+
+            {/* Display Branch Name (read-only, auto-populated) */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Branch Name
+              </label>
+              <input
+                type="text"
+                value={getBranchName() || 'Not set'}
+                disabled
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-500 bg-gray-50 cursor-not-allowed"
+                readOnly
+              />
+              <p className="text-xs text-gray-500 mt-1">This will be automatically saved with the printer</p>
+            </div>
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">

@@ -61,7 +61,7 @@ export default function CreateOrderPage() {
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_halls.php', { terminal });
+      const result = await apiPost('api/get_halls.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         setHalls(result.data);
       }
@@ -76,7 +76,7 @@ export default function CreateOrderPage() {
   const fetchTables = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_tables.php', { terminal });
+      const result = await apiPost('api/get_tables.php', { terminal });
       if (result.data && Array.isArray(result.data)) {
         // Filter tables by selected hall
         const filtered = result.data.filter(table => table.hall_id == selectedHall);
@@ -98,7 +98,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Categories (Create Order) ===');
       console.log('Params:', { terminal, branch_id: branchId || terminal });
       
-      const result = await apiPost('/get_categories.php', { 
+      const result = await apiPost('api/get_categories.php', { 
         terminal,
         branch_id: branchId || terminal
       });
@@ -164,7 +164,7 @@ export default function CreateOrderPage() {
     try {
       const terminal = getTerminal();
       const branchId = getBranchId();
-      const result = await apiPost('/get_products.php', { 
+      const result = await apiPost('api/get_products.php', { 
         terminal,
         branch_id: branchId || terminal
       });
@@ -275,7 +275,7 @@ export default function CreateOrderPage() {
       };
 
       // Use kitchen routing API for automatic kitchen assignment
-      const result = await apiPost('/create_order_with_kitchen.php', orderData);
+      const result = await apiPost('api/create_order_with_kitchen.php', orderData);
 
       // Handle response - check for empty response first
       if (!result.data) {
@@ -298,7 +298,7 @@ export default function CreateOrderPage() {
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
-              await apiPost('/table_management.php', {
+              await apiPost('api/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',
@@ -334,7 +334,7 @@ export default function CreateOrderPage() {
           // Update table status to "Running" for Dine In orders
           if (orderType === 'Dine In' && selectedTable) {
             try {
-              await apiPost('/table_management.php', {
+              await apiPost('api/table_management.php', {
                 table_id: parseInt(selectedTable),
                 hall_id: parseInt(selectedHall),
                 table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',

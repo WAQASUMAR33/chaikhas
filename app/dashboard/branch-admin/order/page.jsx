@@ -30,6 +30,7 @@ export default function OrderManagementPage() {
   const [dateFilter, setDateFilter] = useState('today'); // today, week, month, custom
   const [customDate, setCustomDate] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [searchOrderId, setSearchOrderId] = useState(''); // Search by order ID
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -254,7 +255,7 @@ export default function OrderManagementPage() {
       
       logger.info('Date filter applied', { dateFilter, fromDate, toDate });
       
-      const result = await apiPost('/getOrders.php', payload);
+      const result = await apiPost('api/getOrders.php', payload);
       
       // Handle multiple possible response structures
       let ordersData = [];
@@ -490,13 +491,13 @@ export default function OrderManagementPage() {
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
       // Fetch order details - send both order_id (numeric) and orderid (string) for flexibility
-      const orderResult = await apiPost('/get_ordersbyid.php', { 
+      const orderResult = await apiPost('api/get_ordersbyid.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
       
       // Fetch order items - send both order_id (numeric) and orderid (string) for flexibility
-      const itemsResult = await apiPost('/get_orderdetails.php', { 
+      const itemsResult = await apiPost('api/get_orderdetails.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
@@ -663,7 +664,7 @@ export default function OrderManagementPage() {
       let billData = null;
       if (orderIdParam) {
         try {
-          const billResult = await apiPost('/bills_management.php', { order_id: orderIdParam });
+          const billResult = await apiPost('api/bills_management.php', { order_id: orderIdParam });
           
           // Debug: Log bill fetch result
           console.log('=== Bill Fetch Result ===');
@@ -1090,7 +1091,7 @@ export default function OrderManagementPage() {
         payload.orderid = orderidValue;
       }
       
-      const result = await apiPost('/chnageorder_status.php', payload);
+      const result = await apiPost('api/chnageorder_status.php', payload);
 
       // Check response - API can return success in different formats
       const apiResponse = result.data;
@@ -1107,7 +1108,7 @@ export default function OrderManagementPage() {
             // Fetch current table details first
             const terminal = getTerminal();
             const branchId = getBranchId();
-            const tablesResult = await apiPost('/get_tables.php', { 
+            const tablesResult = await apiPost('api/get_tables.php', { 
               terminal,
               branch_id: branchId || terminal
             });
@@ -1116,7 +1117,7 @@ export default function OrderManagementPage() {
               if (table) {
                 // Update table status to Available
                 console.log('Updating table status to Available for table:', tableId);
-                const updateResult = await apiPost('/table_management.php', {
+                const updateResult = await apiPost('api/table_management.php', {
                   table_id: parseInt(tableId),
                   hall_id: table.hall_id,
                   table_number: table.table_number,
@@ -1142,7 +1143,7 @@ export default function OrderManagementPage() {
           try {
             const terminal = getTerminal();
             const branchId = getBranchId();
-            const tablesResult = await apiPost('/get_tables.php', { 
+            const tablesResult = await apiPost('api/get_tables.php', { 
               terminal,
               branch_id: branchId || terminal
             });
@@ -1193,19 +1194,70 @@ export default function OrderManagementPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiGet('/get_products.php', { terminal });
-      if (result.data && Array.isArray(result.data)) {
-        setDishes(result.data.map(item => ({
-          dish_id: item.dish_id,
-          name: item.name,
-          price: parseFloat(item.price || 0),
-          category_id: item.category_id,
-          category_name: item.catname || '',
-          is_available: item.is_available || 1,
-        })));
+      const branchId = getBranchId();
+      
+      console.log('=== Fetching Dishes for Edit Modal ===');
+      console.log('Terminal:', terminal);
+      console.log('Branch ID:', branchId);
+      
+      const params = { terminal };
+      if (branchId) {
+        params.branch_id = branchId;
       }
+      
+      const result = await apiPost('api/get_products.php', params);
+      
+      console.log('Dishes API response:', result);
+      
+      let dishesData = [];
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          dishesData = result.data;
+          console.log('Found dishes in result.data (array):', dishesData.length);
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          dishesData = result.data.data;
+          console.log('Found dishes in result.data.data:', dishesData.length);
+        } else if (result.data.products && Array.isArray(result.data.products)) {
+          dishesData = result.data.products;
+          console.log('Found dishes in result.data.products:', dishesData.length);
+        } else if (typeof result.data === 'object') {
+          // Try to find any array in the response
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              dishesData = result.data[key];
+              console.log(`Found dishes in result.data.${key}:`, dishesData.length);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (dishesData.length === 0) {
+        console.warn('⚠️ No dishes found in API response');
+      } else {
+        console.log('✅ Found', dishesData.length, 'dishes');
+      }
+      
+      const mappedDishes = dishesData.map(item => ({
+        dish_id: item.dish_id || item.id || item.product_id,
+        name: item.name || item.dish_name || item.title || item.product_name || 'Item',
+        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+        category_id: item.category_id || item.cat_id || null,
+        category_name: item.catname || item.category_name || item.cat_name || '',
+        is_available: item.is_available || item.is_available === 1 || 1,
+        kitchen_id: item.kitchen_id || null,
+      }));
+      
+      setDishes(mappedDishes);
+      console.log('✅ Dishes mapped and set:', mappedDishes.length);
     } catch (error) {
       console.error('Error fetching dishes:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        error: error
+      });
+      setAlert({ type: 'error', message: 'Failed to load dishes: ' + (error?.message || 'Network error') });
     }
   };
 
@@ -1215,12 +1267,60 @@ export default function OrderManagementPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiGet('/get_categories.php', { terminal });
-      if (result.data && Array.isArray(result.data)) {
-        setCategories(result.data);
+      const branchId = getBranchId();
+      
+      console.log('=== Fetching Categories for Edit Modal ===');
+      console.log('Terminal:', terminal);
+      console.log('Branch ID:', branchId);
+      
+      const params = { terminal };
+      if (branchId) {
+        params.branch_id = branchId;
       }
+      
+      const result = await apiPost('api/get_categories.php', params);
+      
+      console.log('Categories API response:', result);
+      
+      let categoriesData = [];
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          categoriesData = result.data;
+          console.log('Found categories in result.data (array):', categoriesData.length);
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          categoriesData = result.data.data;
+          console.log('Found categories in result.data.data:', categoriesData.length);
+        } else if (result.data.categories && Array.isArray(result.data.categories)) {
+          categoriesData = result.data.categories;
+          console.log('Found categories in result.data.categories:', categoriesData.length);
+        } else if (typeof result.data === 'object') {
+          // Try to find any array in the response
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              categoriesData = result.data[key];
+              console.log(`Found categories in result.data.${key}:`, categoriesData.length);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (categoriesData.length === 0) {
+        console.warn('⚠️ No categories found in API response');
+      } else {
+        console.log('✅ Found', categoriesData.length, 'categories');
+      }
+      
+      setCategories(categoriesData);
+      console.log('✅ Categories set:', categoriesData.length);
     } catch (error) {
       console.error('Error fetching categories:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        error: error
+      });
+      setAlert({ type: 'error', message: 'Failed to load categories: ' + (error?.message || 'Network error') });
     }
   };
 
@@ -1248,19 +1348,24 @@ export default function OrderManagementPage() {
       console.log('Order Number:', orderNumber);
       
       // Fetch order details and items
-      const orderResult = await apiPost('/get_ordersbyid.php', { 
+      const orderResult = await apiPost('api/get_ordersbyid.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
       
-      console.log('Order details API response:', orderResult);
+      console.log('=== Order Details API Response ===');
+      console.log('Order details API response:', JSON.stringify(orderResult, null, 2));
       
-      const itemsResult = await apiPost('/get_orderdetails.php', { 
+      const itemsResult = await apiPost('api/get_orderdetails.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
       
-      console.log('Order items API response:', itemsResult);
+      console.log('=== Order Items API Response ===');
+      console.log('Order items API response:', JSON.stringify(itemsResult, null, 2));
+      console.log('Items result success:', itemsResult.success);
+      console.log('Items result data:', itemsResult.data);
+      console.log('Items result data type:', typeof itemsResult.data);
       
       // Handle multiple response structures for order data
       let orderData = null;
@@ -1287,32 +1392,54 @@ export default function OrderManagementPage() {
       if (itemsResult.success && itemsResult.data) {
         if (Array.isArray(itemsResult.data)) {
           orderItems = itemsResult.data;
-          console.log('Found items in result.data (array):', orderItems.length);
+          console.log('✅ Found items in result.data (array):', orderItems.length);
         } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
           orderItems = itemsResult.data.data;
-          console.log('Found items in result.data.data:', orderItems.length);
+          console.log('✅ Found items in result.data.data:', orderItems.length);
         } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
           orderItems = itemsResult.data.items;
-          console.log('Found items in result.data.items:', orderItems.length);
+          console.log('✅ Found items in result.data.items:', orderItems.length);
         } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
           orderItems = itemsResult.data.order_items;
-          console.log('Found items in result.data.order_items:', orderItems.length);
+          console.log('✅ Found items in result.data.order_items:', orderItems.length);
+        } else if (itemsResult.data.orderdetails && Array.isArray(itemsResult.data.orderdetails)) {
+          orderItems = itemsResult.data.orderdetails;
+          console.log('✅ Found items in result.data.orderdetails:', orderItems.length);
         } else if (typeof itemsResult.data === 'object') {
           // Try to find any array in the response
+          console.log('🔍 Searching for items array in response object...');
+          console.log('Response keys:', Object.keys(itemsResult.data));
           for (const key in itemsResult.data) {
             if (Array.isArray(itemsResult.data[key])) {
               orderItems = itemsResult.data[key];
-              console.log(`Found items in result.data.${key}:`, orderItems.length);
+              console.log(`✅ Found items in result.data.${key}:`, orderItems.length);
+              console.log('Sample item from array:', orderItems[0]);
               break;
             }
           }
+        }
+      } else {
+        console.error('❌ Items API call failed or returned no data');
+        console.error('Items result:', itemsResult);
+        if (!itemsResult.success) {
+          console.error('API call was not successful');
+        }
+        if (!itemsResult.data) {
+          console.error('No data in response');
         }
       }
       
       if (orderItems.length === 0) {
         console.warn('⚠️ No order items found in API response for edit');
+        console.warn('Full items result:', JSON.stringify(itemsResult, null, 2));
+        // Try to show user-friendly error
+        setAlert({ 
+          type: 'error', 
+          message: 'No order items found. The order may not have any items, or there was an error fetching them. Check console for details.' 
+        });
       } else {
         console.log('✅ Found', orderItems.length, 'order items for editing');
+        console.log('First item sample:', JSON.stringify(orderItems[0], null, 2));
       }
       
       // Merge order data with the order from list to ensure all fields are present
@@ -1340,38 +1467,71 @@ export default function OrderManagementPage() {
       };
       
       // Format order items with all required fields
-      const formattedItems = orderItems.map(item => ({
-        dish_id: item.dish_id || item.id || item.product_id,
-        name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-        price: parseFloat(item.price || item.rate || item.unit_price || 0),
-        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
-        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-        category_id: item.category_id || item.cat_id || null,
-        kitchen_id: item.kitchen_id || null,
-      }));
+      const formattedItems = orderItems.map((item, index) => {
+        const dishId = item.dish_id || item.id || item.product_id || item.dishid;
+        const name = item.dish_name || item.name || item.title || item.item_name || item.dishname || 'Item';
+        const price = parseFloat(item.price || item.rate || item.unit_price || item.amount || 0);
+        const quantity = parseInt(item.quantity || item.qty || item.qnty || item.qty || 1);
+        const totalAmount = parseFloat(item.total_amount || item.total || item.total_price || item.amount || (price * quantity));
+        
+        const formattedItem = {
+          dish_id: dishId,
+          name: name,
+          dish_name: name,
+          price: price,
+          quantity: quantity,
+          qty: quantity,
+          total: totalAmount,
+          total_amount: totalAmount,
+          category_id: item.category_id || item.cat_id || item.categoryid || null,
+          kitchen_id: item.kitchen_id || item.kitchenid || null,
+        };
+        
+        console.log(`Item ${index + 1}:`, {
+          original: item,
+          formatted: formattedItem
+        });
+        
+        return formattedItem;
+      });
       
       console.log('✅ Formatted items for edit:', formattedItems.length);
-      console.log('Sample item:', formattedItems[0]);
+      if (formattedItems.length > 0) {
+        console.log('Sample formatted item:', JSON.stringify(formattedItems[0], null, 2));
+      }
       
       setEditingOrder(mergedOrderData);
       
-      setFormData({
+      console.log('=== Setting Form Data ===');
+      console.log('Formatted items count:', formattedItems.length);
+      console.log('Formatted items:', JSON.stringify(formattedItems, null, 2));
+      
+      const newFormData = {
         status: mergedOrderData.order_status || mergedOrderData.status || 'Pending',
         table_id: mergedOrderData.table_id || '',
         discount: mergedOrderData.discount_amount || mergedOrderData.discount || 0,
         items: formattedItems,
-      });
+      };
+      
+      console.log('New formData:', JSON.stringify(newFormData, null, 2));
+      console.log('Items in newFormData:', newFormData.items.length);
+      
+      setFormData(newFormData);
       setSelectedCategory('');
       setEditModalOpen(true);
+      
+      // Verify formData was set correctly
+      setTimeout(() => {
+        console.log('=== Verifying Form Data After Set ===');
+        console.log('formData.items.length:', formData.items.length);
+      }, 100);
       
       console.log('✅ Edit modal opened with order data:', {
         order_id: mergedOrderData.order_id,
         items_count: formattedItems.length,
         table_id: mergedOrderData.table_id,
-        status: mergedOrderData.order_status
+        status: mergedOrderData.order_status,
+        formData_items_count: newFormData.items.length
       });
     } catch (error) {
       console.error('Error fetching order details for edit:', error);
@@ -1493,7 +1653,7 @@ export default function OrderManagementPage() {
       };
 
       // Update order first
-      const orderResult = await apiPost('/order_management.php', orderData);
+      const orderResult = await apiPost('api/order_management.php', orderData);
 
       if (!orderResult.success || !orderResult.data || !orderResult.data.success) {
         setAlert({ type: 'error', message: orderResult.data?.message || 'Failed to update order details' });
@@ -1515,7 +1675,7 @@ export default function OrderManagementPage() {
       }));
 
       // Update order items using upload_orderdetails.php
-      const itemsResult = await apiPost('/upload_orderdetails.php', {
+      const itemsResult = await apiPost('api/upload_orderdetails.php', {
         order_id: orderId,
         items: itemsData,
         delete_existing: true, // Flag to delete existing items first
@@ -1559,7 +1719,7 @@ export default function OrderManagementPage() {
     if (!confirm('Are you sure you want to delete this order? This action cannot be undone.')) return;
 
     try {
-      const result = await apiDelete('/order_management.php', {
+      const result = await apiDelete('api/order_management.php', {
         order_id: orderId || orderNumber,
         orderid: orderNumber || orderId,
       });
@@ -1620,7 +1780,7 @@ export default function OrderManagementPage() {
         console.log('Order ID:', generatedBill.order_id);
         
         try {
-          const billFetchResult = await apiPost('/bills_management.php', { 
+          const billFetchResult = await apiPost('api/bills_management.php', { 
             order_id: generatedBill.order_id 
           });
           
@@ -1694,7 +1854,7 @@ export default function OrderManagementPage() {
       console.log('=== Bill Update Payload ===');
       console.log('Payload:', JSON.stringify(billUpdatePayload, null, 2));
 
-      const billUpdateResult = await apiPost('/bills_management.php', billUpdatePayload);
+      const billUpdateResult = await apiPost('api/bills_management.php', billUpdatePayload);
       
       console.log('=== Bill Update Full Response ===');
       console.log('Success:', billUpdateResult.success);
@@ -1758,7 +1918,7 @@ export default function OrderManagementPage() {
       let orderUpdateSuccess = false;
       let orderUpdateError = null;
       try {
-        const orderStatusResult = await apiPost('/chnageorder_status.php', orderStatusPayload);
+        const orderStatusResult = await apiPost('api/chnageorder_status.php', orderStatusPayload);
         
         console.log('=== Order Status Update Result ===');
         console.log('Result:', JSON.stringify(orderStatusResult, null, 2));
@@ -1936,7 +2096,7 @@ export default function OrderManagementPage() {
             const branchId = getBranchId();
             
             try {
-              const tablesResult = await apiPost('/get_tables.php', { 
+              const tablesResult = await apiPost('api/get_tables.php', { 
                 terminal,
                 branch_id: branchId || terminal
               });
@@ -1952,7 +2112,7 @@ export default function OrderManagementPage() {
                 const table = tablesData.find(t => (t.table_id || t.id) == order.table_id);
                 if (table && (table.status || table.Status || '').toLowerCase() !== 'available') {
                   console.log(`🔄 Auto-updating table ${order.table_id} to Available (order ${order.orderid} is complete)`);
-                  await apiPost('/table_management.php', {
+                  await apiPost('api/table_management.php', {
                     table_id: parseInt(order.table_id),
                     hall_id: table.hall_id || table.hall_ID,
                     table_number: table.table_number || table.table_name || table.number,
@@ -2068,7 +2228,7 @@ export default function OrderManagementPage() {
       
       // Call backend API to print directly to network printers
       // Backend will handle printing to two default printers based on category
-      const printResult = await apiPost('/print_receipt_direct.php', {
+      const printResult = await apiPost('api/print_receipt_direct.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
         receipt_content: receiptHTML,
@@ -2107,7 +2267,7 @@ export default function OrderManagementPage() {
                 orderid: orderidValue
               };
               
-              await apiPost('/chnageorder_status.php', statusPayload);
+              await apiPost('api/chnageorder_status.php', statusPayload);
               fetchOrders(); // Refresh orders list
             } catch (error) {
               console.error('Error updating order status on print:', error);
@@ -2386,13 +2546,34 @@ export default function OrderManagementPage() {
     );
   };
 
-  const filteredOrders = filter === 'all' 
-    ? orders 
-    : orders.filter(order => {
-        const orderStatus = (order.status || '').toLowerCase().trim();
-        const filterStatus = filter.toLowerCase().trim();
-        return orderStatus === filterStatus;
-      });
+  // Filter orders by status and search order ID
+  const filteredOrders = orders.filter(order => {
+    // Filter by status
+    if (filter !== 'all') {
+      const orderStatus = (order.status || '').toLowerCase().trim();
+      const filterStatus = filter.toLowerCase().trim();
+      if (orderStatus !== filterStatus) {
+        return false;
+      }
+    }
+    
+    // Filter by search order ID if provided
+    if (searchOrderId && searchOrderId.trim()) {
+      const searchTerm = searchOrderId.trim().toLowerCase();
+      const orderId = String(order.order_id || order.id || '').toLowerCase();
+      const orderNumber = String(order.orderid || order.order_number || '').toLowerCase();
+      const orderIdFormatted = orderNumber.replace(/ord-?/i, ''); // Remove ORD- prefix for matching
+      
+      // Match exact order ID, order number, or order number without prefix
+      if (!orderId.includes(searchTerm) && 
+          !orderNumber.includes(searchTerm) && 
+          !orderIdFormatted.includes(searchTerm)) {
+        return false;
+      }
+    }
+    
+    return true;
+  });
 
   // Debug: Log filtered orders
   useEffect(() => {
@@ -2435,6 +2616,37 @@ export default function OrderManagementPage() {
             onClose={() => setAlert({ type: '', message: '' })}
           />
         )}
+
+        {/* Search Bar */}
+        <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <Input
+                label="Search Order by ID"
+                name="searchOrderId"
+                value={searchOrderId}
+                onChange={(e) => setSearchOrderId(e.target.value)}
+                placeholder="Enter Order ID or Order Number (e.g., 123 or ORD-123)"
+                className="w-full"
+              />
+            </div>
+            {searchOrderId && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setSearchOrderId('')}
+                className="mt-6"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          {searchOrderId && (
+            <p className="text-sm text-gray-600 mt-2">
+              Showing {filteredOrders.length} order(s) matching "{searchOrderId}"
+            </p>
+          )}
+        </div>
 
         {/* Filter Buttons */}
         <div className="space-y-4">
@@ -2880,7 +3092,7 @@ export default function OrderManagementPage() {
                           console.log('=== Fetching Bill for Payment ===');
                           console.log('Order ID:', orderDetails.order_id || orderDetails.id);
                           
-                          const billFetchResult = await apiPost('/bills_management.php', { 
+                          const billFetchResult = await apiPost('api/bills_management.php', { 
                             order_id: orderDetails.order_id || orderDetails.id 
                           });
                           
@@ -3002,7 +3214,7 @@ export default function OrderManagementPage() {
                           const orderId = orderDetails.order_id || orderDetails.id;
                           const orderNumber = orderDetails.orderid || orderDetails.order_number || (orderId ? `ORD-${orderId}` : '');
                           
-                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                          const itemsResult = await apiPost('api/get_orderdetails.php', { 
                             order_id: orderId,
                             orderid: orderNumber
                           });
@@ -3259,7 +3471,7 @@ export default function OrderManagementPage() {
                       // Log the payload being sent
                       console.log('Bill payload being sent:', billPayload);
                       
-                      const result = await apiPost('/bills_management.php', billPayload);
+                      const result = await apiPost('api/bills_management.php', billPayload);
                       
                       // Debug: Log the complete result
                       console.log('=== Bill Generation Result ===');
@@ -3354,7 +3566,7 @@ export default function OrderManagementPage() {
                           console.log('Order ID:', orderId);
                           console.log('Order Number:', orderNumber);
                           
-                          const itemsResult = await apiPost('/get_orderdetails.php', { 
+                          const itemsResult = await apiPost('api/get_orderdetails.php', { 
                             order_id: orderId,
                             orderid: orderNumber
                           });
@@ -3478,7 +3690,7 @@ export default function OrderManagementPage() {
                             order_id: orderIdValue,
                             orderid: orderidValue
                           };
-                          await apiPost('/chnageorder_status.php', statusPayload);
+                          await apiPost('api/chnageorder_status.php', statusPayload);
                         } catch (error) {
                           console.error('Error updating order status:', error);
                           // Continue even if status update fails

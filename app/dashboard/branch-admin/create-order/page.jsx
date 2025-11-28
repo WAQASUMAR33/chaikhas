@@ -90,7 +90,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Halls (Create Order - Branch Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_halls.php', { 
+      const result = await apiPost('api/get_halls.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
@@ -179,7 +179,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Tables (Create Order - Branch Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId, hall_id: selectedHall });
       
-      const result = await apiPost('/get_tables.php', { 
+      const result = await apiPost('api/get_tables.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
@@ -269,7 +269,7 @@ export default function CreateOrderPage() {
       console.log('Params:', { terminal, branch_id: branchId });
       
       // Branch-admin: Only fetch categories for their branch
-      const result = await apiPost('/get_categories.php', { 
+      const result = await apiPost('api/get_categories.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
@@ -416,7 +416,7 @@ export default function CreateOrderPage() {
       console.log('=== Fetching Dishes (Create Order - Branch Admin) ===');
       console.log('Params:', { terminal, branch_id: branchId });
       
-      const result = await apiPost('/get_products.php', { 
+      const result = await apiPost('api/get_products.php', { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       });
@@ -644,7 +644,7 @@ export default function CreateOrderPage() {
       });
       
       // Use kitchen routing API for automatic kitchen assignment
-      const result = await apiPost('/create_order_with_kitchen.php', orderData);
+      const result = await apiPost('api/create_order_with_kitchen.php', orderData);
 
       console.log('🔍 Create Order API Response:', JSON.stringify(result, null, 2));
       console.log('🔍 result.success:', result.success);
@@ -800,7 +800,7 @@ export default function CreateOrderPage() {
           const terminal = getTerminal();
           const branchId = getBranchId();
           logger.info('Updating table status to Running', { table_id: selectedTable, hall_id: selectedHall });
-          const tableUpdateResult = await apiPost('/table_management.php', {
+          const tableUpdateResult = await apiPost('api/table_management.php', {
             table_id: parseInt(selectedTable),
             hall_id: parseInt(selectedHall),
             table_number: tables.find(t => t.table_id == selectedTable)?.table_number || '',

@@ -297,11 +297,12 @@ export default function SalesListPage() {
       });
       
       // Provide more specific error messages
+      const errorMessageStr = error.message ? String(error.message) : '';
       let errorMessage = error.message || 'Network error';
       
-      if (error.message?.includes('Failed to fetch') || error.name === 'TypeError') {
+      if (errorMessageStr.includes('Failed to fetch') || error.name === 'TypeError') {
         errorMessage = 'Cannot connect to the API server. Please check: 1) The API endpoint exists (pos/get_sales.php), 2) The server is running, 3) CORS headers are configured correctly.';
-      } else if (error.message?.includes('CORS')) {
+      } else if (errorMessageStr.includes('CORS')) {
         errorMessage = 'CORS Error: The API server is blocking the request. Please add CORS headers to pos/get_sales.php.';
       }
       
