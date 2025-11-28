@@ -16,6 +16,7 @@ import Modal from '@/components/ui/Modal';
 import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
+import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -59,7 +60,26 @@ export default function OrderManagementPage() {
     fetchOrders();
     // Auto-refresh every 30 seconds to show new orders
     const interval = setInterval(fetchOrders, 30000);
-    return () => clearInterval(interval);
+    
+    // Listen for updates from other dashboard instances
+    const cleanup = listenForUpdates((event) => {
+      console.log('📥 Received dashboard update:', event);
+      if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
+          event.type === UPDATE_EVENTS.ORDER_UPDATED || 
+          event.type === UPDATE_EVENTS.ORDER_DELETED ||
+          event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
+          event.type === UPDATE_EVENTS.BILL_CREATED ||
+          event.type === UPDATE_EVENTS.BILL_UPDATED ||
+          event.type === UPDATE_EVENTS.BILL_PAID) {
+        // Refresh orders when any order/bill is updated
+        fetchOrders();
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      cleanup();
+    };
   }, [filter, selectedBranchFilter]);
 
   /**

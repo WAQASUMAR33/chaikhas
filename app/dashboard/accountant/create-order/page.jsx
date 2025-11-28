@@ -15,6 +15,7 @@ import Alert from '@/components/ui/Alert';
 import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { ShoppingCart, Plus, Minus, X, Receipt, Check } from 'lucide-react';
+import { broadcastUpdate, UPDATE_EVENTS } from '@/utils/dashboardSync';
 
 export default function CreateOrderPage() {
   const [halls, setHalls] = useState([]);
@@ -168,8 +169,9 @@ export default function CreateOrderPage() {
           console.log(`Printing KOT to kitchen ${kitchenId} for order ${orderId}`);
           console.log('Print parameters:', { order_id: orderId, kitchen_id: kitchenId, branch_id: branchId, terminal });
           
-          // Use api/print_kitchen_receipt.php (user's API is in /api/ folder)
-          const result = await apiPost('api/print_kitchen_receipt.php', {
+          // Note: create_order_with_kitchen.php auto-prints KOT, but we can manually print if needed
+          // Use /print_kitchen_receipt.php (api.js handles the path)
+          const result = await apiPost('/print_kitchen_receipt.php', {
             order_id: orderId,
             kitchen_id: kitchenId,
             branch_id: branchId,
@@ -189,7 +191,7 @@ export default function CreateOrderPage() {
                                result?.data?.error || 
                                (result?.data?.apiUrl ? `Tried: ${result.data.apiUrl}` : '');
             const triedUrls = result?.data?.triedUrls || [];
-            const endpoint = result?.data?.endpoint || 'api/print_kitchen_receipt.php';
+            const endpoint = result?.data?.endpoint || '/print_kitchen_receipt.php';
             
             console.error(`KOT print failed for kitchen ${kitchenId}:`, {
               error: errorMsg,
@@ -487,7 +489,7 @@ export default function CreateOrderPage() {
         
         if (isNetworkError) {
           fullMessage += '\n\nPossible solutions:\n';
-          fullMessage += '1. Check if the API endpoint exists: api/print_kitchen_receipt.php\n';
+          fullMessage += '1. Check if the API endpoint exists: /print_kitchen_receipt.php\n';
           fullMessage += '2. Verify CORS headers are enabled on the server\n';
           fullMessage += '3. Check server logs for errors\n';
           fullMessage += '4. Ensure the kitchen printer is configured correctly';
@@ -1126,6 +1128,12 @@ export default function CreateOrderPage() {
           setSelectedTable('');
           setComments('');
           setAlert({ type: 'success', message: result.data.message || 'Order placed successfully! Kitchen receipts are being printed automatically.' });
+          // Broadcast update to other dashboard instances
+          if (result.data.order_id) {
+            broadcastUpdate(UPDATE_EVENTS.ORDER_CREATED, { 
+              order_id: result.data.order_id 
+            });
+          }
         } else if (result.data.success === false) {
           // API returned an error
           setPrintingStatus(null);
@@ -1237,6 +1245,16 @@ export default function CreateOrderPage() {
           setSelectedTable('');
           setComments('');
           setAlert({ type: 'success', message: 'Order placed successfully! Kitchen receipts are being printed automatically.' });
+          // Broadcast update to other dashboard instances
+          if (result.data && result.data.order_id) {
+            broadcastUpdate(UPDATE_EVENTS.ORDER_CREATED, { 
+              order_id: result.data.order_id 
+            });
+          } else if (responseData && responseData.order_id) {
+            broadcastUpdate(UPDATE_EVENTS.ORDER_CREATED, { 
+              order_id: responseData.order_id 
+            });
+          }
         }
       } else {
         setPrintingStatus(null);

@@ -17,6 +17,7 @@ import { apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/u
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 import ThermalReceipt from '@/components/receipt/ThermalReceipt';
+import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -58,7 +59,26 @@ export default function OrderManagementPage() {
     fetchOrders();
     // Auto-refresh every 30 seconds to show new orders
     const interval = setInterval(fetchOrders, 30000);
-    return () => clearInterval(interval);
+    
+    // Listen for updates from other dashboard instances
+    const cleanup = listenForUpdates((event) => {
+      console.log('📥 Received dashboard update:', event);
+      if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
+          event.type === UPDATE_EVENTS.ORDER_UPDATED || 
+          event.type === UPDATE_EVENTS.ORDER_DELETED ||
+          event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
+          event.type === UPDATE_EVENTS.BILL_CREATED ||
+          event.type === UPDATE_EVENTS.BILL_UPDATED ||
+          event.type === UPDATE_EVENTS.BILL_PAID) {
+        // Refresh orders when any order/bill is updated
+        fetchOrders();
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      cleanup();
+    };
   }, [filter]);
 
   // Initialize bill data when bill modal opens (no auto-calculation)
@@ -354,15 +374,29 @@ export default function OrderManagementPage() {
           
           if (billResult.success && billResult.data) {
             // Handle different response structures
+            let billResponseData = null;
             if (billResult.data.success === true && billResult.data.data) {
-              // Response: { success: true, data: { bill: {...}, bill_id: 123 } }
-              billData = billResult.data.data.bill || billResult.data.data;
+              // Response: { success: true, data: { bill: {...}, bill_id: 123, order_items: [...] } }
+              billResponseData = billResult.data.data;
+              billData = billResponseData.bill || billResponseData;
             } else if (billResult.data.bill) {
-              // Response: { success: true, bill: {...} }
+              // Response: { success: true, bill: {...}, order_items: [...] }
+              billResponseData = billResult.data;
               billData = billResult.data.bill;
             } else if (billResult.data.bill_id || billResult.data.order_id) {
-              // Response: { success: true, bill_id: 123, ... } (bill object itself)
+              // Response: { success: true, bill_id: 123, order_items: [...], ... } (bill object itself)
+              billResponseData = billResult.data;
               billData = billResult.data;
+            }
+            
+            // Extract order_items from bill response if available (NEW: bills_management.php now returns order_items)
+            if (billResponseData && billResponseData.order_items && Array.isArray(billResponseData.order_items)) {
+              console.log('✅ Found order_items in bill response:', billResponseData.order_items.length);
+              // Store items from bill response - they're already fetched, no need to call get_orderdetails.php again
+              if (billResponseData.order_items.length > 0) {
+                itemsData = billResponseData.order_items;
+                console.log('Using order_items from bill response instead of separate API call');
+              }
             }
             
             // Ensure payment_status is set (default to 'Unpaid' if not present)
@@ -451,6 +485,11 @@ export default function OrderManagementPage() {
 
       if (isSuccess) {
         setAlert({ type: 'success', message: apiResponse.message || 'Order status updated successfully!' });
+        // Broadcast update to other dashboard instances
+        broadcastUpdate(UPDATE_EVENTS.ORDER_STATUS_CHANGED, { 
+          order_id: orderId,
+          status: newStatus 
+        });
         fetchOrders(); // Refresh list
       } else {
         setAlert({ type: 'error', message: apiResponse?.message || result.message || 'Failed to update order status' });
@@ -702,6 +741,10 @@ export default function OrderManagementPage() {
 
       if (itemsResult.success) {
         setAlert({ type: 'success', message: 'Order updated successfully with all items!' });
+        // Broadcast update to other dashboard instances
+        broadcastUpdate(UPDATE_EVENTS.ORDER_UPDATED, { 
+          order_id: editingOrder.order_id || editingOrder.id 
+        });
         setEditModalOpen(false);
         setEditingOrder(null);
         setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
@@ -710,6 +753,10 @@ export default function OrderManagementPage() {
       } else {
         // Even if items update fails, order was updated
         setAlert({ type: 'warning', message: 'Order details updated, but there was an issue updating items. Please check manually.' });
+        // Broadcast update anyway
+        broadcastUpdate(UPDATE_EVENTS.ORDER_UPDATED, { 
+          order_id: editingOrder.order_id || editingOrder.id 
+        });
         setEditModalOpen(false);
         setEditingOrder(null);
         setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
@@ -745,6 +792,10 @@ export default function OrderManagementPage() {
 
       if (result.success && result.data && result.data.success) {
         setAlert({ type: 'success', message: result.data.message || 'Order deleted successfully!' });
+        // Broadcast update to other dashboard instances
+        broadcastUpdate(UPDATE_EVENTS.ORDER_DELETED, { 
+          order_id: orderId 
+        });
         fetchOrders(); // Refresh list
       } else {
         setAlert({ type: 'error', message: result.data?.message || 'Failed to delete order' });
@@ -1220,8 +1271,8 @@ export default function OrderManagementPage() {
           console.log(`Printing KOT to kitchen ${kitchenId} for order ${orderId}`);
           console.log('Print parameters:', { order_id: orderId, kitchen_id: kitchenId, branch_id: branchId, terminal });
           
-          // Use api/print_kitchen_receipt.php (user's API is in /api/ folder)
-          const result = await apiPost('api/print_kitchen_receipt.php', {
+          // Use /print_kitchen_receipt.php (api.js handles the path)
+          const result = await apiPost('/print_kitchen_receipt.php', {
             order_id: orderId,
             kitchen_id: kitchenId,
             branch_id: branchId,
@@ -1434,7 +1485,7 @@ export default function OrderManagementPage() {
         
         if (isNetworkError) {
           fullMessage += '\n\nPossible solutions:\n';
-          fullMessage += '1. Check if the API endpoint exists: api/print_kitchen_receipt.php\n';
+          fullMessage += '1. Check if the API endpoint exists: /print_kitchen_receipt.php\n';
           fullMessage += '2. Verify CORS headers are enabled on the server\n';
           fullMessage += '3. Check server logs for errors\n';
           fullMessage += '4. Ensure the kitchen printer is configured correctly';
@@ -1481,14 +1532,80 @@ export default function OrderManagementPage() {
       return;
     }
     
-    // Validate that items are present
-    const items = generatedBill.items || [];
+    // Validate that items are present - if not, try to fetch them
+    let items = generatedBill.items || [];
+    
+    // If items are missing, try to fetch them from the order
     if (!items || items.length === 0) {
-      console.error('❌ Cannot print: No items in generated bill');
+      console.warn('⚠️ No items in generatedBill, attempting to fetch from order...');
+      
+      if (generatedBill.order_id) {
+        try {
+          const orderId = generatedBill.order_id;
+          const orderNumber = generatedBill.order_number || `ORD-${orderId}`;
+          
+          console.log('Fetching items for print receipt, Order ID:', orderId);
+          
+          const itemsResult = await apiPost('/get_orderdetails.php', { 
+            order_id: orderId,
+            orderid: orderNumber
+          });
+          
+          // Extract items from response
+          if (itemsResult.success && itemsResult.data) {
+            if (Array.isArray(itemsResult.data)) {
+              items = itemsResult.data;
+            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+              items = itemsResult.data.data;
+            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+              items = itemsResult.data.items;
+            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+              items = itemsResult.data.order_items;
+            } else if (typeof itemsResult.data === 'object') {
+              for (const key in itemsResult.data) {
+                if (Array.isArray(itemsResult.data[key])) {
+                  items = itemsResult.data[key];
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Format items if fetched
+          if (items && items.length > 0) {
+            items = items.map(item => ({
+              dish_id: item.dish_id || item.id || item.product_id,
+              dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+              name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+              price: parseFloat(item.price || item.rate || item.unit_price || 0),
+              quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+              qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+              total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+              total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+              category_id: item.category_id,
+            }));
+            
+            // Update generatedBill with fetched items
+            setGeneratedBill({
+              ...generatedBill,
+              items: items
+            });
+            
+            console.log('✅ Fetched and formatted items for print:', items.length);
+          }
+        } catch (error) {
+          console.error('Error fetching items for print:', error);
+        }
+      }
+    }
+    
+    // Final validation - if still no items, show error
+    if (!items || items.length === 0) {
+      console.error('❌ Cannot print: No items in generated bill after fetch attempt');
       console.error('Generated bill:', generatedBill);
       setAlert({ 
         type: 'error', 
-        message: 'Cannot print receipt: No order items found. Please regenerate the bill.' 
+        message: 'Cannot print receipt: No order items found. Please regenerate the bill or try again.' 
       });
       return;
     }
@@ -2260,12 +2377,25 @@ export default function OrderManagementPage() {
                           
                           if (billFetchResult.success && billFetchResult.data) {
                             // Handle different response structures
+                            let billResponseData = null;
                             if (billFetchResult.data.success === true && billFetchResult.data.data) {
-                              billToPay = billFetchResult.data.data.bill || billFetchResult.data.data;
+                              billResponseData = billFetchResult.data.data;
+                              billToPay = billResponseData.bill || billResponseData;
                             } else if (billFetchResult.data.bill) {
+                              billResponseData = billFetchResult.data;
                               billToPay = billFetchResult.data.bill;
                             } else if (billFetchResult.data.bill_id || billFetchResult.data.order_id) {
+                              billResponseData = billFetchResult.data;
                               billToPay = billFetchResult.data;
+                            }
+                            
+                            // Extract order_items from bill response if available (NEW: bills_management.php now returns order_items)
+                            if (billResponseData && billResponseData.order_items && Array.isArray(billResponseData.order_items)) {
+                              console.log('✅ Found order_items in bill response for payment:', billResponseData.order_items.length);
+                              // Update orderItems state with items from bill response
+                              if (billResponseData.order_items.length > 0) {
+                                setOrderItems(billResponseData.order_items);
+                              }
                             }
                             
                             // Update existingBill state
@@ -2702,51 +2832,56 @@ export default function OrderManagementPage() {
                           discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
                         }
                         
-                        // ALWAYS fetch order items when generating bill to ensure we have the latest data
+                        // Check if order_items are already in the response (NEW: bills_management.php now returns order_items)
                         let itemsForReceipt = [];
-                        try {
-                          console.log('=== Fetching Order Items for Bill Generation ===');
-                          const orderId = billOrder.order_id || billOrder.id;
-                          const orderNumber = billOrder.orderid || billOrder.order_number || (orderId ? `ORD-${orderId}` : '');
-                          
-                          console.log('Order ID:', orderId);
-                          console.log('Order Number:', orderNumber);
-                          
-                          const itemsResult = await apiPost('/get_orderdetails.php', { 
-                            order_id: orderId,
-                            orderid: orderNumber
-                          });
-                          
-                          console.log('Items API response:', itemsResult);
-                          console.log('Items API response data:', JSON.stringify(itemsResult.data, null, 2));
-                          
-                          // Extract items from response - handle multiple structures
-                          if (itemsResult.success && itemsResult.data) {
-                            if (Array.isArray(itemsResult.data)) {
-                              itemsForReceipt = itemsResult.data;
-                              console.log('✅ Found items in result.data (array):', itemsForReceipt.length);
-                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-                              itemsForReceipt = itemsResult.data.data;
-                              console.log('✅ Found items in result.data.data:', itemsForReceipt.length);
-                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-                              itemsForReceipt = itemsResult.data.items;
-                              console.log('✅ Found items in result.data.items:', itemsForReceipt.length);
-                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-                              itemsForReceipt = itemsResult.data.order_items;
-                              console.log('✅ Found items in result.data.order_items:', itemsForReceipt.length);
-                            } else if (typeof itemsResult.data === 'object') {
-                              // Search for any array in the response
-                              for (const key in itemsResult.data) {
-                                if (Array.isArray(itemsResult.data[key])) {
-                                  itemsForReceipt = itemsResult.data[key];
-                                  console.log(`✅ Found items in result.data.${key}:`, itemsForReceipt.length);
-                                  break;
+                        if (responseData.order_items && Array.isArray(responseData.order_items) && responseData.order_items.length > 0) {
+                          console.log('✅ Using order_items from bill response:', responseData.order_items.length);
+                          itemsForReceipt = responseData.order_items;
+                        } else {
+                          // Fallback: Fetch order items separately if not in response
+                          try {
+                            console.log('=== Fetching Order Items for Bill Generation (fallback) ===');
+                            const orderId = billOrder.order_id || billOrder.id;
+                            const orderNumber = billOrder.orderid || billOrder.order_number || (orderId ? `ORD-${orderId}` : '');
+                            
+                            console.log('Order ID:', orderId);
+                            console.log('Order Number:', orderNumber);
+                            
+                            const itemsResult = await apiPost('/get_orderdetails.php', { 
+                              order_id: orderId,
+                              orderid: orderNumber
+                            });
+                            
+                            console.log('Items API response:', itemsResult);
+                            console.log('Items API response data:', JSON.stringify(itemsResult.data, null, 2));
+                            
+                            // Extract items from response - handle multiple structures
+                            if (itemsResult.success && itemsResult.data) {
+                              if (Array.isArray(itemsResult.data)) {
+                                itemsForReceipt = itemsResult.data;
+                                console.log('✅ Found items in result.data (array):', itemsForReceipt.length);
+                              } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+                                itemsForReceipt = itemsResult.data.data;
+                                console.log('✅ Found items in result.data.data:', itemsForReceipt.length);
+                              } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+                                itemsForReceipt = itemsResult.data.items;
+                                console.log('✅ Found items in result.data.items:', itemsForReceipt.length);
+                              } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+                                itemsForReceipt = itemsResult.data.order_items;
+                                console.log('✅ Found items in result.data.order_items:', itemsForReceipt.length);
+                              } else if (typeof itemsResult.data === 'object') {
+                                // Search for any array in the response
+                                for (const key in itemsResult.data) {
+                                  if (Array.isArray(itemsResult.data[key])) {
+                                    itemsForReceipt = itemsResult.data[key];
+                                    console.log(`✅ Found items in result.data.${key}:`, itemsForReceipt.length);
+                                    break;
+                                  }
                                 }
                               }
                             }
-                          }
-                          
-                          if (itemsForReceipt.length === 0) {
+                            
+                            if (itemsForReceipt.length === 0) {
                             console.warn('⚠️ No items found in API response. Trying orderItems from state...');
                             console.log('orderItems state:', orderItems);
                             console.log('orderItems length:', orderItems?.length || 0);
@@ -2793,18 +2928,13 @@ export default function OrderManagementPage() {
                             console.error('billOrder:', billOrder);
                             console.error('orderItems state:', orderItems);
                           }
-                        } catch (error) {
-                          console.error('❌ Error fetching order items for bill:', error);
-                          console.error('Error details:', error.message, error.stack);
-                          
-                          // Fallback to orderItems from state if fetch fails
-                          if (orderItems && orderItems.length > 0) {
-                            itemsForReceipt = orderItems;
-                            console.log('✅ Using orderItems from state as fallback:', itemsForReceipt.length);
-                          } else {
-                            console.error('❌ No items available - neither from API nor from state');
-                            console.error('orderItems state:', orderItems);
-                            console.error('billOrder:', billOrder);
+                          } catch (error) {
+                            console.error('❌ Error fetching order items for bill (fallback):', error);
+                            // Fallback to orderItems from state if fetch fails
+                            if (orderItems && orderItems.length > 0) {
+                              itemsForReceipt = orderItems;
+                              console.log('✅ Using orderItems from state as fallback:', itemsForReceipt.length);
+                            }
                           }
                         }
                         
@@ -2901,6 +3031,24 @@ export default function OrderManagementPage() {
                         }, 500);
                         
                         setAlert({ type: 'success', message: 'Bill generated successfully! Printing receipt...' });
+                        // Broadcast update to other dashboard instances
+                        broadcastUpdate(UPDATE_EVENTS.BILL_CREATED, { 
+                          bill_id: billId,
+                          order_id: billOrder.order_id || billOrder.id 
+                        });
+                        broadcastUpdate(UPDATE_EVENTS.ORDER_STATUS_CHANGED, { 
+                          order_id: billOrder.order_id || billOrder.id,
+                          status: 'Bill Generated' 
+                        });
+                        // Broadcast update to other dashboard instances
+                        broadcastUpdate(UPDATE_EVENTS.BILL_CREATED, { 
+                          bill_id: billId,
+                          order_id: billOrder.order_id || billOrder.id 
+                        });
+                        broadcastUpdate(UPDATE_EVENTS.ORDER_STATUS_CHANGED, { 
+                          order_id: billOrder.order_id || billOrder.id,
+                          status: 'Bill Generated' 
+                        });
                       } else {
                         // More detailed error message - check all possible error locations
                         let errorMsg = 'Failed to generate bill';
