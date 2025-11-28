@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
-import { apiGet, apiPost, getTerminal, getToken, getRole } from '@/utils/api';
+import { apiPost, getTerminal, getToken, getRole } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock, Building2, Network } from 'lucide-react';
 import Link from 'next/link';
@@ -69,17 +69,45 @@ export default function SuperAdminDashboardPage() {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiGet('/get_dashboard_stats.php', { terminal });
+      console.log('Fetching dashboard stats with terminal:', terminal);
+      
+      // Use POST instead of GET for better compatibility
+      const result = await apiPost('/get_dashboard_stats.php', { terminal });
+      
+      console.log('Dashboard stats API response:', result);
       
       if (result.success && result.data) {
+        // Handle different response structures
+        let statsData = {};
+        
+        // Check if data is nested
+        if (result.data.success && result.data.data) {
+          statsData = {
+            totalOrders: result.data.data.totalOrders || result.data.data.total_orders || 0,
+            totalSales: result.data.data.totalSales || result.data.data.total_sales || 0,
+            totalMenuItems: result.data.data.totalMenuItems || result.data.data.total_menu_items || 0,
+            totalCategories: result.data.data.totalCategories || result.data.data.total_categories || 0,
+            recentOrders: result.data.data.recentOrders || result.data.data.recent_orders || [],
+          };
+        } else {
+          // Direct data structure
+          statsData = {
+            totalOrders: result.data.totalOrders || result.data.total_orders || 0,
+            totalSales: result.data.totalSales || result.data.total_sales || 0,
+            totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
+            totalCategories: result.data.totalCategories || result.data.total_categories || 0,
+            recentOrders: result.data.recentOrders || result.data.recent_orders || [],
+          };
+        }
+        
         setStats(prev => ({
           ...prev,
-          totalOrders: result.data.totalOrders || 0,
-          totalSales: result.data.totalSales || 0,
-          totalMenuItems: result.data.totalMenuItems || 0,
-          totalCategories: result.data.totalCategories || 0,
-          recentOrders: result.data.recentOrders || [],
+          ...statsData,
         }));
+        
+        console.log('✅ Dashboard stats loaded:', statsData);
+      } else {
+        console.warn('⚠️ Dashboard stats API returned no data or error:', result);
       }
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
@@ -93,13 +121,31 @@ export default function SuperAdminDashboardPage() {
    */
   const fetchBranches = async () => {
     try {
-      const result = await apiGet('/branch_management.php');
+      // Use POST for branch_management.php
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
       if (result.success && result.data) {
-        const branches = Array.isArray(result.data) ? result.data : (result.data.data || []);
+        let branches = [];
+        
+        // Handle different response structures
+        if (Array.isArray(result.data)) {
+          branches = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          branches = result.data.data;
+        } else if (result.data.success && result.data.data && Array.isArray(result.data.data)) {
+          branches = result.data.data;
+        } else if (result.data.branches && Array.isArray(result.data.branches)) {
+          branches = result.data.branches;
+        }
+        
+        console.log('✅ Branches loaded:', branches.length);
         setStats(prev => ({
           ...prev,
           totalBranches: branches.length
         }));
+      } else {
+        console.warn('⚠️ Branches API returned no data or error:', result);
       }
     } catch (error) {
       console.error('Error fetching branches:', error);

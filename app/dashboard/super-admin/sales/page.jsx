@@ -109,7 +109,19 @@ export default function SalesListPage() {
         // Check if response has success field with false
         else if (result.data.success === false) {
           console.error('Sales API returned error:', result.data);
-          setAlert({ type: 'error', message: result.data.message || 'Failed to load sales data' });
+          const errorMessage = result.data.message || result.data.error || 'Failed to load sales data';
+          
+          // Check for specific database column errors
+          if (errorMessage.toLowerCase().includes("unknown column") || 
+              errorMessage.toLowerCase().includes("orders.sts") ||
+              errorMessage.toLowerCase().includes("column 'sts'")) {
+            setAlert({ 
+              type: 'error', 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
+            });
+          } else {
+            setAlert({ type: 'error', message: errorMessage });
+          }
           setSales([]);
           setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
           if (showRefreshing) {
@@ -132,9 +144,80 @@ export default function SalesListPage() {
         }
       } else if (!result.success) {
         console.error('Sales API request failed:', result);
+        console.error('Full result object:', JSON.stringify(result, null, 2));
+        
+        // Handle empty response
+        if (!result.data || (typeof result.data === 'object' && Object.keys(result.data).length === 0)) {
+          console.error('Empty response from API - checking status and raw response');
+          const statusMessage = result.status ? `HTTP ${result.status}` : 'Unknown status';
+          const rawResponse = result.data?.rawResponse || result.data?.error || '';
+          
+          // Check if it's a 404 (endpoint not found)
+          if (result.status === 404) {
+            setAlert({ 
+              type: 'error', 
+              message: `API Endpoint Not Found: pos/get_sales.php does not exist or is not accessible. Please verify the API file exists at the correct path.` 
+            });
+          }
+          // Check if it's a 500 (server error)
+          else if (result.status === 500) {
+            setAlert({ 
+              type: 'error', 
+              message: `Server Error (${statusMessage}): The API endpoint returned an error. Please check the server logs. This might be due to the 'orders.sts' column issue - update pos/get_sales.php to use 'order_status' instead of 'sts'.` 
+            });
+          }
+          // Check for database column errors in raw response
+          else if (rawResponse && (rawResponse.toLowerCase().includes("unknown column") || 
+              rawResponse.toLowerCase().includes("orders.sts") ||
+              rawResponse.toLowerCase().includes("column 'sts'"))) {
+            setAlert({ 
+              type: 'error', 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'.` 
+            });
+          }
+          // Generic empty response error
+          else {
+            setAlert({ 
+              type: 'error', 
+              message: `Empty response from API (${statusMessage}). The server returned no data. This could mean: 1) The API endpoint doesn't exist, 2) There's a server error, or 3) The API needs to be fixed (check for 'orders.sts' column issue).` 
+            });
+          }
+        } else {
+          // Handle non-empty error response
+          const errorMessage = result.data?.message || result.data?.error || result.data?.rawResponse || 'Failed to load sales data. Please check your connection.';
+          
+          // Check for specific database column errors
+          if (errorMessage.toLowerCase().includes("unknown column") || 
+              errorMessage.toLowerCase().includes("orders.sts") ||
+              errorMessage.toLowerCase().includes("column 'sts'")) {
+            setAlert({ 
+              type: 'error', 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
+            });
+          } else {
+            setAlert({ 
+              type: 'error', 
+              message: errorMessage 
+            });
+          }
+        }
+        setSales([]);
+        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        if (showRefreshing) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        setLastUpdated(new Date());
+        return;
+      }
+      
+      // Handle case where result.success is true but result.data is empty or undefined
+      if (result.success && (!result.data || (typeof result.data === 'object' && Object.keys(result.data).length === 0))) {
+        console.warn('API returned success but no data');
         setAlert({ 
-          type: 'error', 
-          message: result.data?.message || 'Failed to load sales data. Please check your connection.' 
+          type: 'warning', 
+          message: 'No sales data available for the selected period. Try selecting a different date range.' 
         });
         setSales([]);
         setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
@@ -207,9 +290,24 @@ export default function SalesListPage() {
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Error fetching sales:', error);
+      console.error('Error details:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack
+      });
+      
+      // Provide more specific error messages
+      let errorMessage = error.message || 'Network error';
+      
+      if (error.message?.includes('Failed to fetch') || error.name === 'TypeError') {
+        errorMessage = 'Cannot connect to the API server. Please check: 1) The API endpoint exists (pos/get_sales.php), 2) The server is running, 3) CORS headers are configured correctly.';
+      } else if (error.message?.includes('CORS')) {
+        errorMessage = 'CORS Error: The API server is blocking the request. Please add CORS headers to pos/get_sales.php.';
+      }
+      
       setAlert({ 
         type: 'error', 
-        message: 'Failed to load sales data: ' + (error.message || 'Network error') 
+        message: 'Failed to load sales data: ' + errorMessage 
       });
       setSales([]);
       setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });

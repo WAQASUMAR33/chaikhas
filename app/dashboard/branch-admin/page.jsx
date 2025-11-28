@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
-import { apiGet, apiPost, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock } from 'lucide-react';
 import Link from 'next/link';
@@ -54,19 +54,37 @@ export default function AdminDashboardPage() {
       
       logger.info('Fetching Dashboard Stats', { terminal, branch_id: branchId });
       
-      const result = await apiGet('/get_dashboard_stats.php', { 
+      // Use POST instead of GET for better compatibility
+      const result = await apiPost('/get_dashboard_stats.php', { 
         terminal,
         branch_id: branchId 
       });
       
+      console.log('Dashboard stats API response:', result);
+      
       if (result.success && result.data) {
-        const statsData = {
-          totalOrders: result.data.totalOrders || result.data.total_orders || 0,
-          totalSales: result.data.totalSales || result.data.total_sales || 0,
-          totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
-          totalCategories: result.data.totalCategories || result.data.total_categories || 0,
-          recentOrders: result.data.recentOrders || result.data.recent_orders || [],
-        };
+        // Handle different response structures
+        let statsData = {};
+        
+        // Check if data is nested
+        if (result.data.success && result.data.data) {
+          statsData = {
+            totalOrders: result.data.data.totalOrders || result.data.data.total_orders || 0,
+            totalSales: result.data.data.totalSales || result.data.data.total_sales || 0,
+            totalMenuItems: result.data.data.totalMenuItems || result.data.data.total_menu_items || 0,
+            totalCategories: result.data.data.totalCategories || result.data.data.total_categories || 0,
+            recentOrders: result.data.data.recentOrders || result.data.data.recent_orders || [],
+          };
+        } else {
+          // Direct data structure
+          statsData = {
+            totalOrders: result.data.totalOrders || result.data.total_orders || 0,
+            totalSales: result.data.totalSales || result.data.total_sales || 0,
+            totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
+            totalCategories: result.data.totalCategories || result.data.total_categories || 0,
+            recentOrders: result.data.recentOrders || result.data.recent_orders || [],
+          };
+        }
         
         logger.logDataFetch('Dashboard Stats', statsData, statsData.totalOrders);
         logger.success('Dashboard stats loaded successfully', statsData);
@@ -74,6 +92,7 @@ export default function AdminDashboardPage() {
         setStats(statsData);
       } else {
         logger.warning('Dashboard stats API returned no data or error', result.data);
+        console.error('Dashboard stats error:', result);
         setStats({
           totalOrders: 0,
           totalSales: 0,
