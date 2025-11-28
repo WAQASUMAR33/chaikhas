@@ -929,50 +929,145 @@ export default function OrderManagementPage() {
     // Fetch current order items for editing
     try {
       const orderId = order.order_id || order.id;
-      const orderNumber = order.orderid || order.order_number;
+        const orderNumber = order.orderid || order.order_number || `ORD-${orderId}`;
       
-      // Fetch order details and items
-      const orderResult = await apiGet('/get_ordersbyid.php', { 
+      console.log('=== Fetching Order Details for Edit ===');
+      console.log('Order ID:', orderId);
+      console.log('Order Number:', orderNumber);
+      
+      // Fetch order details and items (use apiPost for consistency)
+      const orderResult = await apiPost('/get_ordersbyid.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
       
-      const itemsResult = await apiGet('/get_orderdetails.php', { 
+      console.log('Order details API response:', orderResult);
+      
+      const itemsResult = await apiPost('/get_orderdetails.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
       
+      console.log('Order items API response:', itemsResult);
+      
+      // Handle multiple response structures for order data
       let orderData = null;
       if (orderResult.success && orderResult.data) {
-        orderData = Array.isArray(orderResult.data) ? orderResult.data[0] : orderResult.data;
+        if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
+          orderData = orderResult.data[0];
+        } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
+          orderData = orderResult.data.data[0];
+        } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
+          orderData = orderResult.data.order;
+        } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
+          orderData = orderResult.data;
+        }
       }
       
-      const orderItems = (itemsResult.success && itemsResult.data && Array.isArray(itemsResult.data)) 
-        ? itemsResult.data 
-        : [];
+      // If orderData not found, use the order from the list
+      if (!orderData) {
+        console.warn('Order data not found in API response, using order from list');
+        orderData = order;
+      }
       
-      setEditingOrder({
+      // Handle multiple response structures for order items
+      let orderItems = [];
+      if (itemsResult.success && itemsResult.data) {
+        if (Array.isArray(itemsResult.data)) {
+          orderItems = itemsResult.data;
+          console.log('Found items in result.data (array):', orderItems.length);
+        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
+          orderItems = itemsResult.data.data;
+          console.log('Found items in result.data.data:', orderItems.length);
+        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
+          orderItems = itemsResult.data.items;
+          console.log('Found items in result.data.items:', orderItems.length);
+        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
+          orderItems = itemsResult.data.order_items;
+          console.log('Found items in result.data.order_items:', orderItems.length);
+        } else if (typeof itemsResult.data === 'object') {
+          // Try to find any array in the response
+          for (const key in itemsResult.data) {
+            if (Array.isArray(itemsResult.data[key])) {
+              orderItems = itemsResult.data[key];
+              console.log(`Found items in result.data.${key}:`, orderItems.length);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (orderItems.length === 0) {
+        console.warn('⚠️ No order items found in API response for edit');
+      } else {
+        console.log('✅ Found', orderItems.length, 'order items for editing');
+      }
+      
+      // Merge order data with the order from list to ensure all fields are present
+      const mergedOrderData = {
         ...order,
         ...orderData,
-      });
+        // Ensure all required fields are present
+        order_id: orderData.order_id || order.order_id || order.id,
+        id: orderData.id || order.id,
+        orderid: orderData.orderid || order.orderid || orderNumber,
+        order_number: orderData.order_number || order.order_number || orderNumber,
+        order_type: orderData.order_type || order.order_type || 'Dine In',
+        order_status: orderData.order_status || orderData.status || order.order_status || order.status || 'Pending',
+        table_id: orderData.table_id || order.table_id || '',
+        hall_id: orderData.hall_id || order.hall_id || '',
+        customer_id: orderData.customer_id || order.customer_id || null,
+        comments: orderData.comments || order.comments || '',
+        g_total_amount: orderData.g_total_amount || orderData.total || order.g_total_amount || order.total || 0,
+        discount_amount: orderData.discount_amount || orderData.discount || order.discount_amount || order.discount || 0,
+        service_charge: orderData.service_charge || order.service_charge || 0,
+        net_total_amount: orderData.net_total_amount || orderData.netTotal || order.net_total_amount || order.netTotal || 0,
+        payment_mode: orderData.payment_mode || order.payment_mode || 'Cash',
+        table_number: orderData.table_number || order.table_number || '',
+        hall_name: orderData.hall_name || order.hall_name || '',
+      };
+      
+      // Format order items with all required fields
+      const formattedItems = orderItems.map(item => ({
+        dish_id: item.dish_id || item.id || item.product_id,
+        name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+        price: parseFloat(item.price || item.rate || item.unit_price || 0),
+        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+        category_id: item.category_id || item.cat_id || null,
+        kitchen_id: item.kitchen_id || null,
+      }));
+      
+      console.log('✅ Formatted items for edit:', formattedItems.length);
+      console.log('Sample item:', formattedItems[0]);
+      
+      setEditingOrder(mergedOrderData);
       
       setFormData({
-        status: order.status || 'Pending',
-        table_id: order.table_id || '',
-        discount: order.discount || 0,
-        items: orderItems.map(item => ({
-          dish_id: item.dish_id || item.product_id,
-          name: item.title || item.dish_name || item.name,
-          price: parseFloat(item.price || item.rate || 0),
-          quantity: parseInt(item.quantity || item.qnty || 0),
-          total: parseFloat(item.total_amount || item.total || 0),
-        })),
+        status: mergedOrderData.order_status || mergedOrderData.status || 'Pending',
+        table_id: mergedOrderData.table_id || '',
+        discount: mergedOrderData.discount_amount || mergedOrderData.discount || 0,
+        items: formattedItems,
       });
       setSelectedCategory('');
       setEditModalOpen(true);
+      
+      console.log('✅ Edit modal opened with order data:', {
+        order_id: mergedOrderData.order_id,
+        items_count: formattedItems.length,
+        table_id: mergedOrderData.table_id,
+        status: mergedOrderData.order_status
+      });
     } catch (error) {
       console.error('Error fetching order details for edit:', error);
-      setAlert({ type: 'error', message: 'Failed to load order details for editing' });
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack
+      });
+      setAlert({ type: 'error', message: 'Failed to load order details for editing: ' + (error.message || 'Unknown error') });
     }
   };
 
