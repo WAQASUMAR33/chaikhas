@@ -539,26 +539,39 @@ export default function SalesReportPage() {
               margin: 2cm 1cm 1.5cm 1cm;
             }
             
+            /* Hide non-print elements */
+            .no-print,
+            .no-print * {
+              display: none !important;
+              visibility: hidden !important;
+            }
+            
+            /* Show print content - must be visible even if parent is hidden */
+            .print-only {
+              display: block !important;
+              visibility: visible !important;
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              height: auto !important;
+              overflow: visible !important;
+              background: white !important;
+              z-index: 9999 !important;
+            }
+            
+            .print-only * {
+              visibility: visible !important;
+            }
+            
+            /* Hide everything else */
             body * {
               visibility: hidden;
             }
             
             .print-only,
             .print-only * {
-              visibility: visible;
-            }
-            
-            .print-only {
-              position: absolute;
-              left: 0;
-              top: 0;
-              width: 100%;
-              display: block !important;
-            }
-            
-            .no-print,
-            .no-print * {
-              display: none !important;
+              visibility: visible !important;
             }
             
             .print-container {
@@ -651,10 +664,57 @@ export default function SalesReportPage() {
             }
           }
           
-          /* Screen styles - hide print view */
+          /* Screen styles - show print view when report is generated */
           @media screen {
             .print-only {
-              display: none !important;
+              display: block;
+              max-width: 100%;
+              overflow-x: auto;
+              margin-top: 20px;
+              padding: 20px;
+              background: white;
+              border: 1px solid #e5e7eb;
+              border-radius: 8px;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            }
+            
+            .print-container {
+              width: 100%;
+            }
+            
+            .print-table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 12px;
+              margin-top: 10px;
+            }
+            
+            .print-table th,
+            .print-table td {
+              padding: 8px 6px;
+              border: 1px solid #d1d5db;
+              text-align: left;
+            }
+            
+            .print-table th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+            
+            .print-table tbody tr:nth-child(even) {
+              background-color: #f9fafb;
+            }
+            
+            .print-footer {
+              text-align: center;
+              font-size: 12px;
+              margin-top: 20px;
+              padding-top: 10px;
+              border-top: 1px solid #d1d5db;
+            }
+            
+            .print-footer .page-number::after {
+              content: " (Preview - Page numbers will appear when printing)";
             }
           }
         `}</style>

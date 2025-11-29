@@ -183,6 +183,52 @@ export default function OrderManagementPage() {
   }, [paymentModalOpen, paymentData.cash_received, generatedBill]);
 
   /**
+   * Fetch credit customers for the current branch
+   * API: api/customer_management.php (GET with branch_id)
+   */
+  const fetchCustomers = async () => {
+    try {
+      const branchId = getBranchId();
+      if (!branchId) {
+        return; // No branch ID, skip fetching customers
+      }
+
+      const result = await apiGet('api/customer_management.php', { 
+        branch_id: branchId 
+      });
+
+      if (result.success && result.data) {
+        let customersData = [];
+        
+        if (Array.isArray(result.data)) {
+          customersData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          customersData = result.data.data;
+        }
+
+        // Map API response to match expected format
+        const mappedCustomers = customersData.map(customer => ({
+          id: customer.id || customer.customer_id,
+          customer_id: customer.customer_id || customer.id,
+          customer_name: customer.name || customer.customer_name || '',
+          phone: customer.phone || customer.mobileNo || '',
+          email: customer.email || '',
+          address: customer.address || '',
+          credit_limit: parseFloat(customer.credit || customer.credit_limit || 0),
+        }));
+
+        setCustomers(mappedCustomers);
+        console.log('✅ Fetched credit customers:', mappedCustomers.length);
+      } else {
+        setCustomers([]);
+      }
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+      setCustomers([]);
+    }
+  };
+
+  /**
    * Fetch orders from API
    * API: order_management.php (GET with terminal and optional status)
    */
@@ -2217,14 +2263,21 @@ export default function OrderManagementPage() {
             message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
           });
           
-          // If bill is unpaid, update status to "Bill Generated" when printed
+          // If bill is unpaid, update status based on payment method (Credit or Bill Generated)
           if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
             try {
               const orderIdValue = generatedBill.order_id;
               const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
               
+              // Determine status: 'Credit' for credit bills, 'Bill Generated' for others
+              const isCredit = generatedBill.payment_method === 'Credit' || 
+                               generatedBill.payment_mode === 'Credit' || 
+                               generatedBill.payment_status === 'Credit' ||
+                               generatedBill.is_credit === true;
+              const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
+              
               const statusPayload = { 
-                status: 'Bill Generated',
+                status: orderStatus,
                 order_id: orderIdValue,
                 orderid: orderidValue
               };
@@ -3716,6 +3769,9 @@ export default function OrderManagementPage() {
                           }
                         }
 
+                        // Determine payment method - explicitly use 'Credit' if payment_mode is 'Credit'
+                        const paymentMethod = billData.payment_mode === 'Credit' ? 'Credit' : (billData.payment_method || billData.payment_mode || 'Cash');
+                        
                         const receiptData = {
                           bill_id: billId,
                           order_id: billOrder.order_id || billOrder.id,
@@ -3727,7 +3783,8 @@ export default function OrderManagementPage() {
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
-                          payment_method: billData.payment_method || billData.payment_mode || 'Cash',
+                          payment_method: paymentMethod, // Explicitly set to 'Credit' if payment_mode is 'Credit'
+                          payment_mode: paymentMethod, // Also set payment_mode for consistency
                           payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have 'Credit' status
                           items: formattedItems,
                           date: new Date().toLocaleString(),

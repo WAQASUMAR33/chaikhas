@@ -408,19 +408,13 @@ export default function SalesReportPage() {
         )}
 
         {/* Print View */}
-        <div ref={printRef} className="hidden print:block">
+        {reportGenerated && reportData.length > 0 && (
+        <div ref={printRef} className="print-only">
           <style jsx global>{`
             @media print {
               @page {
                 size: A4 landscape;
-                margin: 1.5cm 1cm;
-                @top-center {
-                  content: element(header);
-                }
-                @bottom-center {
-                  content: "Page " counter(page) " of " counter(pages);
-                  font-size: 10px;
-                }
+                margin: 2cm 1cm 1.5cm 1cm;
               }
               
               body {
@@ -428,53 +422,176 @@ export default function SalesReportPage() {
                 print-color-adjust: exact;
               }
               
-              .no-print {
+              /* Hide non-print elements */
+              .no-print,
+              .no-print * {
                 display: none !important;
+                visibility: hidden !important;
+              }
+              
+              /* Show print content - must be visible even if parent is hidden */
+              .print-only {
+                display: block !important;
+                visibility: visible !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
+                overflow: visible !important;
+                background: white !important;
+                z-index: 9999 !important;
+              }
+              
+              .print-only * {
+                visibility: visible !important;
+              }
+              
+              /* Hide everything else */
+              body * {
+                visibility: hidden;
+              }
+              
+              .print-only,
+              .print-only * {
+                visibility: visible !important;
+              }
+              
+              .print-container {
+                width: 100%;
               }
               
               .print-header {
-                position: running(header);
-              }
-              
-              .print-footer {
-                position: running(footer);
-              }
-              
-              .print-page-break {
-                page-break-after: always;
-              }
-              
-              table {
-                page-break-inside: auto;
-                border-collapse: collapse;
-              }
-              
-              tr {
+                margin-bottom: 15px;
+                padding-bottom: 10px;
+                border-bottom: 2px solid #000;
                 page-break-inside: avoid;
-                page-break-after: auto;
+                page-break-after: avoid;
               }
               
-              thead {
+              .print-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 9px;
+                margin-top: 10px;
+              }
+              
+              .print-table thead {
                 display: table-header-group;
               }
               
-              thead tr {
+              .print-table thead tr {
                 page-break-after: avoid;
                 page-break-inside: avoid;
               }
               
-              tfoot {
+              .print-table tfoot {
                 display: table-footer-group;
               }
               
-              tbody tr:last-child {
-                page-break-after: avoid;
+              .print-table tfoot tr {
+                page-break-inside: avoid;
+              }
+              
+              .print-table th,
+              .print-table td {
+                padding: 6px 4px;
+                border: 1px solid #000;
+                text-align: left;
+              }
+              
+              .print-table th {
+                background-color: #f3f4f6;
+                font-weight: bold;
+              }
+              
+              .print-table tbody tr {
+                page-break-inside: avoid;
+              }
+              
+              .print-table tbody tr:nth-child(even) {
+                background-color: #f9f9f9;
+              }
+              
+              .print-table tfoot tr {
+                background-color: #f3f4f6;
+                border-top: 2px solid #000;
+                font-weight: bold;
+              }
+              
+              .print-footer {
+                position: fixed;
+                bottom: 0.5cm;
+                left: 0;
+                right: 0;
+                text-align: center;
+                font-size: 10px;
+                border-top: 1px solid #ccc;
+                padding-top: 5px;
+                margin-top: 15px;
+              }
+              
+              .print-footer::after {
+                content: "Page " counter(page) " of " counter(pages);
+              }
+              
+              .print-footer .page-number {
+                display: none;
               }
             }
+          
+          /* Screen styles - show print view when report is generated */
+          @media screen {
+            .print-only {
+              display: block;
+              max-width: 100%;
+              overflow-x: auto;
+              margin-top: 20px;
+              padding: 20px;
+              background: white;
+              border: 1px solid #e5e7eb;
+              border-radius: 8px;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            }
+            
+            .print-container {
+              width: 100%;
+            }
+            
+            .print-table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 12px;
+              margin-top: 10px;
+            }
+            
+            .print-table th,
+            .print-table td {
+              padding: 8px 6px;
+              border: 1px solid #d1d5db;
+              text-align: left;
+            }
+            
+            .print-table th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+            
+            .print-table tbody tr:nth-child(even) {
+              background-color: #f9fafb;
+            }
+            
+            .print-footer {
+              text-align: center;
+              font-size: 12px;
+              margin-top: 20px;
+              padding-top: 10px;
+              border-top: 1px solid #d1d5db;
+            }
+          }
           `}</style>
           
-          {reportGenerated && reportData.length > 0 && (
-            <div className="print-container">
+          <div className="print-container">
               {/* Report Header - Repeats on each page */}
               <div className="print-header" style={{ 
                 display: 'flex', 
@@ -523,7 +640,7 @@ export default function SalesReportPage() {
               </div>
 
               {/* Report Table */}
-              <table style={{ 
+              <table className="print-table" style={{ 
                 width: '100%', 
                 borderCollapse: 'collapse',
                 fontSize: '10px'
@@ -598,9 +715,13 @@ export default function SalesReportPage() {
                 </tfoot>
               </table>
               
+              {/* Footer with Page Number */}
+              <div className="print-footer">
+                Page <span className="page-number"></span>
+              </div>
             </div>
-          )}
         </div>
+        )}
       </div>
     </SuperAdminLayout>
   );

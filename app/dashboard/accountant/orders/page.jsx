@@ -1945,14 +1945,21 @@ export default function OrderManagementPage() {
             message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
           });
           
-          // If bill is unpaid, update status to "Bill Generated" when printed
+          // If bill is unpaid, update status based on payment method (Credit or Bill Generated)
           if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
             try {
               const orderIdValue = generatedBill.order_id;
               const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
               
+              // Determine status: 'Credit' for credit bills, 'Bill Generated' for others
+              const isCredit = generatedBill.payment_method === 'Credit' || 
+                               generatedBill.payment_mode === 'Credit' || 
+                               generatedBill.payment_status === 'Credit' ||
+                               generatedBill.is_credit === true;
+              const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
+              
               const statusPayload = { 
-                status: 'Bill Generated',
+                status: orderStatus,
                 order_id: orderIdValue,
                 orderid: orderidValue
               };
@@ -3335,6 +3342,9 @@ export default function OrderManagementPage() {
                           ? customers.find(c => c.id === billData.customer_id) 
                           : null;
 
+                        // Determine payment method - explicitly use 'Credit' if payment_mode is 'Credit'
+                        const paymentMethod = billData.payment_mode === 'Credit' ? 'Credit' : (billData.payment_method || billData.payment_mode || 'Cash');
+                        
                         // Store bill data for receipt - use calculated values from frontend
                         const receiptData = {
                           bill_id: billId,
@@ -3347,7 +3357,8 @@ export default function OrderManagementPage() {
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
-                          payment_method: billData.payment_method || billData.payment_mode || 'Cash',
+                          payment_method: paymentMethod, // Explicitly set to 'Credit' if payment_mode is 'Credit'
+                          payment_mode: paymentMethod, // Also set payment_mode for consistency
                           payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have Credit status
                           items: formattedItems,
                           date: new Date().toLocaleString(),
