@@ -11,7 +11,7 @@ import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal } from '@/utils/api';
+import { apiPost, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { BarChart3 } from 'lucide-react';
 
@@ -27,13 +27,28 @@ export default function MenuSalesListPage() {
 
   /**
    * Fetch menu sales data from API
-   * API: api/get_menu_sales.php (POST with terminal and period)
+   * API: api/get_menu_sales.php (POST with terminal, period, and branch_id)
+   * Shows only menu sales for the current branch
    */
   const fetchMenuSales = async () => {
     setLoading(true);
+    setAlert({ type: '', message: '' });
     try {
       const terminal = getTerminal();
-      const result = await apiPost('api/get_menu_sales.php', { terminal, period });
+      const branchId = getBranchId();
+      
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        setLoading(false);
+        setMenuSales([]);
+        return;
+      }
+      
+      const result = await apiPost('api/get_menu_sales.php', { 
+        terminal, 
+        period,
+        branch_id: branchId 
+      });
       
       if (result.success && result.data && Array.isArray(result.data)) {
         // Map API response

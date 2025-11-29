@@ -2362,14 +2362,15 @@ export default function OrderManagementPage() {
                 })()}
               </div>
 
-              {/* Generate Bill Button - Only show if status is Running and no bill exists (works for all order types: Dine In, Take Away, Delivery) */}
+              {/* Generate Bill Button - Always show for Running orders (works for all order types: Dine In, Take Away, Delivery) */}
               {(() => {
                 // Case-insensitive status check
                 const status = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
                 const isRunning = status === 'running';
-                const hasNoBill = !existingBill;
                 
-                return isRunning && hasNoBill;
+                // Always show Generate Bill for Running orders, regardless of existing bill
+                // This ensures proper flow: Running → Generate Bill → Bill Generated → Pay Bill
+                return isRunning;
               })() && (
                 <div className="pt-2">
                   <Button
@@ -2392,18 +2393,25 @@ export default function OrderManagementPage() {
                 </div>
               )}
 
-              {/* Pay Bill Button - Show if bill exists and is unpaid, OR if order status is "Bill Generated" (to allow payment) */}
+              {/* Pay Bill Button - Only show if order status is "Bill Generated" or "Complete", NOT for "Running" orders */}
               {(() => {
-                // Check if order status is "Bill Generated" (case-insensitive)
+                // Check order status (case-insensitive)
                 const orderStatus = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
+                const isRunning = orderStatus === 'running';
                 const isBillGenerated = orderStatus === 'bill generated';
+                const isComplete = orderStatus === 'complete';
                 
-                // If order status is "Bill Generated", always show Pay Bill button (even if bill fetch failed)
-                if (isBillGenerated && !existingBill) {
-                  return true; // Show button to allow payment even if bill fetch failed
+                // Never show Pay Bill for Running orders - they should Generate Bill first
+                if (isRunning) {
+                  return false;
                 }
                 
-                // If bill exists, check payment status (case-insensitive)
+                // Show Pay Bill if status is "Bill Generated" (even if bill fetch failed)
+                if (isBillGenerated) {
+                  return true;
+                }
+                
+                // Show Pay Bill if bill exists and is unpaid (for Complete or other statuses)
                 if (existingBill) {
                   const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
                   return paymentStatus !== 'paid';
@@ -2421,7 +2429,8 @@ export default function OrderManagementPage() {
                           console.log('=== Fetching Bill for Payment ===');
                           console.log('Order ID:', orderDetails.order_id || orderDetails.id);
                           
-                          const billFetchResult = await apiPost('/bills_management.php', { 
+                          // Use GET to fetch existing bill
+                          const billFetchResult = await apiGet('api/bills_management.php', { 
                             order_id: orderDetails.order_id || orderDetails.id 
                           });
                           
@@ -2728,7 +2737,7 @@ export default function OrderManagementPage() {
                       // Log the payload being sent
                       console.log('Bill payload being sent:', billPayload);
                       
-                      const result = await apiPost('/bills_management.php', billPayload);
+                      const result = await apiPost('api/bills_management.php', billPayload);
                       
                       // Debug: Log the complete result
                       console.log('=== Bill Generation Result ===');
@@ -2879,13 +2888,24 @@ export default function OrderManagementPage() {
                         let errorMsg = 'Failed to generate bill';
                         
                         if (apiResponse && typeof apiResponse === 'object') {
-                          errorMsg = apiResponse.message || 
-                                    apiResponse.data?.message || 
-                                    apiResponse.data?.error || 
-                                    apiResponse.error ||
-                                    (apiResponse.success === false ? 'Bill creation failed on server' : errorMsg);
+                          // Check for database column errors
+                          const responseStr = JSON.stringify(apiResponse).toLowerCase();
+                          if (responseStr.includes('unknown column') || responseStr.includes('is_cancel')) {
+                            errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                          } else {
+                            errorMsg = apiResponse.message || 
+                                      apiResponse.data?.message || 
+                                      apiResponse.data?.error || 
+                                      apiResponse.error ||
+                                      (apiResponse.success === false ? 'Bill creation failed on server' : errorMsg);
+                          }
                         } else if (result.data && typeof result.data === 'string') {
-                          errorMsg = result.data;
+                          const dataStr = result.data.toLowerCase();
+                          if (dataStr.includes('unknown column') || dataStr.includes('is_cancel')) {
+                            errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                          } else {
+                            errorMsg = result.data;
+                          }
                         } else if (result.message) {
                           errorMsg = result.message;
                         }
@@ -2895,7 +2915,6 @@ export default function OrderManagementPage() {
                         console.error('HTTP Status:', result.status);
                         console.error('API Response:', apiResponse);
                         console.error('Error Message:', errorMsg);
-                        console.error('Full Result:', result);
                         
                         // Show user-friendly error message
                         setAlert({ 
@@ -2905,7 +2924,15 @@ export default function OrderManagementPage() {
                       }
                     } catch (error) {
                       console.error('Error generating bill:', error);
-                      setAlert({ type: 'error', message: 'Failed to generate bill: ' + (error.message || 'Network error') });
+                      const errorStr = (error.message || '').toLowerCase();
+                      let errorMsg = 'Failed to generate bill: ' + (error.message || 'Network error');
+                      
+                      // Check for database column errors in catch block
+                      if (errorStr.includes('unknown column') || errorStr.includes('is_cancel')) {
+                        errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                      }
+                      
+                      setAlert({ type: 'error', message: errorMsg });
                     }
                   }}
                   className="w-full bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold py-3.5 text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-[1.02]"

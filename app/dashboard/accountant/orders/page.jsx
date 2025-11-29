@@ -63,7 +63,6 @@ export default function OrderManagementPage() {
     
     // Listen for updates from other dashboard instances
     const cleanup = listenForUpdates((event) => {
-      console.log('📥 Received dashboard update:', event);
       if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
           event.type === UPDATE_EVENTS.ORDER_UPDATED || 
           event.type === UPDATE_EVENTS.ORDER_DELETED ||
@@ -129,52 +128,37 @@ export default function OrderManagementPage() {
         params.status = filter;
       }
       
-      console.log('Fetching orders with params:', params);
       // Use GET method for fetching orders list
       const result = await apiGet('api/order_management.php', params);
-      console.log('Orders API response:', result);
       
       // Handle multiple possible response structures
       let ordersData = [];
-      let dataSource = '';
       
       // Check if result.data is an array directly
       if (result.data && Array.isArray(result.data)) {
         ordersData = result.data;
-        dataSource = 'result.data';
-        console.log('Found orders in result.data (array):', ordersData.length);
       }
       // Check if result.data.data is an array (nested structure)
       else if (result.data && result.data.data && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
-        dataSource = 'result.data.data';
-        console.log('Found orders in result.data.data:', ordersData.length);
       }
       // Check if result.data.orders is an array
       else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
         ordersData = result.data.orders;
-        dataSource = 'result.data.orders';
-        console.log('Found orders in result.data.orders:', ordersData.length);
       }
       // Check if result.data.success and result.data.data is an array
       else if (result.data && result.data.success && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
-        dataSource = 'result.data.success.data';
-        console.log('Found orders in result.data.success.data:', ordersData.length);
       }
       // Check if result.success and result.data is an array
       else if (result.success && result.data && Array.isArray(result.data)) {
         ordersData = result.data;
-        dataSource = 'result.success.data';
-        console.log('Found orders in result.success.data:', ordersData.length);
       }
       // Try to find any array in result.data object
       else if (result.data && typeof result.data === 'object') {
         for (const key in result.data) {
           if (Array.isArray(result.data[key])) {
             ordersData = result.data[key];
-            dataSource = `result.data.${key}`;
-            console.log(`Found orders in result.data.${key}:`, ordersData.length);
             break;
           }
         }
@@ -199,16 +183,6 @@ export default function OrderManagementPage() {
         return;
       }
       
-      // Debug: Log sample order from API
-      if (ordersData.length > 0) {
-        console.log('✅ Orders data received:', ordersData.length, 'orders');
-        console.log('Sample order from API:', JSON.stringify(ordersData[0], null, 2));
-      } else {
-        console.warn('⚠️ No orders found in API response. Full response:', result);
-        if (result.data && typeof result.data === 'object') {
-          console.warn('result.data keys:', Object.keys(result.data));
-        }
-      }
       
       if (ordersData.length > 0) {
         // Map API response - matching actual database structure
@@ -304,15 +278,12 @@ export default function OrderManagementPage() {
       // Prepare order ID - prefer numeric order_id over orderid string
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
-      console.log('Fetching order details for:', { orderId, orderNumber, orderIdParam });
       
       // Fetch order details with items - get_ordersbyid.php returns order with items array
       const orderResult = await apiPost('api/get_ordersbyid.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
-      
-      console.log('Order details API response:', orderResult);
       
       // Initialize itemsData early to avoid "Cannot access before initialization" error
       let itemsData = [];
@@ -327,35 +298,30 @@ export default function OrderManagementPage() {
           // Extract items from order if present
           if (orderData.items && Array.isArray(orderData.items)) {
             itemsData = orderData.items;
-            console.log('✅ Found items in order data (array[0].items):', itemsData.length);
           }
         } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
           orderData = orderResult.data.data[0];
           // Extract items from order if present
           if (orderData.items && Array.isArray(orderData.items)) {
             itemsData = orderData.items;
-            console.log('✅ Found items in order data (data.data[0].items):', itemsData.length);
           }
         } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
           orderData = orderResult.data.order;
           // Extract items from order if present
           if (orderData.items && Array.isArray(orderData.items)) {
             itemsData = orderData.items;
-            console.log('✅ Found items in order data (data.order.items):', itemsData.length);
           }
         } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
           orderData = orderResult.data;
           // Extract items from order if present
           if (orderData.items && Array.isArray(orderData.items)) {
             itemsData = orderData.items;
-            console.log('✅ Found items in order data (data.items):', itemsData.length);
           }
         }
         
         // Also check for items at the response level
         if (itemsData.length === 0 && orderResult.data.items && Array.isArray(orderResult.data.items)) {
           itemsData = orderResult.data.items;
-          console.log('✅ Found items in response data.items:', itemsData.length);
         }
       }
       
@@ -394,9 +360,6 @@ export default function OrderManagementPage() {
           const billResult = await apiGet('api/bills_management.php', { order_id: orderIdParam });
           
           // Debug: Log bill fetch result
-          console.log('=== Bill Fetch Result ===');
-          console.log('Bill result:', JSON.stringify(billResult, null, 2));
-          
           if (billResult.success && billResult.data) {
             // Handle different response structures
             let billResponseData = null;
@@ -416,11 +379,9 @@ export default function OrderManagementPage() {
             
             // Extract order_items from bill response if available (NEW: bills_management.php now returns order_items)
             if (billResponseData && billResponseData.order_items && Array.isArray(billResponseData.order_items)) {
-              console.log('✅ Found order_items in bill response:', billResponseData.order_items.length);
               // Store items from bill response - they're already fetched, no need to call get_ordersbyid.php again
               if (billResponseData.order_items.length > 0) {
                 itemsData = billResponseData.order_items;
-                console.log('Using order_items from bill response instead of separate API call');
               }
             }
             
@@ -429,9 +390,6 @@ export default function OrderManagementPage() {
               billData.payment_status = 'Unpaid';
             }
           }
-          
-          // Debug: Log extracted bill data
-          console.log('Extracted bill data:', JSON.stringify(billData, null, 2));
         } catch (error) {
           console.error('Error fetching bill:', error);
           // Continue even if bill fetch fails
@@ -459,7 +417,6 @@ export default function OrderManagementPage() {
       }
       
       setOrderItems(itemsData);
-      console.log('Setting order items:', itemsData.length);
       
       setDetailsModalOpen(true);
     } catch (error) {
@@ -523,10 +480,6 @@ export default function OrderManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
-      console.log('=== Fetching Dishes for Edit Modal ===');
-      console.log('Terminal:', terminal);
-      console.log('Branch ID:', branchId);
-      
       const params = { terminal };
       if (branchId) {
         params.branch_id = branchId;
@@ -534,35 +487,23 @@ export default function OrderManagementPage() {
       
       const result = await apiPost('api/get_products.php', params);
       
-      console.log('Dishes API response:', result);
-      
       let dishesData = [];
       if (result.success && result.data) {
         if (Array.isArray(result.data)) {
           dishesData = result.data;
-          console.log('Found dishes in result.data (array):', dishesData.length);
         } else if (result.data.data && Array.isArray(result.data.data)) {
           dishesData = result.data.data;
-          console.log('Found dishes in result.data.data:', dishesData.length);
         } else if (result.data.products && Array.isArray(result.data.products)) {
           dishesData = result.data.products;
-          console.log('Found dishes in result.data.products:', dishesData.length);
         } else if (typeof result.data === 'object') {
           // Try to find any array in the response
           for (const key in result.data) {
             if (Array.isArray(result.data[key])) {
               dishesData = result.data[key];
-              console.log(`Found dishes in result.data.${key}:`, dishesData.length);
               break;
             }
           }
         }
-      }
-      
-      if (dishesData.length === 0) {
-        console.warn('⚠️ No dishes found in API response');
-      } else {
-        console.log('✅ Found', dishesData.length, 'dishes');
       }
       
       const mappedDishes = dishesData.map(item => ({
@@ -576,7 +517,6 @@ export default function OrderManagementPage() {
       }));
       
       setDishes(mappedDishes);
-      console.log('✅ Dishes mapped and set:', mappedDishes.length);
     } catch (error) {
       console.error('Error fetching dishes:', error);
       console.error('Error details:', {
@@ -596,10 +536,6 @@ export default function OrderManagementPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
-      console.log('=== Fetching Categories for Edit Modal ===');
-      console.log('Terminal:', terminal);
-      console.log('Branch ID:', branchId);
-      
       const params = { terminal };
       if (branchId) {
         params.branch_id = branchId;
@@ -607,39 +543,26 @@ export default function OrderManagementPage() {
       
       const result = await apiPost('api/get_categories.php', params);
       
-      console.log('Categories API response:', result);
-      
       let categoriesData = [];
       if (result.success && result.data) {
         if (Array.isArray(result.data)) {
           categoriesData = result.data;
-          console.log('Found categories in result.data (array):', categoriesData.length);
         } else if (result.data.data && Array.isArray(result.data.data)) {
           categoriesData = result.data.data;
-          console.log('Found categories in result.data.data:', categoriesData.length);
         } else if (result.data.categories && Array.isArray(result.data.categories)) {
           categoriesData = result.data.categories;
-          console.log('Found categories in result.data.categories:', categoriesData.length);
         } else if (typeof result.data === 'object') {
           // Try to find any array in the response
           for (const key in result.data) {
             if (Array.isArray(result.data[key])) {
               categoriesData = result.data[key];
-              console.log(`Found categories in result.data.${key}:`, categoriesData.length);
               break;
             }
           }
         }
       }
       
-      if (categoriesData.length === 0) {
-        console.warn('⚠️ No categories found in API response');
-      } else {
-        console.log('✅ Found', categoriesData.length, 'categories');
-      }
-      
       setCategories(categoriesData);
-      console.log('✅ Categories set:', categoriesData.length);
     } catch (error) {
       console.error('Error fetching categories:', error);
       console.error('Error details:', {
@@ -670,18 +593,11 @@ export default function OrderManagementPage() {
       const orderId = order.order_id || order.id;
       const orderNumber = order.orderid || order.order_number || `ORD-${orderId}`;
       
-      console.log('=== Fetching Order Details for Edit ===');
-      console.log('Order ID:', orderId);
-      console.log('Order Number:', orderNumber);
-      
       // Fetch order details and items
       const orderResult = await apiPost('api/get_ordersbyid.php', { 
         order_id: orderId,
         orderid: orderNumber
       });
-      
-      console.log('=== Order Details API Response ===');
-      console.log('Order details API response:', JSON.stringify(orderResult, null, 2));
       
       // get_ordersbyid.php returns order with items, so extract items from orderResult
       // Handle multiple response structures for order data
@@ -693,32 +609,27 @@ export default function OrderManagementPage() {
           orderData = orderResult.data[0];
           if (orderData.items && Array.isArray(orderData.items)) {
             orderItems = orderData.items;
-            console.log('✅ Found items in order data (array[0].items):', orderItems.length);
           }
         } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
           orderData = orderResult.data.data[0];
           if (orderData.items && Array.isArray(orderData.items)) {
             orderItems = orderData.items;
-            console.log('✅ Found items in order data (data.data[0].items):', orderItems.length);
           }
         } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
           orderData = orderResult.data.order;
           if (orderData.items && Array.isArray(orderData.items)) {
             orderItems = orderData.items;
-            console.log('✅ Found items in order data (data.order.items):', orderItems.length);
           }
         } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
           orderData = orderResult.data;
           if (orderData.items && Array.isArray(orderData.items)) {
             orderItems = orderData.items;
-            console.log('✅ Found items in order data (data.items):', orderItems.length);
           }
         }
         
         // Also check for items at response level
         if (orderItems.length === 0 && orderResult.data.items && Array.isArray(orderResult.data.items)) {
           orderItems = orderResult.data.items;
-          console.log('✅ Found items in response data.items:', orderItems.length);
         }
       }
       
@@ -730,12 +641,9 @@ export default function OrderManagementPage() {
       
       // If still no items, try to find any array in the response
       if (orderItems.length === 0 && orderResult.success && orderResult.data) {
-        console.log('🔍 Searching for items array in response object...');
         for (const key in orderResult.data) {
           if (Array.isArray(orderResult.data[key])) {
             orderItems = orderResult.data[key];
-            console.log(`✅ Found items in result.data.${key}:`, orderItems.length);
-            console.log('Sample item from array:', orderItems[0]);
             break;
           }
         }
@@ -746,16 +654,10 @@ export default function OrderManagementPage() {
       }
       
       if (orderItems.length === 0) {
-        console.warn('⚠️ No order items found in API response');
-        console.warn('Order result:', JSON.stringify(orderResult, null, 2));
-        // Try to show user-friendly error
         setAlert({ 
           type: 'error', 
-          message: 'No order items found. The order may not have any items, or there was an error fetching them. Check console for details.' 
+          message: 'No order items found. The order may not have any items, or there was an error fetching them.' 
         });
-      } else {
-        console.log('✅ Found', orderItems.length, 'order items for editing');
-        console.log('First item sample:', JSON.stringify(orderItems[0], null, 2));
       }
       
       // Merge order data with the order from list to ensure all fields are present
@@ -803,22 +705,11 @@ export default function OrderManagementPage() {
           kitchen_id: item.kitchen_id || item.kitchenid || null,
         };
         
-        console.log(`Item ${index + 1}:`, {
-          original: item,
-          formatted: formattedItem
-        });
-        
         return formattedItem;
       });
       
-      console.log('✅ Formatted items for edit:', formattedItems.length);
-      if (formattedItems.length > 0) {
-        console.log('Sample formatted item:', JSON.stringify(formattedItems[0], null, 2));
-      }
-      
       setEditingOrder(mergedOrderData);
       
-      console.log('=== Setting Form Data ===');
       console.log('Formatted items count:', formattedItems.length);
       console.log('Formatted items:', JSON.stringify(formattedItems, null, 2));
       
@@ -838,7 +729,6 @@ export default function OrderManagementPage() {
       
       // Verify formData was set correctly
       setTimeout(() => {
-        console.log('=== Verifying Form Data After Set ===');
         console.log('formData.items.length:', formData.items.length);
       }, 100);
       
@@ -1140,26 +1030,20 @@ export default function OrderManagementPage() {
             
             if (billData && billData.bill_id) {
               billIdToUse = billData.bill_id;
-              console.log('Bill ID fetched:', billIdToUse);
             } else if (billData && billData.id) {
               // Some APIs might return 'id' instead of 'bill_id'
               billIdToUse = billData.id;
-              console.log('Bill ID fetched (from id field):', billIdToUse);
             }
           }
         } catch (fetchError) {
           console.error('Error fetching bill ID:', fetchError);
           // Don't return early - we'll try to use order_id as fallback
-          console.warn('Could not fetch bill_id, will try with order_id');
         }
       }
 
       // If we still don't have bill_id, we can still proceed with order_id
       // The API should handle updating existing bill or creating one
       // But we'll log a warning
-      if (!billIdToUse) {
-        console.warn('Bill ID not found, proceeding with order_id. API should handle this.');
-      }
 
       // Update bill payment_status to "Paid" via bills_management.php
       // Prefer bill_id if available, otherwise use order_id (API should handle updating existing bill)
@@ -1175,11 +1059,9 @@ export default function OrderManagementPage() {
       // This prevents duplicate bill creation
       if (billIdToUse) {
         billUpdatePayload.bill_id = billIdToUse;
-        console.log('Using bill_id for update:', billIdToUse);
       }
       // Always include order_id as well to help API find the bill
       billUpdatePayload.order_id = generatedBill.order_id;
-      console.log('Bill update will use:', billIdToUse ? `bill_id=${billIdToUse}` : `order_id=${generatedBill.order_id}`);
 
       // If cash payment, include cash_received and change
       if (generatedBill.payment_method === 'Cash') {
@@ -1239,16 +1121,10 @@ export default function OrderManagementPage() {
         orderid: orderidValue
       };
       
-      console.log('=== Updating Order Status to Complete ===');
-      console.log('Payload:', JSON.stringify(orderStatusPayload, null, 2));
-      
       let orderUpdateSuccess = false;
       let orderUpdateError = null;
       try {
         const orderStatusResult = await apiPost('api/chnageorder_status.php', orderStatusPayload);
-        
-        console.log('=== Order Status Update Result ===');
-        console.log('Result:', JSON.stringify(orderStatusResult, null, 2));
         
         // Check if order status update was successful - be strict about this
         const orderApiResponse = orderStatusResult.data;
@@ -2600,14 +2476,15 @@ export default function OrderManagementPage() {
                 </div>
               </div>
 
-              {/* Generate Bill Button - Only show if status is Running and no bill exists (works for all order types: Dine In, Take Away, Delivery) */}
+              {/* Generate Bill Button - Always show for Running orders (works for all order types: Dine In, Take Away, Delivery) */}
               {(() => {
                 // Case-insensitive status check
                 const status = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
                 const isRunning = status === 'running';
-                const hasNoBill = !existingBill;
                 
-                return isRunning && hasNoBill;
+                // Always show Generate Bill for Running orders, regardless of existing bill
+                // This ensures proper flow: Running → Generate Bill → Bill Generated → Pay Bill
+                return isRunning;
               })() && (
                 <div className="pt-2">
                   <Button
@@ -2683,18 +2560,25 @@ export default function OrderManagementPage() {
                 </div>
               )}
 
-              {/* Pay Bill Button - Show if bill exists and is unpaid, OR if order status is "Bill Generated" (to allow payment) */}
+              {/* Pay Bill Button - Only show if order status is "Bill Generated" or "Complete", NOT for "Running" orders */}
               {(() => {
-                // Check if order status is "Bill Generated" (case-insensitive)
+                // Check order status (case-insensitive)
                 const orderStatus = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
+                const isRunning = orderStatus === 'running';
                 const isBillGenerated = orderStatus === 'bill generated';
+                const isComplete = orderStatus === 'complete';
                 
-                // If order status is "Bill Generated", always show Pay Bill button (even if bill fetch failed)
-                if (isBillGenerated && !existingBill) {
-                  return true; // Show button to allow payment even if bill fetch failed
+                // Never show Pay Bill for Running orders - they should Generate Bill first
+                if (isRunning) {
+                  return false;
                 }
                 
-                // If bill exists, check payment status (case-insensitive)
+                // Show Pay Bill if status is "Bill Generated" (even if bill fetch failed)
+                if (isBillGenerated) {
+                  return true;
+                }
+                
+                // Show Pay Bill if bill exists and is unpaid (for Complete or other statuses)
                 if (existingBill) {
                   const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
                   return paymentStatus !== 'paid';
@@ -3399,13 +3283,24 @@ export default function OrderManagementPage() {
                         let errorMsg = 'Failed to generate bill';
                         
                         if (apiResponse && typeof apiResponse === 'object') {
-                          errorMsg = apiResponse.message || 
-                                    apiResponse.data?.message || 
-                                    apiResponse.data?.error || 
-                                    apiResponse.error ||
-                                    (apiResponse.success === false ? 'Bill creation failed on server' : errorMsg);
+                          // Check for database column errors
+                          const responseStr = JSON.stringify(apiResponse).toLowerCase();
+                          if (responseStr.includes('unknown column') || responseStr.includes('is_cancel')) {
+                            errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                          } else {
+                            errorMsg = apiResponse.message || 
+                                      apiResponse.data?.message || 
+                                      apiResponse.data?.error || 
+                                      apiResponse.error ||
+                                      (apiResponse.success === false ? 'Bill creation failed on server' : errorMsg);
+                          }
                         } else if (result.data && typeof result.data === 'string') {
-                          errorMsg = result.data;
+                          const dataStr = result.data.toLowerCase();
+                          if (dataStr.includes('unknown column') || dataStr.includes('is_cancel')) {
+                            errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                          } else {
+                            errorMsg = result.data;
+                          }
                         } else if (result.message) {
                           errorMsg = result.message;
                         }
@@ -3415,7 +3310,6 @@ export default function OrderManagementPage() {
                         console.error('HTTP Status:', result.status);
                         console.error('API Response:', apiResponse);
                         console.error('Error Message:', errorMsg);
-                        console.error('Full Result:', result);
                         
                         // Show user-friendly error message
                         setAlert({ 
@@ -3425,7 +3319,15 @@ export default function OrderManagementPage() {
                       }
                     } catch (error) {
                       console.error('Error generating bill:', error);
-                      setAlert({ type: 'error', message: 'Failed to generate bill: ' + (error.message || 'Network error') });
+                      const errorStr = (error.message || '').toLowerCase();
+                      let errorMsg = 'Failed to generate bill: ' + (error.message || 'Network error');
+                      
+                      // Check for database column errors in catch block
+                      if (errorStr.includes('unknown column') || errorStr.includes('is_cancel')) {
+                        errorMsg = 'Database error: The backend is trying to use a column that doesn\'t exist. Please contact the administrator to fix the database schema or update the API file (bills_management.php).';
+                      }
+                      
+                      setAlert({ type: 'error', message: errorMsg });
                     }
                   }}
                   className="w-full bg-gradient-to-r from-[#FF5F15] to-[#FF8C42] hover:from-[#FF6B2B] hover:to-[#FF9A5C] text-white font-semibold py-3.5 text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-[1.02]"
@@ -3845,14 +3747,6 @@ export default function OrderManagementPage() {
             
             if (receiptItems.length === 0) {
               console.error('❌ ERROR: Receipt modal opened with NO ITEMS!');
-              console.error('Generated bill:', JSON.stringify(generatedBill, null, 2));
-              // Try to fetch items if they're missing
-              if (generatedBill && generatedBill.order_id) {
-                console.log('Attempting to fetch items for receipt...');
-                // Items should have been fetched before opening modal, but try again as fallback
-              }
-            } else {
-              console.log('✅ Receipt modal opened with', receiptItems.length, 'items');
             }
             
             return (
@@ -3888,29 +3782,6 @@ export default function OrderManagementPage() {
                     branchName={getBranchName() || ''}
                     showPaidAmount={generatedBill.payment_status === 'Paid'}
                   />
-                  {/* Debug info - visible in development */}
-                  {process.env.NODE_ENV === 'development' && (
-                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                      <strong>Debug Info:</strong>
-                      <br />Items count: {receiptItems.length}
-                      <br />Order ID: {generatedBill.order_id}
-                      <br />Bill ID: {generatedBill.bill_id}
-                      {receiptItems.length > 0 && (
-                        <>
-                          <br />First item: {receiptItems[0].dish_name || receiptItems[0].name || 'N/A'}
-                          <br />
-                          <pre className="mt-2 text-xs overflow-auto max-h-32">
-                            {JSON.stringify(receiptItems.slice(0, 2), null, 2)}
-                          </pre>
-                        </>
-                      )}
-                      {receiptItems.length === 0 && (
-                        <div className="text-red-600 font-bold mt-2">
-                          ⚠️ NO ITEMS FOUND - Receipt will be empty!
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
 
                 {/* Action Buttons - Hidden in print */}
