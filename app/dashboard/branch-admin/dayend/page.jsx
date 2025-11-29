@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getBranchId, getFullname, getUsername, getTerminal } from '@/utils/api';
+import { apiPost, apiGet, getBranchId, getFullname, getUsername, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { Calendar, Printer, CheckCircle, DollarSign, Search, X } from 'lucide-react';
 
@@ -145,7 +145,11 @@ export default function DayEndPage() {
 
       // Fetch today's expenses
       try {
-        const expensesResult = await apiPost('api/get_expenses.php', { branch_id: branchId });
+        // Use POST with action='get' to fetch expenses from unified expense_management.php
+        const expensesResult = await apiPost('api/expense_management.php', { 
+          action: 'get',
+          branch_id: branchId 
+        });
         
         let expensesData = [];
         if (expensesResult.success && expensesResult.data) {

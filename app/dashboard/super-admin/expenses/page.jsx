@@ -5,8 +5,8 @@
  * Full CRUD operations for expenses with amounts
  * Shows expenses from all branches with branch filter
  * Users can enter expense title directly - it will be created if it doesn't exist
- * Uses APIs: api/get_expenses.php, api/expense_management.php, api/branch_management.php
- * Database: expenses table (id, expense_title, amount, branch_id, description, created_at, updated_at)
+ * Uses APIs: api/expense_management.php (POST with action='get'/'create'/'update'/'delete'), api/branch_management.php
+ * Database: expenses table (id, title, amount, description, branch_id, terminal, created_at, updated_at)
  */
 
 import { useEffect, useState } from 'react';
@@ -30,7 +30,7 @@ export default function ExpenseManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('all'); // 'all' or branch_id
   const [formData, setFormData] = useState({
-    expense_title: '',
+    title: '',
     amount: '',
     description: '',
     branch_id: '',
@@ -57,7 +57,7 @@ export default function ExpenseManagementPage() {
     if (searchTerm.trim() !== '') {
       const searchLower = searchTerm.toLowerCase();
       filtered = filtered.filter(expense => {
-        const title = expense.expense_title?.toLowerCase() || '';
+        const title = expense.title?.toLowerCase() || expense.expense_title?.toLowerCase() || '';
         const description = expense.description?.toLowerCase() || '';
         const branchName = expense.branch_name?.toLowerCase() || '';
         const amount = expense.amount?.toString() || '';
@@ -98,7 +98,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Fetch all expenses from all branches
-   * API: api/get_expenses.php (POST without branch_id or with branch_id=null for all)
+   * API: api/expense_management.php (POST with action='get' and branch_id=null for all)
    */
   const fetchExpenses = async () => {
     setLoading(true);
@@ -106,7 +106,11 @@ export default function ExpenseManagementPage() {
     
     try {
       // For superadmin, fetch all expenses (don't pass branch_id or pass null)
-      const result = await apiPost('api/get_expenses.php', { branch_id: null });
+      // Use POST with action='get' to fetch expenses from unified expense_management.php
+      const result = await apiPost('api/expense_management.php', { 
+        action: 'get',
+        branch_id: null 
+      });
       
       // Handle different response structures
       let expensesData = [];
@@ -149,7 +153,8 @@ export default function ExpenseManagementPage() {
         return {
           id: expense.id || expense.expense_id,
           expense_id: expense.id || expense.expense_id,
-          expense_title: expense.expense_title || expense.title || '',
+          title: expense.title || expense.expense_title || '',
+          expense_title: expense.title || expense.expense_title || '', // Keep for backward compatibility
           amount: parseFloat(expense.amount || 0),
           description: expense.description || '',
           branch_id: expense.branch_id || '',
@@ -179,14 +184,14 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle form submission (Create or Update)
-   * API: api/expense_management.php (POST)
+   * API: api/expense_management.php (POST with action='create' or 'update')
    */
   const handleSubmit = async (e) => {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
     // Validate form
-    if (!formData.expense_title || formData.expense_title.trim() === '') {
+    if (!formData.title || formData.title.trim() === '') {
       setAlert({ type: 'error', message: 'Expense title is required' });
       return;
     }
@@ -202,9 +207,10 @@ export default function ExpenseManagementPage() {
     }
 
     try {
-      // Prepare data - only include id for updates
+      // Prepare data - include action and id for updates
       const data = {
-        expense_title: formData.expense_title.trim(),
+        action: editingExpense && editingExpense.id ? 'update' : 'create',
+        title: formData.title.trim(),
         amount: parseFloat(formData.amount),
         description: formData.description.trim(),
         branch_id: formData.branch_id,
@@ -288,7 +294,7 @@ export default function ExpenseManagementPage() {
           type: 'success', 
           message: result.data?.message || (editingExpense ? 'Expense updated successfully!' : 'Expense created successfully!')
         });
-        setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+        setFormData({ title: '', amount: '', description: '', branch_id: '' });
         setEditingExpense(null);
         setModalOpen(false);
         fetchExpenses(); // Refresh list
@@ -361,7 +367,7 @@ export default function ExpenseManagementPage() {
   const handleEdit = (expense) => {
     setEditingExpense(expense);
     setFormData({
-      expense_title: expense.expense_title || '',
+      title: expense.title || expense.expense_title || '',
       amount: expense.amount?.toString() || '',
       description: expense.description || '',
       branch_id: expense.branch_id?.toString() || '',
@@ -371,7 +377,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle delete button click
-   * API: api/expense_management.php (DELETE)
+   * API: api/expense_management.php (POST with action='delete')
    */
   const handleDelete = async (expenseId) => {
     if (!window.confirm('Are you sure you want to delete this expense? This action cannot be undone.')) {
@@ -379,7 +385,10 @@ export default function ExpenseManagementPage() {
     }
 
     try {
-      const result = await apiDelete('api/expense_management.php', { id: expenseId });
+      const result = await apiPost('api/expense_management.php', { 
+        action: 'delete',
+        id: expenseId 
+      });
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (
@@ -436,7 +445,7 @@ export default function ExpenseManagementPage() {
     },
     {
       header: 'Expense Title',
-      accessor: 'expense_title',
+      accessor: (row) => row.title || row.expense_title || '',
       className: 'min-w-[200px] font-medium',
     },
     {
@@ -498,7 +507,7 @@ export default function ExpenseManagementPage() {
           <Button
             onClick={() => {
               setEditingExpense(null);
-              setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+              setFormData({ title: '', amount: '', description: '', branch_id: '' });
               setModalOpen(true);
             }}
             className="flex items-center gap-2 w-full sm:w-auto"
@@ -654,7 +663,7 @@ export default function ExpenseManagementPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingExpense(null);
-            setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+            setFormData({ title: '', amount: '', description: '', branch_id: '' });
             setAlert({ type: '', message: '' });
           }}
           title={editingExpense ? 'Edit Expense' : 'Add New Expense'}
@@ -687,9 +696,9 @@ export default function ExpenseManagementPage() {
 
             <Input
               label="Expense Title"
-              name="expense_title"
-              value={formData.expense_title}
-              onChange={(e) => setFormData({ ...formData, expense_title: e.target.value })}
+              name="title"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               placeholder="e.g., Groceries, Utilities, Rent, Supplies"
               required
               autoFocus
@@ -736,7 +745,7 @@ export default function ExpenseManagementPage() {
                 onClick={() => {
                   setModalOpen(false);
                   setEditingExpense(null);
-                  setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+                  setFormData({ title: '', amount: '', description: '', branch_id: '' });
                   setAlert({ type: '', message: '' });
                 }}
                 className="w-full sm:w-auto"
