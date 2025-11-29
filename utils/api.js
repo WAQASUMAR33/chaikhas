@@ -645,10 +645,12 @@ export const apiPost = async (endpoint, body, options = {}) => {
       
       // Check if response is an empty object
       if (data && typeof data === 'object' && Object.keys(data).length === 0) {
-        // For endpoints that return arrays (like get_tables.php), empty object means no results
+        // For endpoints that return arrays (like get_tables.php, get_sales.php), empty object means no results
         if (normalizedEndpoint.includes('get_tables') || 
             normalizedEndpoint.includes('get_halls') || 
-            normalizedEndpoint.includes('get_') && normalizedEndpoint.includes('.php')) {
+            normalizedEndpoint.includes('get_sales') ||
+            normalizedEndpoint.includes('get_expenses') ||
+            (normalizedEndpoint.includes('get_') && normalizedEndpoint.includes('.php'))) {
           // Return empty array for list endpoints
           devLog('Empty object response from', normalizedEndpoint, '- treating as empty array');
           return {

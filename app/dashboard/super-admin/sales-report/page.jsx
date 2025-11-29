@@ -4,7 +4,7 @@
  * Sales Report Page - Super Admin
  * Generate and print monthly sales reports for all branches
  * Shows sales from all branches with branch filter
- * Uses API: get_sales_report.php, branch_management.php
+ * Uses API: api/get_sales_report.php, api/branch_management.php
  */
 
 import { useEffect, useState, useRef } from 'react';
@@ -106,7 +106,7 @@ export default function SalesReportPage() {
         });
       }
 
-      const result = await apiPost('/get_sales_report.php', params);
+      const result = await apiPost('api/get_sales_report.php', params);
 
       if (result.success && result.data) {
         let salesData = [];

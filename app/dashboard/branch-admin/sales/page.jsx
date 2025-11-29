@@ -3,7 +3,7 @@
 /**
  * Sales List Page - Enhanced Version
  * Show daily, weekly, monthly sales with real-time data
- * Uses real API: get_sales.php
+ * Uses real API: api/get_sales.php (sales reports by period)
  * Features:
  * - Real-time data sync
  * - Daily/Weekly/Monthly filters
@@ -46,8 +46,10 @@ export default function SalesListPage() {
 
   /**
    * Fetch sales data from API
-   * API: get_sales.php (POST with terminal and period)
+   * API: api/get_sales.php (POST with terminal and period)
    * Expected response: Array of sales data or { success: true, data: [...] }
+   * Note: api/get_sales.php is for sales reports by period (daily/weekly/monthly)
+   *      pos/get_sales.php is for raw order data (not used here)
    */
   const fetchSales = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) {
@@ -80,10 +82,16 @@ export default function SalesListPage() {
       });
       
       console.log('Fetching sales data with params:', apiParams);
-      // Sales endpoints are typically in pos/ folder
-      const result = await apiPost('pos/get_sales.php', apiParams);
+      // Use api/get_sales.php for sales reports by period (daily/weekly/monthly)
+      const result = await apiPost('api/get_sales.php', apiParams);
       
-      console.log('Sales API response:', result);
+      console.log('=== Sales API Response ===');
+      console.log('Full result:', JSON.stringify(result, null, 2));
+      console.log('result.success:', result?.success);
+      console.log('result.data:', result?.data);
+      console.log('result.status:', result?.status);
+      console.log('result.data type:', typeof result?.data);
+      console.log('result.data keys:', result?.data ? Object.keys(result.data) : 'no data');
       
       // Handle different response structures
       let salesData = [];
@@ -126,7 +134,7 @@ export default function SalesListPage() {
               errorMessage.toLowerCase().includes("column 'sts'")) {
             setAlert({ 
               type: 'error', 
-              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update api/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
             });
           }
           // Check for database connection errors
@@ -176,14 +184,14 @@ export default function SalesListPage() {
           if (result.status === 404) {
             setAlert({ 
               type: 'error', 
-              message: `API Endpoint Not Found: pos/get_sales.php does not exist or is not accessible. Please verify the API file exists at the correct path.` 
+              message: `API Endpoint Not Found: api/get_sales.php does not exist or is not accessible. Please verify the API file exists at the correct path.` 
             });
           }
           // Check if it's a 500 (server error)
           else if (result.status === 500) {
             setAlert({ 
               type: 'error', 
-              message: `Server Error (${statusMessage}): The API endpoint returned an error. Please check the server logs. This might be due to the 'orders.sts' column issue - update pos/get_sales.php to use 'order_status' instead of 'sts'.` 
+              message: `Server Error (${statusMessage}): The API endpoint returned an error. Please check the server logs. This might be due to the 'orders.sts' column issue - update api/get_sales.php to use 'order_status' instead of 'sts'.` 
             });
           }
           // Check for database column errors in raw response
@@ -192,7 +200,7 @@ export default function SalesListPage() {
               rawResponse.toLowerCase().includes("column 'sts'"))) {
             setAlert({ 
               type: 'error', 
-              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'.` 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update api/get_sales.php to use 'order_status' instead of 'sts'.` 
             });
           }
           // Generic empty response error
@@ -212,7 +220,7 @@ export default function SalesListPage() {
               errorMessage.toLowerCase().includes("column 'sts'")) {
             setAlert({ 
               type: 'error', 
-              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update pos/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update api/get_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMessage}` 
             });
           }
           // Check for database connection errors
@@ -243,12 +251,26 @@ export default function SalesListPage() {
       }
       
       // Handle case where result.success is true but result.data is empty or undefined
+      // Empty object {} from API might mean no sales data for the period
       if (result.success && (!result.data || (typeof result.data === 'object' && Object.keys(result.data).length === 0))) {
-        console.warn('API returned success but no data');
-        setAlert({ 
-          type: 'warning', 
-          message: 'No sales data available for the selected period. Try selecting a different date range.' 
-        });
+        console.warn('API returned success but no data (empty object)');
+        console.warn('This might mean: 1) No sales for the period, 2) API returned empty response');
+        
+        // Check if it's truly empty or if there's data elsewhere
+        if (result.data && typeof result.data === 'object' && Object.keys(result.data).length === 0) {
+          // Empty object - treat as no data available
+          setAlert({ 
+            type: 'info', 
+            message: 'No sales data available for the selected period. Try selecting a different date range.' 
+          });
+        } else {
+          // No data property at all
+          setAlert({ 
+            type: 'warning', 
+            message: 'API returned success but no data. The server may have returned an empty response.' 
+          });
+        }
+        
         setSales([]);
         setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
         if (showRefreshing) {

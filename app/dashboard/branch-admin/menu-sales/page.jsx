@@ -3,7 +3,7 @@
 /**
  * Menu Items Sales List Page
  * Show sales per menu item
- * Uses real API: get_menu_sales.php
+ * Uses real API: api/get_menu_sales.php
  */
 
 import { useEffect, useState } from 'react';
@@ -27,13 +27,13 @@ export default function MenuSalesListPage() {
 
   /**
    * Fetch menu sales data from API
-   * API: get_menu_sales.php (POST with terminal and period)
+   * API: api/get_menu_sales.php (POST with terminal and period)
    */
   const fetchMenuSales = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_menu_sales.php', { terminal, period });
+      const result = await apiPost('api/get_menu_sales.php', { terminal, period });
       
       if (result.success && result.data && Array.isArray(result.data)) {
         // Map API response

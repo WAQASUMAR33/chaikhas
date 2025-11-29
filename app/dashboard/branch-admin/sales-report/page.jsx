@@ -4,7 +4,7 @@
  * Sales Report Page - Branch Admin
  * Generate and print monthly sales reports
  * Shows only sales for the current branch
- * Uses API: get_sales_report.php
+ * Uses API: api/get_sales_report.php
  */
 
 import { useEffect, useState, useRef } from 'react';
@@ -85,7 +85,7 @@ export default function SalesReportPage() {
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
       const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
 
-      const result = await apiPost('/get_sales_report.php', {
+      const result = await apiPost('api/get_sales_report.php', {
         branch_id: branchId,
         start_date: startDate,
         end_date: endDate,

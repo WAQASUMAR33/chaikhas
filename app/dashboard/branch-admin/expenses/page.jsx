@@ -192,49 +192,62 @@ export default function ExpenseManagementPage() {
 
       console.log('=== API Response ===');
       console.log('Full result:', JSON.stringify(result, null, 2));
+      console.log('result type:', typeof result);
+      console.log('result keys:', result ? Object.keys(result) : 'result is null/undefined');
+      console.log('result.success:', result?.success);
+      console.log('result.data:', result?.data);
+      console.log('result.data type:', typeof result?.data);
+      console.log('result.data keys:', result?.data ? Object.keys(result.data) : 'no data');
 
       // Handle different response structures
-      // Check multiple success indicators
+      // apiPost returns: { success: response.ok, data: parsedJson, status: response.status }
+      // So if result.success === true, the HTTP request succeeded
       let isSuccess = false;
+      let hasError = false;
       
-      if (result && result.success === true) {
-        // If result.success is true, check data
-        if (result.data) {
-          // Check various success indicators in data
-          if (result.data.success === true || 
-              result.data.success === 'true' ||
-              result.data.status === 'success' ||
-              result.data.status === 'Success') {
-            isSuccess = true;
-          } else if (result.data.message) {
-            const msg = result.data.message.toLowerCase();
-            if (msg.includes('success') || 
-                msg.includes('created') || 
-                msg.includes('updated') || 
-                msg.includes('saved') ||
-                msg.includes('inserted')) {
-              isSuccess = true;
-            }
-          } else if (!result.data.error && !result.data.success) {
-            // If no error and no explicit success field, assume success if result.success is true
-            isSuccess = true;
+      // Check for explicit errors first
+      if (result) {
+        // Explicit error indicators
+        if (result.success === false) {
+          hasError = true;
+        } else if (result.error) {
+          hasError = true;
+        } else if (result.data && result.data.error) {
+          hasError = true;
+        } else if (result.data && result.data.success === false) {
+          hasError = true;
+        } else if (result.data && result.data.message) {
+          const msg = String(result.data.message).toLowerCase();
+          if (msg.includes('error') || msg.includes('fail') || msg.includes('invalid')) {
+            hasError = true;
           }
-        } else {
-          // If result.success is true but no data, assume success
+        }
+      }
+      
+      // If no explicit error, check for success
+      if (!hasError && result) {
+        // PRIMARY: If result.success === true, HTTP request succeeded
+        // This means the API call was successful, even if data is empty {}
+        if (result.success === true) {
           isSuccess = true;
         }
-      } else if (result && result.data) {
-        // Check if data itself indicates success
-        if (result.data.success === true || 
-            result.data.success === 'true' ||
-            result.data.status === 'success') {
+        // SECONDARY: Check result.data.success
+        else if (result.data && (result.data.success === true || result.data.success === 'true')) {
           isSuccess = true;
-        } else if (result.data.message) {
-          const msg = result.data.message.toLowerCase();
+        }
+        // TERTIARY: Check result.data.status
+        else if (result.data && (result.data.status === 'success' || result.data.status === 'Success')) {
+          isSuccess = true;
+        }
+        // QUATERNARY: Check message for success keywords
+        else if (result.data && result.data.message) {
+          const msg = String(result.data.message).toLowerCase();
           if (msg.includes('success') || 
               msg.includes('created') || 
               msg.includes('updated') || 
-              msg.includes('saved')) {
+              msg.includes('saved') ||
+              msg.includes('inserted') ||
+              msg.includes('added')) {
             isSuccess = true;
           }
         }
@@ -268,24 +281,28 @@ export default function ExpenseManagementPage() {
           }
         }
         
-        // Only log if we have meaningful data
-        if (result && (result.data || result.message || result.error)) {
-          console.error('Expense save failed:', {
-            result,
-            errorMessage,
-            data,
-            resultKeys: Object.keys(result),
-            dataKeys: result.data ? Object.keys(result.data) : 'no data'
-          });
-        } else {
-          console.error('Expense save failed - empty or invalid response:', {
-            result,
-            data,
-            resultType: typeof result,
-            resultIsNull: result === null,
-            resultIsUndefined: result === undefined
-          });
-          errorMessage = 'No response from server. Please check your connection and try again.';
+        // Log detailed error information
+        console.error('Expense save failed:', {
+          result,
+          errorMessage,
+          data,
+          resultType: typeof result,
+          resultIsNull: result === null,
+          resultIsUndefined: result === undefined,
+          resultKeys: result ? Object.keys(result) : 'no keys',
+          resultData: result?.data,
+          resultDataKeys: result?.data ? Object.keys(result.data) : 'no data keys',
+          resultSuccess: result?.success,
+          resultDataSuccess: result?.data?.success,
+          resultDataMessage: result?.data?.message,
+          resultDataError: result?.data?.error
+        });
+        
+        // If result is empty or malformed, provide specific message
+        if (!result || (typeof result === 'object' && Object.keys(result).length === 0)) {
+          errorMessage = 'No response from server. The expense may have been created successfully. Please refresh the page to verify.';
+        } else if (result && !result.data && !result.message && !result.error && result.success === undefined) {
+          errorMessage = 'Unexpected response format. The expense may have been created successfully. Please refresh the page to verify.';
         }
         
         setAlert({ 
