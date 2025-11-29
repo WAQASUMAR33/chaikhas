@@ -106,6 +106,10 @@ export default function SalesReportPage() {
         });
       }
 
+      // Fetch sales report including credit sales
+      // The API should return all bills (paid, unpaid, and credit) in the date range
+      params.include_credit = true; // Explicitly request credit sales to be included
+      
       const result = await apiPost('api/get_sales_report.php', params);
 
       if (result.success && result.data) {
@@ -119,9 +123,45 @@ export default function SalesReportPage() {
           salesData = result.data.sales;
         }
 
+        // Ensure all sales are included (paid, unpaid, and credit)
+        // Filter out any null/undefined entries
+        salesData = salesData.filter(sale => sale !== null && sale !== undefined);
+        
+        // Log all sales data for debugging credit sales
+        console.log('=== Sales Report Data ===');
+        console.log('Total records:', salesData.length);
+        console.log('Sample sale:', salesData[0]);
+        
+        // Log credit sales count for debugging - check multiple field names
+        const creditSalesCount = salesData.filter(sale => {
+          const isCredit = sale.payment_mode === 'Credit' || 
+                          sale.payment_method === 'Credit' || 
+                          sale.payment_status === 'Credit' || 
+                          sale.is_credit === true ||
+                          sale.is_credit === 1 ||
+                          (sale.payment_status && sale.payment_status.toLowerCase() === 'credit') ||
+                          (sale.payment_method && sale.payment_method.toLowerCase() === 'credit') ||
+                          (sale.payment_mode && sale.payment_mode.toLowerCase() === 'credit');
+          
+          if (isCredit) {
+            console.log('Credit sale found:', {
+              order_id: sale.order_id,
+              payment_mode: sale.payment_mode,
+              payment_method: sale.payment_method,
+              payment_status: sale.payment_status,
+              is_credit: sale.is_credit,
+              customer_name: sale.customer_name
+            });
+          }
+          
+          return isCredit;
+        }).length;
+        
+        console.log(`Sales Report: Total records: ${salesData.length}, Credit sales: ${creditSalesCount}`);
+
         setReportData(salesData);
         setReportGenerated(true);
-        setAlert({ type: 'success', message: `Report generated successfully. Found ${salesData.length} records.` });
+        setAlert({ type: 'success', message: `Report generated successfully. Found ${salesData.length} records (${creditSalesCount} credit sales).` });
       } else {
         setAlert({ type: 'error', message: result.data?.message || 'Failed to generate report' });
         setReportData([]);
@@ -152,13 +192,22 @@ export default function SalesReportPage() {
     }, 100);
   };
 
-  // Calculate totals
+  // Calculate totals - Enhanced credit detection
   const totals = reportData.reduce((acc, sale) => {
-    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
-    const billAmount = parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || 0);
+    // Enhanced credit detection - check multiple field names and formats
+    const isCredit = sale.payment_mode === 'Credit' || 
+                    sale.payment_method === 'Credit' || 
+                    sale.payment_status === 'Credit' || 
+                    sale.is_credit === true ||
+                    sale.is_credit === 1 ||
+                    (sale.payment_status && String(sale.payment_status).toLowerCase() === 'credit') ||
+                    (sale.payment_method && String(sale.payment_method).toLowerCase() === 'credit') ||
+                    (sale.payment_mode && String(sale.payment_mode).toLowerCase() === 'credit');
+    
+    const billAmount = parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || sale.total_amount || 0);
     const serviceCharge = parseFloat(sale.service_charge || 0);
     const discount = parseFloat(sale.discount_amount || sale.discount || 0);
-    const netTotal = parseFloat(sale.net_total || sale.net_total_amount || sale.grand_total || 0);
+    const netTotal = parseFloat(sale.net_total || sale.net_total_amount || sale.grand_total || sale.final_amount || 0);
     
     acc.billAmount += billAmount;
     acc.serviceCharge += serviceCharge;
@@ -168,6 +217,15 @@ export default function SalesReportPage() {
     // Calculate credit sales total
     if (isCredit) {
       acc.creditSales += netTotal;
+      // Debug log for credit sales
+      console.log('Credit sale in totals:', {
+        order_id: sale.order_id,
+        netTotal: netTotal,
+        payment_status: sale.payment_status,
+        payment_method: sale.payment_method,
+        payment_mode: sale.payment_mode,
+        is_credit: sale.is_credit
+      });
     }
     
     return acc;
@@ -316,8 +374,16 @@ export default function SalesReportPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {reportData.map((sale, index) => {
-                    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
-                    const customerName = sale.customer_name || null;
+                    // Enhanced credit detection - check multiple field names and formats
+                    const isCredit = sale.payment_mode === 'Credit' || 
+                                    sale.payment_method === 'Credit' || 
+                                    sale.payment_status === 'Credit' || 
+                                    sale.is_credit === true ||
+                                    sale.is_credit === 1 ||
+                                    (sale.payment_status && String(sale.payment_status).toLowerCase() === 'credit') ||
+                                    (sale.payment_method && String(sale.payment_method).toLowerCase() === 'credit') ||
+                                    (sale.payment_mode && String(sale.payment_mode).toLowerCase() === 'credit');
+                    const customerName = sale.customer_name || sale.customerName || null;
                     
                     return (
                       <tr key={sale.order_id || index} className={`hover:bg-gray-50 ${isCredit ? 'bg-amber-50' : ''}`}>
@@ -666,8 +732,16 @@ export default function SalesReportPage() {
                 </thead>
                 <tbody>
                   {reportData.map((sale, index) => {
-                    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
-                    const customerName = sale.customer_name || null;
+                    // Enhanced credit detection - check multiple field names and formats
+                    const isCredit = sale.payment_mode === 'Credit' || 
+                                    sale.payment_method === 'Credit' || 
+                                    sale.payment_status === 'Credit' || 
+                                    sale.is_credit === true ||
+                                    sale.is_credit === 1 ||
+                                    (sale.payment_status && String(sale.payment_status).toLowerCase() === 'credit') ||
+                                    (sale.payment_method && String(sale.payment_method).toLowerCase() === 'credit') ||
+                                    (sale.payment_mode && String(sale.payment_mode).toLowerCase() === 'credit');
+                    const customerName = sale.customer_name || sale.customerName || null;
                     
                     return (
                       <tr key={sale.order_id || index} style={{ backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
@@ -712,6 +786,13 @@ export default function SalesReportPage() {
                     <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.netTotal)}</td>
                     <td colSpan="4" style={{ padding: '8px', border: '1px solid #000' }}></td>
                   </tr>
+                  {totals.creditSales > 0 && (
+                    <tr style={{ backgroundColor: '#fef3c7', borderTop: '1px solid #92400e', fontWeight: 'bold' }}>
+                      <td colSpan="7" style={{ padding: '8px', border: '1px solid #000', textAlign: 'right', color: '#92400e' }}>Total Credit Sales:</td>
+                      <td colSpan="4" style={{ padding: '8px', border: '1px solid #000', textAlign: 'right', color: '#92400e' }}>{formatPKR(totals.creditSales)}</td>
+                      <td colSpan="4" style={{ padding: '8px', border: '1px solid #000' }}></td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
               

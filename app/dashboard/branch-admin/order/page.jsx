@@ -1909,7 +1909,7 @@ export default function OrderManagementPage() {
       }
       
       // Check success for both 'Paid' and 'Credit' statuses
-      // Also check if message contains "success" or "updated successfully" (case insensitive)
+      // The API may return success message even if payment_status in response hasn't updated yet
       // Handle both object and string responses
       let billUpdateSuccess = false;
       if (billUpdateResult.success && billApiResponse) {
@@ -1921,18 +1921,27 @@ export default function OrderManagementPage() {
                              lowerMsg.includes('paid') ||
                              lowerMsg.includes('credit');
         } else if (typeof billApiResponse === 'object') {
-          // Check various success indicators
-          billUpdateSuccess = billApiResponse.success === true ||
-            billApiResponse.data?.payment_status === finalPaymentStatus ||
-            billApiResponse.data?.bill?.payment_status === finalPaymentStatus ||
-            billApiResponse.payment_status === finalPaymentStatus ||
-            billApiResponse.status === 'success' ||
-            (billApiResponse.message && (
-              billApiResponse.message.toLowerCase().includes('success') ||
-              billApiResponse.message.toLowerCase().includes('updated successfully') ||
-              billApiResponse.message.toLowerCase().includes('paid') ||
-              billApiResponse.message.toLowerCase().includes('credit')
-            ));
+          // Primary check: API explicitly says success
+          if (billApiResponse.success === true) {
+            billUpdateSuccess = true;
+          }
+          // Secondary check: Check if payment_status matches (but API might not have updated it in response yet)
+          else if (billApiResponse.data?.payment_status === finalPaymentStatus ||
+                   billApiResponse.data?.bill?.payment_status === finalPaymentStatus ||
+                   billApiResponse.payment_status === finalPaymentStatus) {
+            billUpdateSuccess = true;
+          }
+          // Tertiary check: Check message for success indicators
+          else if (billApiResponse.message && (
+            billApiResponse.message.toLowerCase().includes('success') ||
+            billApiResponse.message.toLowerCase().includes('updated successfully')
+          )) {
+            billUpdateSuccess = true;
+          }
+          // Also check status field
+          else if (billApiResponse.status === 'success') {
+            billUpdateSuccess = true;
+          }
         }
       }
       
@@ -1952,11 +1961,13 @@ export default function OrderManagementPage() {
         }
       }
 
-      // Update order status: 'Credit' for credit payments, 'Complete' for others
+      // Update order status: 'Bill Generated' for credit payments (Credit is not a valid order status), 'Complete' for others
+      // Note: We display 'Credit' in UI based on payment_method, not order_status
       // This MUST succeed for the payment to be considered complete
       const orderIdValue = generatedBill.order_id;
       const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-      const finalOrderStatus = paymentMode === 'Credit' ? 'Credit' : 'Complete';
+      // Keep order status as 'Bill Generated' for credit payments since 'Credit' is not a valid order status
+      const finalOrderStatus = paymentMode === 'Credit' ? 'Bill Generated' : 'Complete';
       
       const orderStatusPayload = { 
         status: finalOrderStatus,
@@ -2204,9 +2215,12 @@ export default function OrderManagementPage() {
         if (existingBill) {
           setExistingBill({
             ...existingBill,
-            payment_status: 'Paid',
+            payment_status: finalPaymentStatus,
+            payment_method: finalPaymentMethod,
             cash_received: cashReceived,
             change: change,
+            customer_id: paymentCustomerId || null,
+            is_credit: paymentMode === 'Credit',
           });
         }
         
@@ -2467,9 +2481,16 @@ export default function OrderManagementPage() {
     {
       header: 'Status',
       accessor: (row) => {
-        // Use order_status if available (from API), otherwise use normalized status
-        const displayStatus = row.order_status || row.original_status || row.status || 'Pending';
-        const statusForColor = (displayStatus || row.status || 'Pending').toLowerCase();
+        // Check if this is a credit payment - display 'Credit' based on payment_method/payment_status
+        const isCredit = row.payment_method === 'Credit' || 
+                        row.payment_mode === 'Credit' || 
+                        row.payment_status === 'Credit' ||
+                        row.is_credit === true;
+        
+        // If credit payment, display 'Credit' regardless of order_status
+        // Otherwise, use order_status
+        const displayStatus = isCredit ? 'Credit' : (row.order_status || row.original_status || row.status || 'Pending');
+        const statusForColor = displayStatus.toLowerCase();
         return (
           <span className={`px-2.5 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${getStatusColor(statusForColor)} border`}>
             {displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1)}
