@@ -1560,18 +1560,25 @@ export default function OrderManagementPage() {
         }
       }
 
-      // Update order status to "Complete" since bill is paid
+      // Update order status: 'Credit' for credit payments, 'Complete' for others
       // This MUST succeed for the payment to be considered complete
       const orderIdValue = generatedBill.order_id;
       const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
       
+      // Check if this is a credit payment
+      const isCreditPayment = generatedBill.payment_method === 'Credit' || 
+                              generatedBill.payment_mode === 'Credit' ||
+                              generatedBill.payment_status === 'Credit' ||
+                              generatedBill.is_credit === true;
+      const finalOrderStatus = isCreditPayment ? 'Credit' : 'Complete';
+      
       const orderStatusPayload = { 
-        status: 'Complete',
+        status: finalOrderStatus,
         order_id: orderIdValue,
         orderid: orderidValue
       };
       
-      console.log('=== Updating Order Status to Complete ===');
+      console.log(`=== Updating Order Status to ${finalOrderStatus} ===`);
       console.log('Payload:', JSON.stringify(orderStatusPayload, null, 2));
       
       let orderUpdateSuccess = false;

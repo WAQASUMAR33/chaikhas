@@ -36,11 +36,10 @@ export default function OrderManagementPage() {
   const [billData, setBillData] = useState({
     discount_percentage: 0, // Discount as percentage (e.g., 10 means 10%)
     service_charge: 0,
-    payment_mode: 'Cash',
-    customer_id: null, // For credit customers
-    is_credit: false, // Whether this is a credit sale
   });
   const [customers, setCustomers] = useState([]); // Credit customers list
+  const [paymentMode, setPaymentMode] = useState('Cash'); // Payment mode for Pay Bill modal
+  const [paymentCustomerId, setPaymentCustomerId] = useState(null); // Customer ID for credit payment
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentData, setPaymentData] = useState({
@@ -85,19 +84,16 @@ export default function OrderManagementPage() {
     };
   }, [filter]);
 
-  // Initialize bill data when bill modal opens (no auto-calculation)
-  useEffect(() => {
-    if (billModalOpen && billOrder) {
-      // Preserve existing service charge if already set, otherwise default to 0
-      setBillData(prev => ({
-        ...prev,
-        service_charge: prev.service_charge || 0,
-        discount_percentage: prev.discount_percentage || 0,
-        payment_mode: prev.payment_mode || 'Cash',
-        customer_id: prev.customer_id || null,
-        is_credit: prev.is_credit || false,
-      }));
-    } else if (!billModalOpen) {
+      // Initialize bill data when bill modal opens (no auto-calculation)
+      useEffect(() => {
+        if (billModalOpen && billOrder) {
+          // Preserve existing service charge if already set, otherwise default to 0
+          setBillData(prev => ({
+            ...prev,
+            service_charge: prev.service_charge || 0,
+            discount_percentage: prev.discount_percentage || 0,
+          }));
+        } else if (!billModalOpen) {
       // Reset bill data when modal closes
       setBillData({
         discount_percentage: 0,
@@ -111,7 +107,7 @@ export default function OrderManagementPage() {
 
   // Auto-calculate change when cash received changes (only for Cash payments)
   useEffect(() => {
-    if (paymentModalOpen && generatedBill && generatedBill.payment_method === 'Cash') {
+    if (paymentModalOpen && generatedBill && paymentMode === 'Cash') {
       const grandTotal = parseFloat(generatedBill.grand_total || 0);
       const cashReceived = parseFloat(paymentData.cash_received || 0);
       const change = Math.max(0, cashReceived - grandTotal);
@@ -119,7 +115,7 @@ export default function OrderManagementPage() {
         ...prev,
         change: change,
       }));
-    } else if (paymentModalOpen && generatedBill && generatedBill.payment_method !== 'Cash') {
+    } else if (paymentModalOpen && generatedBill && paymentMode !== 'Cash') {
       // For non-cash payments, set cash received to grand total
       const grandTotal = parseFloat(generatedBill.grand_total || 0);
       setPaymentData(prev => ({
@@ -128,7 +124,7 @@ export default function OrderManagementPage() {
         change: 0,
       }));
     }
-  }, [paymentModalOpen, paymentData.cash_received, generatedBill]);
+  }, [paymentModalOpen, paymentData.cash_received, generatedBill, paymentMode]);
 
   /**
    * Fetch orders from API
@@ -1026,12 +1022,21 @@ export default function OrderManagementPage() {
       return;
     }
 
+    // Validate: If payment mode is Credit, customer must be selected
+    if (paymentMode === 'Credit' && !paymentCustomerId) {
+      setAlert({ 
+        type: 'error', 
+        message: 'Please select a customer for credit payment.' 
+      });
+      return;
+    }
+
     const grandTotal = parseFloat(generatedBill.grand_total || 0);
     let cashReceived = 0;
     let change = 0;
 
     // For Cash payments, validate cash received
-    if (generatedBill.payment_method === 'Cash') {
+    if (paymentMode === 'Cash') {
       cashReceived = parseFloat(paymentData.cash_received || 0);
 
       if (cashReceived <= 0) {
@@ -1101,15 +1106,25 @@ export default function OrderManagementPage() {
       // The API should handle updating existing bill or creating one
       // But we'll log a warning
 
-      // Update bill payment_status to "Paid" via bills_management.php
+      // Update bill payment_status via bills_management.php
+      // For Credit payments, set status to 'Credit', otherwise 'Paid'
+      const finalPaymentStatus = paymentMode === 'Credit' ? 'Credit' : 'Paid';
+      const finalPaymentMethod = paymentMode;
+      
       // Prefer bill_id if available, otherwise use order_id (API should handle updating existing bill)
       // IMPORTANT: Do NOT include total_amount - that would trigger bill creation instead of payment update
       const billUpdatePayload = {
-        payment_status: 'Paid',
-        payment_method: generatedBill.payment_method || 'Cash',
+        payment_status: finalPaymentStatus,
+        payment_method: finalPaymentMethod,
         // Do NOT include total_amount, service_charge, discount, grand_total
         // These would cause the API to treat this as bill creation, not payment update
       };
+
+      // Add customer_id and is_credit for credit payments
+      if (paymentMode === 'Credit' && paymentCustomerId) {
+        billUpdatePayload.customer_id = paymentCustomerId;
+        billUpdatePayload.is_credit = true;
+      }
 
       // CRITICAL: Always include both bill_id AND order_id to ensure API finds existing bill
       // This prevents duplicate bill creation
@@ -1120,7 +1135,7 @@ export default function OrderManagementPage() {
       billUpdatePayload.order_id = generatedBill.order_id;
 
       // If cash payment, include cash_received and change
-      if (generatedBill.payment_method === 'Cash') {
+      if (paymentMode === 'Cash') {
         billUpdatePayload.cash_received = cashReceived;
         billUpdatePayload.change = change;
       }
@@ -1152,27 +1167,53 @@ export default function OrderManagementPage() {
         }
       }
       
-      const billUpdateSuccess = billUpdateResult.success && billApiResponse && (
-        billApiResponse.success === true ||
-        billApiResponse.data?.payment_status === 'Paid' ||
-        billApiResponse.data?.bill?.payment_status === 'Paid' ||
-        billApiResponse.payment_status === 'Paid' ||
-        (billApiResponse.message && billApiResponse.message.toLowerCase().includes('success')) ||
-        (billApiResponse.message && billApiResponse.message.toLowerCase().includes('paid')) ||
-        billApiResponse.status === 'success'
-      );
+      // Check success for both 'Paid' and 'Credit' statuses
+      // Handle both object and string responses
+      let billUpdateSuccess = false;
+      if (billUpdateResult.success && billApiResponse) {
+        // Check if response is a string with success message
+        if (typeof billApiResponse === 'string') {
+          const lowerMsg = billApiResponse.toLowerCase();
+          billUpdateSuccess = lowerMsg.includes('success') || 
+                             lowerMsg.includes('updated successfully') ||
+                             lowerMsg.includes('paid') ||
+                             lowerMsg.includes('credit');
+        } else if (typeof billApiResponse === 'object') {
+          // Check various success indicators
+          billUpdateSuccess = billApiResponse.success === true ||
+            billApiResponse.data?.payment_status === finalPaymentStatus ||
+            billApiResponse.data?.bill?.payment_status === finalPaymentStatus ||
+            billApiResponse.payment_status === finalPaymentStatus ||
+            billApiResponse.status === 'success' ||
+            (billApiResponse.message && (
+              billApiResponse.message.toLowerCase().includes('success') ||
+              billApiResponse.message.toLowerCase().includes('updated successfully') ||
+              billApiResponse.message.toLowerCase().includes('paid') ||
+              billApiResponse.message.toLowerCase().includes('credit')
+            ));
+        }
+      }
+      
+      // Also check the error message - if it contains "success", it's actually a success
+      if (!billUpdateSuccess && billUpdateErrorMsg) {
+        const lowerErrorMsg = billUpdateErrorMsg.toLowerCase();
+        if (lowerErrorMsg.includes('success') || lowerErrorMsg.includes('updated successfully')) {
+          billUpdateSuccess = true;
+        }
+      }
       
       if (!billUpdateSuccess && billUpdateErrorMsg) {
         console.error('Bill update error:', billUpdateErrorMsg);
       }
 
-      // Update order status to "Complete" since bill is paid
+      // Update order status: 'Credit' for credit payments, 'Complete' for others
       // This MUST succeed for the payment to be considered complete
       const orderIdValue = generatedBill.order_id;
       const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+      const finalOrderStatus = paymentMode === 'Credit' ? 'Credit' : 'Complete';
       
       const orderStatusPayload = { 
-        status: 'Complete',
+        status: finalOrderStatus,
         order_id: orderIdValue,
         orderid: orderidValue
       };
@@ -1329,19 +1370,38 @@ export default function OrderManagementPage() {
           total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
         }));
         
+        // Get customer info if credit
+        let customerName = null;
+        let customerPhone = null;
+        if (paymentMode === 'Credit' && paymentCustomerId) {
+          const selectedCustomer = customers.find(c => c.id === paymentCustomerId);
+          if (selectedCustomer) {
+            customerName = selectedCustomer.customer_name;
+            customerPhone = selectedCustomer.phone;
+          }
+        }
+
         // Update generatedBill with payment info and items
         setGeneratedBill({
           ...generatedBill,
           bill_id: billIdToUse || generatedBill.bill_id,
-          payment_status: 'Paid',
+          payment_status: finalPaymentStatus,
+          payment_method: finalPaymentMethod,
+          payment_mode: finalPaymentMethod,
           cash_received: cashReceived,
           change: change,
+          customer_id: paymentCustomerId || null,
+          customer_name: customerName || null,
+          customer_phone: customerPhone || null,
+          is_credit: paymentMode === 'Credit',
           items: formattedItems,
         });
 
         // Close payment modal automatically
         setPaymentModalOpen(false);
         setPaymentData({ cash_received: 0, change: 0 });
+        setPaymentMode('Cash'); // Reset to default
+        setPaymentCustomerId(null); // Reset customer selection
         
         // Refresh orders to show updated status
         fetchOrders();
@@ -1361,15 +1421,20 @@ export default function OrderManagementPage() {
         setDetailsModalOpen(false);
         
         // Show success message
-        if (generatedBill.payment_method === 'Cash' && change > 0) {
+        if (paymentMode === 'Cash' && change > 0) {
           setAlert({ 
             type: 'success', 
             message: `Payment received successfully! Change: ${formatPKR(change)}. Order status updated to Complete. Receipt is ready to print.` 
           });
+        } else if (paymentMode === 'Credit') {
+          setAlert({ 
+            type: 'success', 
+            message: `Credit payment recorded successfully! Bill status updated to Credit. Customer: ${customerName || 'N/A'}` 
+          });
         } else {
           setAlert({ 
             type: 'success', 
-            message: `Payment received successfully via ${generatedBill.payment_method}! Order status updated to Complete.` 
+            message: `Payment received successfully via ${paymentMode}! Order status updated to Complete.` 
           });
         }
       } else {
@@ -2921,7 +2986,7 @@ export default function OrderManagementPage() {
           onClose={() => {
             setBillModalOpen(false);
             setBillOrder(null);
-            setBillData({ discount_percentage: 0, service_charge: 0, payment_mode: 'Cash' });
+            setBillData({ discount_percentage: 0, service_charge: 0 });
           }}
           title="Generate Bill"
           size="md"
@@ -3001,57 +3066,6 @@ export default function OrderManagementPage() {
                   </p>
                 </div>
 
-                {/* Payment Mode */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Payment Mode <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={billData.payment_mode}
-                    onChange={(e) => {
-                      const newPaymentMode = e.target.value;
-                      setBillData({ 
-                        ...billData, 
-                        payment_mode: newPaymentMode,
-                        is_credit: newPaymentMode === 'Credit',
-                        customer_id: newPaymentMode === 'Credit' ? billData.customer_id : null
-                      });
-                    }}
-                    className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                  >
-                    <option value="Cash">Cash</option>
-                    <option value="Card">Card</option>
-                    <option value="Online">Online</option>
-                    <option value="Credit">Credit</option>
-                  </select>
-                </div>
-
-                {/* Customer Selection - Only show when payment mode is Credit */}
-                {billData.payment_mode === 'Credit' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Select Customer <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={billData.customer_id || ''}
-                      onChange={(e) => setBillData({ ...billData, customer_id: e.target.value ? parseInt(e.target.value) : null })}
-                      className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                      required={billData.payment_mode === 'Credit'}
-                    >
-                      <option value="">-- Select Customer --</option>
-                      {customers.map(customer => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.customer_name} {customer.phone ? `(${customer.phone})` : ''} - Limit: {formatPKR(customer.credit_limit)}
-                        </option>
-                      ))}
-                    </select>
-                    {customers.length === 0 && (
-                      <p className="text-xs text-amber-600 mt-1">
-                        No credit customers found. Please add customers in the Customer Management page.
-                      </p>
-                    )}
-                  </div>
-                )}
 
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
@@ -3108,23 +3122,16 @@ export default function OrderManagementPage() {
                       // Step 3: Grand total
                       const grandTotal = (subtotal + serviceCharge) - discountAmount;
 
-                      // Create bill using bills_management.php API
+                      // Create bill using bills_management.php API - Always create as Unpaid
                       const billPayload = {
                         order_id: billOrder.order_id || billOrder.id,
                         total_amount: subtotal,
                         service_charge: serviceCharge,
                         discount: discountAmount, // Store discount amount (not percentage)
                         grand_total: grandTotal,
-                        payment_method: billData.payment_mode,
-                        payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have 'Credit' status, others are 'Unpaid'
+                        payment_method: 'Cash', // Default payment method, will be updated when payment is received
+                        payment_status: 'Unpaid', // Bill always starts as Unpaid
                       };
-
-                      // Add customer_id and is_credit for credit sales
-                      if (billData.payment_mode === 'Credit' && billData.customer_id) {
-                        billPayload.customer_id = billData.customer_id;
-                        billPayload.is_credit = true;
-                        billPayload.payment_status = 'Credit'; // Explicitly set to Credit
-                      }
 
                       // Log the payload being sent
                       console.log('Bill payload being sent:', billPayload);
@@ -3337,14 +3344,6 @@ export default function OrderManagementPage() {
                           console.log('Sample formatted item:', JSON.stringify(formattedItems[0], null, 2));
                         }
                         
-                        // Get customer information if it's a credit sale
-                        const selectedCustomer = billData.customer_id 
-                          ? customers.find(c => c.id === billData.customer_id) 
-                          : null;
-
-                        // Determine payment method - explicitly use 'Credit' if payment_mode is 'Credit'
-                        const paymentMethod = billData.payment_mode === 'Credit' ? 'Credit' : (billData.payment_method || billData.payment_mode || 'Cash');
-                        
                         // Store bill data for receipt - use calculated values from frontend
                         const receiptData = {
                           bill_id: billId,
@@ -3357,16 +3356,11 @@ export default function OrderManagementPage() {
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
-                          payment_method: paymentMethod, // Explicitly set to 'Credit' if payment_mode is 'Credit'
-                          payment_mode: paymentMethod, // Also set payment_mode for consistency
-                          payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have Credit status
+                          payment_method: 'Cash', // Default payment method, will be updated when payment is received
+                          payment_mode: 'Cash', // Default payment method, will be updated when payment is received
+                          payment_status: 'Unpaid', // Bill always starts as Unpaid
                           items: formattedItems,
                           date: new Date().toLocaleString(),
-                          // Customer information for credit sales
-                          customer_id: billData.customer_id || null,
-                          customer_name: selectedCustomer?.customer_name || null,
-                          customer_phone: selectedCustomer?.phone || null,
-                          is_credit: billData.payment_mode === 'Credit',
                         };
                         
                         console.log('=== Receipt Data Prepared ===');
@@ -3380,14 +3374,14 @@ export default function OrderManagementPage() {
                         // Close bill modal
                         setBillModalOpen(false);
                         setBillOrder(null);
-                        setBillData({ discount_percentage: 0, service_charge: 0, payment_mode: 'Cash', customer_id: null, is_credit: false });
+                        setBillData({ discount_percentage: 0, service_charge: 0 });
                         
-                        // Update order status - "Credit" for credit bills, "Bill Generated" for others
+                        // Update order status - always 'Bill Generated' after bill generation
                         const orderIdValue = billOrder.order_id || billOrder.id;
                         const orderidValue = billOrder.order_id ? `ORD-${billOrder.order_id}` : (billOrder.orderid || billOrder.id);
                         
-                        // Determine order status based on payment mode
-                        const orderStatus = billData.payment_mode === 'Credit' ? 'Credit' : 'Bill Generated';
+                        // Order status is always 'Bill Generated' after bill generation
+                        const orderStatus = 'Bill Generated';
                         
                         try {
                           const statusPayload = { 
@@ -3734,6 +3728,8 @@ export default function OrderManagementPage() {
             if (confirm('Cancel payment? You can pay the bill later from the orders page.')) {
               setPaymentModalOpen(false);
               setPaymentData({ cash_received: 0, change: 0 });
+              setPaymentMode('Cash'); // Reset to default
+              setPaymentCustomerId(null); // Reset customer selection
             }
           }}
           title="Receive Payment"
@@ -3777,8 +3773,64 @@ export default function OrderManagementPage() {
                 </div>
               </div>
 
+              {/* Payment Mode Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Payment Mode <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={paymentMode}
+                  onChange={(e) => {
+                    const newPaymentMode = e.target.value;
+                    setPaymentMode(newPaymentMode);
+                    if (newPaymentMode !== 'Credit') {
+                      setPaymentCustomerId(null);
+                    }
+                    // Update generatedBill payment method for display
+                    setGeneratedBill({
+                      ...generatedBill,
+                      payment_method: newPaymentMode,
+                      payment_mode: newPaymentMode,
+                    });
+                  }}
+                  className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Card">Card</option>
+                  <option value="Online">Online</option>
+                  <option value="Credit">Credit</option>
+                </select>
+              </div>
+
+              {/* Customer Selection - Only show when payment mode is Credit */}
+              {paymentMode === 'Credit' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Select Customer <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={paymentCustomerId || ''}
+                    onChange={(e) => setPaymentCustomerId(e.target.value ? parseInt(e.target.value) : null)}
+                    className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                    required={paymentMode === 'Credit'}
+                  >
+                    <option value="">-- Select Customer --</option>
+                    {customers.map(customer => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.customer_name} {customer.phone ? `(${customer.phone})` : ''} - Limit: {formatPKR(customer.credit_limit)}
+                      </option>
+                    ))}
+                  </select>
+                  {customers.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      No credit customers found. Please add customers in the Customer Management page.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Cash Payment Flow - Only show cash input for Cash payment method */}
-              {generatedBill.payment_method === 'Cash' ? (
+              {paymentMode === 'Cash' ? (
                 <>
                   {/* Cash Received Input */}
                   <div>
@@ -3841,16 +3893,41 @@ export default function OrderManagementPage() {
                     </div>
                   )}
                 </>
+              ) : paymentMode === 'Credit' ? (
+                /* For Credit payments - Show credit notice */
+                <div className="bg-gradient-to-br from-amber-50 to-yellow-50 p-5 rounded-xl border-2 border-amber-300">
+                  <div className="text-center">
+                    <CreditCard className="w-12 h-12 text-amber-600 mx-auto mb-3" />
+                    <p className="text-amber-800 font-bold mb-2 text-lg">
+                      Credit Payment
+                    </p>
+                    <p className="text-sm text-amber-700 mb-2">
+                      This payment will be recorded as credit. The customer will pay later.
+                    </p>
+                    {paymentCustomerId && (() => {
+                      const selectedCustomer = customers.find(c => c.id === paymentCustomerId);
+                      return selectedCustomer ? (
+                        <div className="mt-3 p-3 bg-white rounded-lg border border-amber-200">
+                          <p className="text-sm font-semibold text-amber-900">Customer:</p>
+                          <p className="text-base font-bold text-amber-800">{selectedCustomer.customer_name}</p>
+                          {selectedCustomer.phone && (
+                            <p className="text-xs text-amber-700">Phone: {selectedCustomer.phone}</p>
+                          )}
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                </div>
               ) : (
                 /* For Card/Online payments - Just confirm payment */
                 <div className="bg-gradient-to-br from-purple-50 to-indigo-50 p-5 rounded-xl border border-purple-200">
                   <div className="text-center">
                     <CreditCard className="w-12 h-12 text-purple-600 mx-auto mb-3" />
                     <p className="text-purple-700 font-medium mb-2">
-                      Payment Method: {generatedBill.payment_method}
+                      Payment Method: {paymentMode}
                     </p>
                     <p className="text-sm text-gray-600">
-                      Confirm that payment of {formatPKR(generatedBill.grand_total)} has been received via {generatedBill.payment_method}.
+                      Confirm that payment of {formatPKR(generatedBill.grand_total)} has been received via {paymentMode}.
                     </p>
                   </div>
                 </div>
@@ -3874,15 +3951,19 @@ export default function OrderManagementPage() {
                 <Button
                   onClick={handlePayBill}
                   disabled={
-                    generatedBill.payment_method === 'Cash' 
+                    paymentMode === 'Cash' 
                       ? (!paymentData.cash_received || paymentData.cash_received < generatedBill.grand_total)
+                      : paymentMode === 'Credit'
+                      ? !paymentCustomerId
                       : false
                   }
                   className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold py-3 text-base shadow-lg hover:shadow-xl transition-all duration-200"
                 >
                   <CreditCard className="w-5 h-5 mr-2" />
-                  {generatedBill.payment_method === 'Cash' 
+                  {paymentMode === 'Cash' 
                     ? `Pay Bill${paymentData.change > 0 ? ` (Change: ${formatPKR(paymentData.change)})` : ''}` 
+                    : paymentMode === 'Credit'
+                    ? 'Record Credit Payment'
                     : 'Confirm Payment'}
                 </Button>
               </div>
