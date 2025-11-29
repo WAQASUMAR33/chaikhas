@@ -145,9 +145,8 @@ export default function DayEndPage() {
 
       // Fetch today's expenses
       try {
-        // Use POST with action='get' to fetch expenses from unified expense_management.php
-        const expensesResult = await apiPost('api/expense_management.php', { 
-          action: 'get',
+        // Use GET method to fetch expenses from unified expense_management.php
+        const expensesResult = await apiGet('api/expense_management.php', { 
           branch_id: branchId 
         });
         

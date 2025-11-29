@@ -5,7 +5,7 @@
  * Full CRUD operations for expenses with amounts
  * Shows expenses from all branches with branch filter
  * Users can enter expense title directly - it will be created if it doesn't exist
- * Uses APIs: api/expense_management.php (POST with action='get'/'create'/'update'/'delete'), api/branch_management.php
+ * Uses APIs: api/expense_management.php (GET for fetch, POST for create/update, DELETE for delete), api/branch_management.php
  * Database: expenses table (id, title, amount, description, branch_id, terminal, created_at, updated_at)
  */
 
@@ -16,7 +16,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, apiGet } from '@/utils/api';
+import { apiPost, apiDelete, apiGet, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { Receipt, Plus, Edit, Trash2, Search, X, DollarSign, Building2 } from 'lucide-react';
 
@@ -98,7 +98,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Fetch all expenses from all branches
-   * API: api/expense_management.php (POST with action='get' and branch_id=null for all)
+   * API: api/expense_management.php (GET with branch_id=null for all)
    */
   const fetchExpenses = async () => {
     setLoading(true);
@@ -106,9 +106,8 @@ export default function ExpenseManagementPage() {
     
     try {
       // For superadmin, fetch all expenses (don't pass branch_id or pass null)
-      // Use POST with action='get' to fetch expenses from unified expense_management.php
-      const result = await apiPost('api/expense_management.php', { 
-        action: 'get',
+      // Use GET method to fetch expenses from unified expense_management.php
+      const result = await apiGet('api/expense_management.php', { 
         branch_id: null 
       });
       
@@ -184,7 +183,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle form submission (Create or Update)
-   * API: api/expense_management.php (POST with action='create' or 'update')
+   * API: api/expense_management.php (POST - create if no id, update if id present)
    */
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -207,14 +206,20 @@ export default function ExpenseManagementPage() {
     }
 
     try {
-      // Prepare data - include action and id for updates
+      const terminal = getTerminal() || 1; // Default to 1 if not set
+
+      // Prepare data - include id for updates (API determines create vs update based on id presence)
       const data = {
-        action: editingExpense && editingExpense.id ? 'update' : 'create',
         title: formData.title.trim(),
         amount: parseFloat(formData.amount),
-        description: formData.description.trim(),
         branch_id: formData.branch_id,
+        terminal: terminal,
       };
+
+      // Only include description if it's not empty
+      if (formData.description && formData.description.trim() !== '') {
+        data.description = formData.description.trim();
+      }
 
       // Only add id field if editing (for update operation)
       if (editingExpense && editingExpense.id) {
@@ -377,7 +382,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle delete button click
-   * API: api/expense_management.php (POST with action='delete')
+   * API: api/expense_management.php (DELETE method)
    */
   const handleDelete = async (expenseId) => {
     if (!window.confirm('Are you sure you want to delete this expense? This action cannot be undone.')) {
@@ -385,10 +390,7 @@ export default function ExpenseManagementPage() {
     }
 
     try {
-      const result = await apiPost('api/expense_management.php', { 
-        action: 'delete',
-        id: expenseId 
-      });
+      const result = await apiDelete('api/expense_management.php', { id: expenseId });
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (
