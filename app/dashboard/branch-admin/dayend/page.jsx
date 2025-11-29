@@ -15,6 +15,7 @@ import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import { apiPost, apiGet, getBranchId, getFullname, getUsername, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
+import { isCreditPayment } from '@/utils/payment';
 import { Calendar, Printer, CheckCircle, DollarSign, Search, X } from 'lucide-react';
 
 export default function DayEndPage() {
@@ -126,13 +127,12 @@ export default function DayEndPage() {
 
         todayBills.forEach(bill => {
           const paymentMode = (bill.payment_method || bill.payment_mode || 'Cash').toLowerCase();
-          const paymentStatus = (bill.payment_status || '').toLowerCase();
           const netTotal = parseFloat(bill.grand_total || bill.net_total || bill.total_amount || 0);
           
           totalSales += netTotal;
 
-          // Check if it's a credit bill (payment_status='Credit' or payment_method='Credit')
-          if (paymentStatus === 'credit' || paymentMode === 'credit' || bill.is_credit === true) {
+          // Use standardized utility for credit detection
+          if (isCreditPayment(bill)) {
             creditSales += netTotal;
           } else if (paymentMode.includes('cash')) {
             totalCash += netTotal;
@@ -174,14 +174,15 @@ export default function DayEndPage() {
             
             totalSales += netTotal;
 
-            if (paymentMode.includes('cash')) {
+            // Use standardized utility for credit detection
+            if (isCreditPayment(order)) {
+              creditSales += netTotal;
+            } else if (paymentMode.includes('cash')) {
               totalCash += netTotal;
             } else if (paymentMode.includes('easypaisa') || paymentMode.includes('easy') || paymentMode.includes('online')) {
               totalEasypaisa += netTotal;
             } else if (paymentMode.includes('bank') || paymentMode.includes('card')) {
               totalBank += netTotal;
-            } else if (paymentMode.includes('credit')) {
-              creditSales += netTotal;
             }
           });
         } catch (orderError) {

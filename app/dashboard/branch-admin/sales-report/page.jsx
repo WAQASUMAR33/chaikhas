@@ -13,6 +13,7 @@ import Button from '@/components/ui/Button';
 import Alert from '@/components/ui/Alert';
 import { apiPost, apiGet, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
+import { isCreditPayment, getPaymentMethodDisplay } from '@/utils/payment';
 import { FileText, Printer, Download, Calendar, Building2 } from 'lucide-react';
 
 export default function SalesReportPage() {
@@ -206,24 +207,9 @@ export default function SalesReportPage() {
         });
       }
       
-      // Log credit sales count for debugging - check multiple field names
-      // Use the same logic as dayend page
+      // Log credit sales count for debugging - use standardized utility
       const creditSalesCount = salesData.filter(sale => {
-        // Check all possible field names and formats (same as dayend)
-        const paymentMode = (sale.payment_mode || sale.paymentMethod || sale.paymentMode || '').toLowerCase();
-        const paymentMethod = (sale.payment_method || sale.paymentMethod || '').toLowerCase();
-        const paymentStatus = (sale.payment_status || sale.paymentStatus || '').toLowerCase();
-        const isCredit = sale.is_credit || sale.isCredit;
-        
-        // Same detection logic as dayend page
-        const isCreditSale = 
-          paymentStatus === 'credit' || 
-          paymentMethod === 'credit' || 
-          paymentMode === 'credit' ||
-          isCredit === true ||
-          isCredit === 1 ||
-          isCredit === '1' ||
-          (sale.customer_id && sale.customer_id > 0 && (paymentStatus === 'unpaid' || paymentStatus === 'credit') && paymentMethod === 'credit');
+        const isCreditSale = isCreditPayment(sale);
         
         if (isCreditSale) {
           console.log('✅ Credit sale found:', {
@@ -286,24 +272,10 @@ export default function SalesReportPage() {
     }, 200);
   };
 
-  // Calculate totals - Enhanced credit detection (same logic as dayend)
+  // Calculate totals - use standardized credit detection
   const totals = reportData.reduce((acc, sale) => {
-    // Enhanced credit detection - check all possible field names and formats
-    // Use same logic as dayend page (lowercase comparison)
-    const paymentMode = (sale.payment_mode || sale.paymentMethod || sale.paymentMode || '').toLowerCase();
-    const paymentMethod = (sale.payment_method || sale.paymentMethod || '').toLowerCase();
-    const paymentStatus = (sale.payment_status || sale.paymentStatus || '').toLowerCase();
-    const isCredit = sale.is_credit || sale.isCredit;
-    
-    // Same detection logic as dayend page
-    const isCreditSale = 
-      paymentStatus === 'credit' || 
-      paymentMethod === 'credit' || 
-      paymentMode === 'credit' ||
-      isCredit === true ||
-      isCredit === 1 ||
-      isCredit === '1' ||
-      (sale.customer_id && sale.customer_id > 0 && (paymentStatus === 'unpaid' || paymentStatus === 'credit') && paymentMethod === 'credit');
+    // Use standardized utility for credit detection
+    const isCreditSale = isCreditPayment(sale);
     
     const billAmount = parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || sale.total_amount || 0);
     const serviceCharge = parseFloat(sale.service_charge || 0);
@@ -322,10 +294,7 @@ export default function SalesReportPage() {
       console.log('💰 Credit sale in totals calculation:', {
         order_id: sale.order_id,
         netTotal: netTotal,
-        payment_status: paymentStatus,
-        payment_method: paymentMethod,
-        payment_mode: paymentMode,
-        is_credit: isCredit,
+        payment_method: getPaymentMethodDisplay(sale),
         customer_id: sale.customer_id,
         customer_name: sale.customer_name,
         accumulated_credit_total: acc.creditSales
@@ -460,15 +429,9 @@ export default function SalesReportPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {reportData.map((sale, index) => {
-                    // Enhanced credit detection - check multiple field names and formats
-                    const isCredit = sale.payment_mode === 'Credit' || 
-                                    sale.payment_method === 'Credit' || 
-                                    sale.payment_status === 'Credit' || 
-                                    sale.is_credit === true ||
-                                    sale.is_credit === 1 ||
-                                    (sale.payment_status && String(sale.payment_status).toLowerCase() === 'credit') ||
-                                    (sale.payment_method && String(sale.payment_method).toLowerCase() === 'credit') ||
-                                    (sale.payment_mode && String(sale.payment_mode).toLowerCase() === 'credit');
+                    // Use standardized utility functions
+                    const isCredit = isCreditPayment(sale);
+                    const paymentDisplay = getPaymentMethodDisplay(sale);
                     const customerName = sale.customer_name || sale.customerName || null;
                     
                     return (
@@ -509,7 +472,7 @@ export default function SalesReportPage() {
                               Credit
                             </span>
                           ) : (
-                            <span className="text-gray-600">{sale.payment_mode || sale.payment_method || 'N/A'}</span>
+                            <span className="text-gray-600">{paymentDisplay}</span>
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
@@ -652,8 +615,10 @@ export default function SalesReportPage() {
                 </thead>
                 <tbody>
                   {reportData.map((sale, index) => {
-                    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
-                    const customerName = sale.customer_name || null;
+                    // Use standardized utility functions
+                    const isCredit = isCreditPayment(sale);
+                    const paymentDisplay = getPaymentMethodDisplay(sale);
+                    const customerName = sale.customer_name || sale.customerName || null;
                     
                     return (
                       <tr key={sale.order_id || index} style={{ backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
@@ -668,7 +633,7 @@ export default function SalesReportPage() {
                         <td style={{ textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
                         <td style={{ fontWeight: isCredit ? 'bold' : 'normal' }}>
-                          {isCredit ? 'Credit' : (sale.payment_mode || sale.payment_method || 'N/A')}
+                          {paymentDisplay}
                         </td>
                         <td>
                           {customerName ? (

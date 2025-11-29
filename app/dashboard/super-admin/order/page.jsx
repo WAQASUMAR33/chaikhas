@@ -15,6 +15,7 @@ import Alert from '@/components/ui/Alert';
 import Modal from '@/components/ui/Modal';
 import { apiGet, apiPost, apiDelete, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
+import { isCreditPayment as checkCreditPayment } from '@/utils/payment';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
 
@@ -1484,11 +1485,8 @@ export default function OrderManagementPage() {
         console.warn('Bill ID not found, proceeding with order_id. API should handle this.');
       }
 
-      // Check if this is a credit payment
-      const isCreditPayment = generatedBill.payment_method === 'Credit' || 
-                              generatedBill.payment_mode === 'Credit' ||
-                              generatedBill.payment_status === 'Credit' ||
-                              generatedBill.is_credit === true;
+      // Check if this is a credit payment using standardized utility
+      const isCreditPayment = checkCreditPayment(generatedBill);
       
       // Update bill payment_status via bills_management.php
       // For Credit payments, set status to 'Credit', otherwise 'Paid'
