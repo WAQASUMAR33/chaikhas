@@ -26,6 +26,7 @@ export default function OrderManagementPage() {
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
+  const [searchOrderId, setSearchOrderId] = useState(''); // Search by order ID
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -320,6 +321,9 @@ export default function OrderManagementPage() {
       
       console.log('Order items API response:', itemsResult);
       
+      // Initialize itemsData early to avoid "Cannot access before initialization" error
+      let itemsData = [];
+      
       let orderData = null;
       
       // Handle multiple response structures for order data
@@ -366,7 +370,7 @@ export default function OrderManagementPage() {
       let billData = null;
       if (orderIdParam) {
         try {
-          const billResult = await apiPost('/bills_management.php', { order_id: orderIdParam });
+          const billResult = await apiPost('api/bills_management.php', { order_id: orderIdParam });
           
           // Debug: Log bill fetch result
           console.log('=== Bill Fetch Result ===');
@@ -417,8 +421,8 @@ export default function OrderManagementPage() {
       setExistingBill(billData); // Store bill data
       
       // Handle multiple response structures for order items
-      let itemsData = [];
-      if (itemsResult.success && itemsResult.data) {
+      // Only process itemsResult if itemsData wasn't already set from bill response
+      if (itemsData.length === 0 && itemsResult.success && itemsResult.data) {
         if (Array.isArray(itemsResult.data)) {
           itemsData = itemsResult.data;
           console.log('Found items in itemsResult.data (array):', itemsData.length);
@@ -473,7 +477,7 @@ export default function OrderManagementPage() {
         payload.orderid = orderidValue;
       }
       
-      const result = await apiPost('/chnageorder_status.php', payload);
+      const result = await apiPost('api/chnageorder_status.php', payload);
 
       // Check response - API can return success in different formats
       const apiResponse = result.data;
@@ -972,7 +976,7 @@ export default function OrderManagementPage() {
       };
 
       // Update order first
-      const orderResult = await apiPost('/order_management.php', orderData);
+      const orderResult = await apiPost('api/order_management.php', orderData);
 
       if (!orderResult.success || !orderResult.data || !orderResult.data.success) {
         setAlert({ type: 'error', message: orderResult.data?.message || 'Failed to update order details' });
@@ -994,7 +998,7 @@ export default function OrderManagementPage() {
       }));
 
       // Update order items using upload_orderdetails.php
-      const itemsResult = await apiPost('/upload_orderdetails.php', {
+      const itemsResult = await apiPost('api/upload_orderdetails.php', {
         order_id: orderId,
         items: itemsData,
         delete_existing: true, // Flag to delete existing items first
@@ -1111,7 +1115,7 @@ export default function OrderManagementPage() {
         console.log('Order ID:', generatedBill.order_id);
         
         try {
-          const billFetchResult = await apiPost('/bills_management.php', { 
+          const billFetchResult = await apiPost('api/bills_management.php', { 
             order_id: generatedBill.order_id 
           });
           
@@ -1185,7 +1189,7 @@ export default function OrderManagementPage() {
       console.log('=== Bill Update Payload ===');
       console.log('Payload:', JSON.stringify(billUpdatePayload, null, 2));
 
-      const billUpdateResult = await apiPost('/bills_management.php', billUpdatePayload);
+      const billUpdateResult = await apiPost('api/bills_management.php', billUpdatePayload);
 
       console.log('=== Bill Update Result ===');
       console.log('Result:', JSON.stringify(billUpdateResult, null, 2));
@@ -1240,7 +1244,7 @@ export default function OrderManagementPage() {
       let orderUpdateSuccess = false;
       let orderUpdateError = null;
       try {
-        const orderStatusResult = await apiPost('/chnageorder_status.php', orderStatusPayload);
+        const orderStatusResult = await apiPost('api/chnageorder_status.php', orderStatusPayload);
         
         console.log('=== Order Status Update Result ===');
         console.log('Result:', JSON.stringify(orderStatusResult, null, 2));
@@ -1310,12 +1314,12 @@ export default function OrderManagementPage() {
         try {
           const terminal = getTerminal();
           // Fetch current table details
-          const tablesResult = await apiPost('/get_tables.php', { terminal });
+          const tablesResult = await apiPost('api/get_tables.php', { terminal });
           if (tablesResult.data && Array.isArray(tablesResult.data)) {
             const table = tablesResult.data.find(t => t.table_id == orderDetails.table_id);
             if (table) {
               // Update table status to Available
-              await apiPost('/table_management.php', {
+              await apiPost('api/table_management.php', {
                 table_id: parseInt(orderDetails.table_id),
                 hall_id: table.hall_id,
                 table_number: table.table_number,
@@ -1774,6 +1778,11 @@ export default function OrderManagementPage() {
    * Handle print receipt - Print bill receipt if bill exists, otherwise print KOT
    */
   const handlePrintReceipt = async () => {
+    // Wait a bit for the DOM to render if receipt modal just opened
+    const checkForReceiptElement = () => {
+      return document.getElementById('receipt-print-area');
+    };
+    
     // If no bill, try to print KOT from order details
     if (!generatedBill) {
       // Try to get order details from the currently selected order
@@ -1786,6 +1795,17 @@ export default function OrderManagementPage() {
       }
       setAlert({ type: 'error', message: 'No receipt data available to print. Please generate a bill first or select an order.' });
       return;
+    }
+    
+    // Wait for receipt element to be rendered (max 2 seconds)
+    let attempts = 0;
+    while (!checkForReceiptElement() && attempts < 20) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    if (!checkForReceiptElement()) {
+      console.warn('Receipt element not found after waiting, proceeding anyway...');
     }
     
     // Prevent multiple simultaneous print requests
@@ -1905,7 +1925,7 @@ export default function OrderManagementPage() {
       });
       
       // Call backend API to print directly to network printers with timeout
-      const printPromise = apiPost('/print_receipt_direct.php', {
+      const printPromise = apiPost('api/print_receipt_direct.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
         receipt_content: receiptHTML,
@@ -1997,7 +2017,7 @@ export default function OrderManagementPage() {
                 orderid: orderidValue
               };
               
-              await apiPost('/chnageorder_status.php', statusPayload);
+              await apiPost('api/chnageorder_status.php', statusPayload);
               fetchOrders(); // Refresh orders list
             } catch (error) {
               console.error('Error updating order status on print:', error);
@@ -2683,7 +2703,7 @@ export default function OrderManagementPage() {
                           console.log('=== Fetching Bill for Payment ===');
                           console.log('Order ID:', orderDetails.order_id || orderDetails.id);
                           
-                          const billFetchResult = await apiPost('/bills_management.php', { 
+                          const billFetchResult = await apiPost('api/bills_management.php', { 
                             order_id: orderDetails.order_id || orderDetails.id 
                           });
                           
@@ -3061,7 +3081,7 @@ export default function OrderManagementPage() {
                       // Log the payload being sent
                       console.log('Bill payload being sent:', billPayload);
                       
-                      const result = await apiPost('/bills_management.php', billPayload);
+                      const result = await apiPost('api/bills_management.php', billPayload);
                       
                       // Debug: Log the complete result
                       console.log('=== Bill Generation Result ===');
@@ -3208,7 +3228,7 @@ export default function OrderManagementPage() {
                               // Try to fetch items one more time with different parameters
                               console.log('⚠️ orderItems state is also empty. Trying alternative fetch...');
                               try {
-                                const altItemsResult = await apiPost('/get_orderdetails.php', { 
+                                const altItemsResult = await apiPost('api/get_orderdetails.php', { 
                                   order_id: orderId
                                 });
                                 console.log('Alternative fetch result:', altItemsResult);
@@ -3326,7 +3346,7 @@ export default function OrderManagementPage() {
                             order_id: orderIdValue,
                             orderid: orderidValue
                           };
-                          await apiPost('/chnageorder_status.php', statusPayload);
+                          await apiPost('api/chnageorder_status.php', statusPayload);
                         } catch (error) {
                           console.error('Error updating order status:', error);
                           // Continue even if status update fails
@@ -3339,10 +3359,20 @@ export default function OrderManagementPage() {
                         setReceiptModalOpen(true);
                         setDetailsModalOpen(false);
                         
-                        // Auto-print bill receipt after a short delay
+                        // Auto-print bill receipt after a delay to ensure modal is rendered
+                        // Use a longer delay to ensure React has rendered the modal and DOM elements
                         setTimeout(() => {
-                          handlePrintReceipt();
-                        }, 500);
+                          // Double-check that generatedBill is still set before printing
+                          if (generatedBill && generatedBill.items && generatedBill.items.length > 0) {
+                            handlePrintReceipt();
+                          } else {
+                            console.warn('Generated bill not ready for printing, user can click print button manually');
+                            setAlert({ 
+                              type: 'info', 
+                              message: 'Bill generated successfully! Click the Print button to print the receipt.' 
+                            });
+                          }
+                        }, 1000);
                         
                         setAlert({ type: 'success', message: 'Bill generated successfully! Printing receipt...' });
                         // Broadcast update to other dashboard instances

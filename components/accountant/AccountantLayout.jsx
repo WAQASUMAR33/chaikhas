@@ -18,7 +18,9 @@ import {
   X,
   LogOut,
   Users,
-  ShoppingCart
+  ShoppingCart,
+  Receipt,
+  CheckCircle
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, clearAuth } from '@/utils/api';
 
@@ -29,6 +31,8 @@ const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard/accountant' },
   { icon: PlusCircle, label: 'Create Order', path: '/dashboard/accountant/create-order' },
   { icon: FileText, label: 'Order Management', path: '/dashboard/accountant/orders' },
+  { icon: Receipt, label: 'Expense Management', path: '/dashboard/accountant/expenses' },
+  { icon: CheckCircle, label: 'Day End', path: '/dashboard/accountant/dayend' },
 ];
 
 export default function AccountantLayout({ children }) {

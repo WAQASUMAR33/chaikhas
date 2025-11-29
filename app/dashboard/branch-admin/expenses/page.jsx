@@ -5,8 +5,8 @@
  * Full CRUD operations for expenses with amounts
  * Shows only expenses for the current branch
  * Users can enter expense title directly - it will be created if it doesn't exist
- * Uses APIs: get_expenses.php, expense_management.php, expense_title_management.php, get_expense_title.php
- * Database: expenses table (id, expense_title_id, amount, branch_id, description, created_at, updated_at)
+ * Uses APIs: api/get_expenses.php, api/expense_management.php
+ * Database: expenses table (id, expense_title, amount, branch_id, description, created_at, updated_at)
  */
 
 import { useEffect, useState } from 'react';
@@ -60,73 +60,8 @@ export default function ExpenseManagementPage() {
   }, [searchTerm, expenses]);
 
   /**
-   * Get or create expense title and return its ID
-   */
-  const getOrCreateExpenseTitle = async (title) => {
-    if (!title || title.trim() === '') {
-      return null;
-    }
-
-    try {
-      // First, try to find existing expense title
-      const searchResult = await apiPost('/get_expense_title.php', { terminal: 1 });
-      let titlesData = [];
-      
-      if (searchResult.success && searchResult.data) {
-        if (Array.isArray(searchResult.data)) {
-          titlesData = searchResult.data;
-        } else if (searchResult.data.data && Array.isArray(searchResult.data.data)) {
-          titlesData = searchResult.data.data;
-        }
-      }
-
-      // Check if title already exists
-      const existingTitle = titlesData.find(
-        t => (t.title || t.expense_title || '').toLowerCase().trim() === title.toLowerCase().trim()
-      );
-
-      if (existingTitle) {
-        return existingTitle.id || existingTitle.expense_id;
-      }
-
-      // Create new expense title if it doesn't exist
-      const createResult = await apiPost('/expense_title_management.php', {
-        id: '',
-        title: title.trim(),
-        terminal: 1,
-      });
-
-      if (createResult.success && createResult.data) {
-        // Try to get the ID from response
-        if (createResult.data.id) {
-          return createResult.data.id;
-        }
-        // If ID not in response, fetch again to get it
-        const refreshResult = await apiPost('/get_expense_title.php', { terminal: 1 });
-        let refreshData = [];
-        if (refreshResult.success && refreshResult.data) {
-          if (Array.isArray(refreshResult.data)) {
-            refreshData = refreshResult.data;
-          } else if (refreshResult.data.data && Array.isArray(refreshResult.data.data)) {
-            refreshData = refreshResult.data.data;
-          }
-        }
-        const newTitle = refreshData.find(
-          t => (t.title || t.expense_title || '').toLowerCase().trim() === title.toLowerCase().trim()
-        );
-        return newTitle ? (newTitle.id || newTitle.expense_id) : null;
-      }
-
-      return null;
-    } catch (error) {
-      console.error('Error getting/creating expense title:', error);
-      return null;
-    }
-  };
-
-  /**
    * Fetch all expenses for current branch
-   * API: get_expenses.php (POST with branch_id)
+   * API: api/get_expenses.php (POST with branch_id)
    */
   const fetchExpenses = async () => {
     setLoading(true);
@@ -140,7 +75,7 @@ export default function ExpenseManagementPage() {
         return;
       }
 
-      const result = await apiPost('/get_expenses.php', { branch_id: branchId });
+      const result = await apiPost('api/get_expenses.php', { branch_id: branchId });
       
       // Handle different response structures
       let expensesData = [];
@@ -183,7 +118,6 @@ export default function ExpenseManagementPage() {
         return {
           id: expense.id || expense.expense_id,
           expense_id: expense.id || expense.expense_id,
-          expense_title_id: expense.expense_title_id || '',
           expense_title: expense.expense_title || expense.title || '',
           amount: parseFloat(expense.amount || 0),
           description: expense.description || '',
@@ -214,7 +148,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle form submission (Create or Update)
-   * API: expense_management.php (POST)
+   * API: api/expense_management.php (POST)
    */
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -238,50 +172,138 @@ export default function ExpenseManagementPage() {
         return;
       }
 
-      // Get or create expense title
-      const expenseTitleId = await getOrCreateExpenseTitle(formData.expense_title.trim());
-      
-      if (!expenseTitleId) {
-        setAlert({ type: 'error', message: 'Failed to create or find expense title. Please try again.' });
-        return;
-      }
-
+      // Prepare data - only include id for updates
       const data = {
-        id: editingExpense ? editingExpense.id : '', // Empty for create
-        expense_title_id: expenseTitleId,
+        expense_title: formData.expense_title.trim(),
         amount: parseFloat(formData.amount),
         description: formData.description.trim(),
         branch_id: branchId,
       };
 
-      const result = await apiPost('/expense_management.php', data);
+      // Only add id field if editing (for update operation)
+      if (editingExpense && editingExpense.id) {
+        data.id = editingExpense.id;
+      }
+
+      console.log('=== Creating/Updating Expense ===');
+      console.log('Payload:', JSON.stringify(data, null, 2));
+
+      const result = await apiPost('api/expense_management.php', data);
+
+      console.log('=== API Response ===');
+      console.log('Full result:', JSON.stringify(result, null, 2));
 
       // Handle different response structures
-      const isSuccess = result.success && result.data && (
-        result.data.success === true || 
-        (result.data.message && result.data.message.toLowerCase().includes('success'))
-      );
+      // Check multiple success indicators
+      let isSuccess = false;
+      
+      if (result && result.success === true) {
+        // If result.success is true, check data
+        if (result.data) {
+          // Check various success indicators in data
+          if (result.data.success === true || 
+              result.data.success === 'true' ||
+              result.data.status === 'success' ||
+              result.data.status === 'Success') {
+            isSuccess = true;
+          } else if (result.data.message) {
+            const msg = result.data.message.toLowerCase();
+            if (msg.includes('success') || 
+                msg.includes('created') || 
+                msg.includes('updated') || 
+                msg.includes('saved') ||
+                msg.includes('inserted')) {
+              isSuccess = true;
+            }
+          } else if (!result.data.error && !result.data.success) {
+            // If no error and no explicit success field, assume success if result.success is true
+            isSuccess = true;
+          }
+        } else {
+          // If result.success is true but no data, assume success
+          isSuccess = true;
+        }
+      } else if (result && result.data) {
+        // Check if data itself indicates success
+        if (result.data.success === true || 
+            result.data.success === 'true' ||
+            result.data.status === 'success') {
+          isSuccess = true;
+        } else if (result.data.message) {
+          const msg = result.data.message.toLowerCase();
+          if (msg.includes('success') || 
+              msg.includes('created') || 
+              msg.includes('updated') || 
+              msg.includes('saved')) {
+            isSuccess = true;
+          }
+        }
+      }
 
       if (isSuccess) {
         setAlert({ 
           type: 'success', 
-          message: result.data.message || (editingExpense ? 'Expense updated successfully!' : 'Expense created successfully!')
+          message: result.data?.message || (editingExpense ? 'Expense updated successfully!' : 'Expense created successfully!')
         });
         setFormData({ expense_title: '', amount: '', description: '' });
         setEditingExpense(null);
         setModalOpen(false);
         fetchExpenses(); // Refresh list
       } else {
+        // Show detailed error message
+        let errorMessage = 'Failed to save expense';
+        
+        if (result) {
+          if (result.data) {
+            errorMessage = result.data.message || 
+                          result.data.error || 
+                          result.data.msg ||
+                          (result.data.success === false ? 'API returned failure status' : errorMessage);
+          } else if (result.message) {
+            errorMessage = result.message;
+          } else if (result.error) {
+            errorMessage = result.error;
+          } else if (result.success === false) {
+            errorMessage = 'API returned failure status';
+          }
+        }
+        
+        // Only log if we have meaningful data
+        if (result && (result.data || result.message || result.error)) {
+          console.error('Expense save failed:', {
+            result,
+            errorMessage,
+            data,
+            resultKeys: Object.keys(result),
+            dataKeys: result.data ? Object.keys(result.data) : 'no data'
+          });
+        } else {
+          console.error('Expense save failed - empty or invalid response:', {
+            result,
+            data,
+            resultType: typeof result,
+            resultIsNull: result === null,
+            resultIsUndefined: result === undefined
+          });
+          errorMessage = 'No response from server. Please check your connection and try again.';
+        }
+        
         setAlert({ 
           type: 'error', 
-          message: result.data?.message || 'Failed to save expense' 
+          message: errorMessage
         });
       }
     } catch (error) {
       console.error('Error saving expense:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+        error: error
+      });
       setAlert({ 
         type: 'error', 
-        message: 'Failed to save expense: ' + (error.message || 'Network error') 
+        message: 'Failed to save expense: ' + (error?.message || 'Network error. Please check console for details.') 
       });
     }
   };
@@ -301,7 +323,7 @@ export default function ExpenseManagementPage() {
 
   /**
    * Handle delete button click
-   * API: expense_management.php (DELETE)
+   * API: api/expense_management.php (DELETE)
    */
   const handleDelete = async (expenseId) => {
     if (!window.confirm('Are you sure you want to delete this expense? This action cannot be undone.')) {
@@ -309,7 +331,7 @@ export default function ExpenseManagementPage() {
     }
 
     try {
-      const result = await apiDelete('/expense_management.php', { id: expenseId });
+      const result = await apiDelete('api/expense_management.php', { id: expenseId });
 
       // Handle different response structures
       const isSuccess = result.success && result.data && (

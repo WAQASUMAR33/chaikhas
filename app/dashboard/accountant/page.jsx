@@ -20,7 +20,8 @@ import {
   TrendingUp,
   ShoppingCart,
   DollarSign,
-  Receipt
+  Receipt,
+  CheckCircle
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -104,6 +105,20 @@ export default function AccountantDashboardPage() {
       description: 'View and manage orders',
       path: '/dashboard/accountant/orders',
       color: 'bg-blue-600 hover:bg-blue-700',
+    },
+    {
+      icon: Receipt,
+      label: 'Expense Management',
+      description: 'Add and manage expenses',
+      path: '/dashboard/accountant/expenses',
+      color: 'bg-green-600 hover:bg-green-700',
+    },
+    {
+      icon: CheckCircle,
+      label: 'Day End',
+      description: 'Manage day-end records',
+      path: '/dashboard/accountant/dayend',
+      color: 'bg-purple-600 hover:bg-purple-700',
     },
   ];
 
@@ -207,13 +222,15 @@ export default function AccountantDashboardPage() {
               Information
             </h2>
             <p className="text-gray-600 mb-4">
-              As an Accountant, you can create orders and manage them with bill generation and payment processing.
+              As an Accountant, you can create orders, manage expenses, handle day-end operations, and process payments.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <h3 className="font-semibold text-blue-900 mb-2">Available Features:</h3>
               <ul className="list-disc list-inside space-y-1 text-sm text-blue-800">
                 <li>Create new orders</li>
                 <li>View and manage all orders</li>
+                <li>Add and manage expenses</li>
+                <li>Manage day-end records</li>
                 <li>Generate bills with discounts</li>
                 <li>Process payments</li>
                 <li>Print receipts</li>

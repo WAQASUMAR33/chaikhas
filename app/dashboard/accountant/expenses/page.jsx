@@ -1,112 +1,81 @@
 'use client';
 
 /**
- * Expense Management Page - Super Admin
+ * Expense Management Page - Accountant
  * Full CRUD operations for expenses with amounts
- * Shows expenses from all branches with branch filter
+ * Shows only expenses for the current branch
  * Users can enter expense title directly - it will be created if it doesn't exist
- * Uses APIs: api/get_expenses.php, api/expense_management.php, api/branch_management.php
+ * Uses APIs: api/get_expenses.php, api/expense_management.php
  * Database: expenses table (id, expense_title, amount, branch_id, description, created_at, updated_at)
  */
 
 import { useEffect, useState } from 'react';
-import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
+import AccountantLayout from '@/components/accountant/AccountantLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiDelete, apiGet } from '@/utils/api';
+import { apiPost, apiDelete, apiGet, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
-import { Receipt, Plus, Edit, Trash2, Search, X, DollarSign, Building2 } from 'lucide-react';
+import { Receipt, Plus, Edit, Trash2, Search, X, DollarSign } from 'lucide-react';
 
 export default function ExpenseManagementPage() {
   const [expenses, setExpenses] = useState([]);
-  const [branches, setBranches] = useState([]);
   const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedBranchId, setSelectedBranchId] = useState('all'); // 'all' or branch_id
   const [formData, setFormData] = useState({
     expense_title: '',
     amount: '',
     description: '',
-    branch_id: '',
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
 
   useEffect(() => {
-    fetchBranches();
     fetchExpenses();
   }, []);
 
-  // Filter expenses based on search term and branch
+  // Filter expenses based on search term
   useEffect(() => {
-    let filtered = expenses;
-
-    // Filter by branch
-    if (selectedBranchId !== 'all') {
-      filtered = filtered.filter(expense => 
-        expense.branch_id?.toString() === selectedBranchId.toString()
-      );
-    }
-
-    // Filter by search term
-    if (searchTerm.trim() !== '') {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter(expense => {
+    if (searchTerm.trim() === '') {
+      setFilteredExpenses(expenses);
+    } else {
+      const filtered = expenses.filter(expense => {
         const title = expense.expense_title?.toLowerCase() || '';
         const description = expense.description?.toLowerCase() || '';
-        const branchName = expense.branch_name?.toLowerCase() || '';
         const amount = expense.amount?.toString() || '';
+        const searchLower = searchTerm.toLowerCase();
         return (
           title.includes(searchLower) ||
           description.includes(searchLower) ||
-          branchName.includes(searchLower) ||
           amount.includes(searchLower) ||
           expense.id.toString().includes(searchTerm)
         );
       });
+      setFilteredExpenses(filtered);
     }
-
-    setFilteredExpenses(filtered);
-  }, [searchTerm, selectedBranchId, expenses]);
+  }, [searchTerm, expenses]);
 
   /**
-   * Fetch all branches for filter dropdown
-   */
-  const fetchBranches = async () => {
-    try {
-      const result = await apiGet('api/branch_management.php');
-      let branchesData = [];
-      
-      if (result.success && result.data) {
-        if (Array.isArray(result.data)) {
-          branchesData = result.data;
-        } else if (result.data.data && Array.isArray(result.data.data)) {
-          branchesData = result.data.data;
-        }
-      }
-      
-      setBranches(branchesData);
-    } catch (error) {
-      console.error('Error fetching branches:', error);
-    }
-  };
-
-  /**
-   * Fetch all expenses from all branches
-   * API: api/get_expenses.php (POST without branch_id or with branch_id=null for all)
+   * Fetch all expenses for current branch
+   * API: api/get_expenses.php (POST with branch_id)
    */
   const fetchExpenses = async () => {
     setLoading(true);
     setAlert({ type: '', message: '' });
     
     try {
-      // For superadmin, fetch all expenses (don't pass branch_id or pass null)
-      const result = await apiPost('api/get_expenses.php', { branch_id: null });
+      const branchId = getBranchId();
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        setLoading(false);
+        return;
+      }
+
+      const result = await apiPost('api/get_expenses.php', { branch_id: branchId });
       
       // Handle different response structures
       let expensesData = [];
@@ -152,7 +121,7 @@ export default function ExpenseManagementPage() {
           expense_title: expense.expense_title || expense.title || '',
           amount: parseFloat(expense.amount || 0),
           description: expense.description || '',
-          branch_id: expense.branch_id || '',
+          branch_id: expense.branch_id || branchId,
           branch_name: expense.branch_name || '',
           created_at: formattedCreatedAt || expense.created_at || 'N/A',
           raw_created_at: expense.created_at || '',
@@ -196,18 +165,19 @@ export default function ExpenseManagementPage() {
       return;
     }
 
-    if (!formData.branch_id || formData.branch_id === '') {
-      setAlert({ type: 'error', message: 'Branch is required' });
-      return;
-    }
-
     try {
+      const branchId = getBranchId();
+      if (!branchId) {
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        return;
+      }
+
       // Prepare data - only include id for updates
       const data = {
         expense_title: formData.expense_title.trim(),
         amount: parseFloat(formData.amount),
         description: formData.description.trim(),
-        branch_id: formData.branch_id,
+        branch_id: branchId,
       };
 
       // Only add id field if editing (for update operation)
@@ -222,6 +192,10 @@ export default function ExpenseManagementPage() {
 
       console.log('=== API Response ===');
       console.log('Full result:', JSON.stringify(result, null, 2));
+      console.log('result.success:', result.success);
+      console.log('result.data:', result.data);
+      console.log('result.data?.success:', result.data?.success);
+      console.log('result.data?.message:', result.data?.message);
 
       // Handle different response structures
       // Check multiple success indicators
@@ -275,7 +249,7 @@ export default function ExpenseManagementPage() {
           type: 'success', 
           message: result.data?.message || (editingExpense ? 'Expense updated successfully!' : 'Expense created successfully!')
         });
-        setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+        setFormData({ expense_title: '', amount: '', description: '' });
         setEditingExpense(null);
         setModalOpen(false);
         fetchExpenses(); // Refresh list
@@ -347,7 +321,6 @@ export default function ExpenseManagementPage() {
       expense_title: expense.expense_title || '',
       amount: expense.amount?.toString() || '',
       description: expense.description || '',
-      branch_id: expense.branch_id?.toString() || '',
     });
     setModalOpen(true);
   };
@@ -413,11 +386,6 @@ export default function ExpenseManagementPage() {
       wrap: false,
     },
     {
-      header: 'Branch',
-      accessor: 'branch_name',
-      className: 'min-w-[150px] font-medium',
-    },
-    {
       header: 'Expense Title',
       accessor: 'expense_title',
       className: 'min-w-[200px] font-medium',
@@ -468,20 +436,20 @@ export default function ExpenseManagementPage() {
   );
 
   return (
-    <SuperAdminLayout>
+    <AccountantLayout>
       <div className="space-y-4 sm:space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Expense Management</h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1">
-              Manage expenses for all branches
+              Manage expenses for your branch
             </p>
           </div>
           <Button
             onClick={() => {
               setEditingExpense(null);
-              setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+              setFormData({ expense_title: '', amount: '', description: '' });
               setModalOpen(true);
             }}
             className="flex items-center gap-2 w-full sm:w-auto"
@@ -500,57 +468,32 @@ export default function ExpenseManagementPage() {
           />
         )}
 
-        {/* Filters */}
+        {/* Search Bar */}
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            {/* Branch Filter */}
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Filter by Branch
-              </label>
-              <select
-                value={selectedBranchId}
-                onChange={(e) => setSelectedBranchId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-              >
-                <option value="all">All Branches</option>
-                {branches.map((branch) => (
-                  <option key={branch.branch_id} value={branch.branch_id}>
-                    {branch.branch_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Search Bar */}
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Search
-              </label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search by title, description, branch, amount, or ID..."
-                  className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-                />
-                {searchTerm && (
-                  <button
-                    onClick={clearSearch}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search by title, description, amount, or ID..."
+                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+              />
+              {searchTerm && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
@@ -582,27 +525,13 @@ export default function ExpenseManagementPage() {
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Filtered Results</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {filteredExpenses.length}
-                </p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                <Search className="w-6 h-6 text-purple-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
-            <div className="flex items-center justify-between">
-              <div>
                 <p className="text-sm font-medium text-gray-600">Filtered Total</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {formatPKR(filteredTotal)}
                 </p>
               </div>
               <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
-                <Building2 className="w-6 h-6 text-orange-600" />
+                <Search className="w-6 h-6 text-orange-600" />
               </div>
             </div>
           </div>
@@ -623,8 +552,8 @@ export default function ExpenseManagementPage() {
               data={filteredExpenses}
               actions={actions}
               emptyMessage={
-                searchTerm || selectedBranchId !== 'all'
-                  ? `No expenses found matching your filters`
+                searchTerm
+                  ? `No expenses found matching "${searchTerm}"`
                   : "No expenses found. Click 'Add Expense' to create one."
               }
             />
@@ -637,7 +566,7 @@ export default function ExpenseManagementPage() {
           onClose={() => {
             setModalOpen(false);
             setEditingExpense(null);
-            setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+            setFormData({ expense_title: '', amount: '', description: '' });
             setAlert({ type: '', message: '' });
           }}
           title={editingExpense ? 'Edit Expense' : 'Add New Expense'}
@@ -645,29 +574,6 @@ export default function ExpenseManagementPage() {
           showCloseButton={true}
         >
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Branch <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={formData.branch_id}
-                onChange={(e) => setFormData({ ...formData, branch_id: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-                required
-                disabled={!!editingExpense}
-              >
-                <option value="">Select Branch</option>
-                {branches.map((branch) => (
-                  <option key={branch.branch_id} value={branch.branch_id}>
-                    {branch.branch_name}
-                  </option>
-                ))}
-              </select>
-              {editingExpense && (
-                <p className="text-xs text-gray-500 mt-1">Branch cannot be changed when editing</p>
-              )}
-            </div>
-
             <Input
               label="Expense Title"
               name="expense_title"
@@ -719,7 +625,7 @@ export default function ExpenseManagementPage() {
                 onClick={() => {
                   setModalOpen(false);
                   setEditingExpense(null);
-                  setFormData({ expense_title: '', amount: '', description: '', branch_id: '' });
+                  setFormData({ expense_title: '', amount: '', description: '' });
                   setAlert({ type: '', message: '' });
                 }}
                 className="w-full sm:w-auto"
@@ -736,6 +642,7 @@ export default function ExpenseManagementPage() {
           </form>
         </Modal>
       </div>
-    </SuperAdminLayout>
+    </AccountantLayout>
   );
 }
+

@@ -1,13 +1,13 @@
 'use client';
 
 /**
- * Day End Management Page - Branch Admin
+ * Day End Management Page - Accountant
  * Manage day-end records with opening/closing balances
  * Uses APIs: get_dayend.php, dayend_management.php
  */
 
 import { useEffect, useState, useRef } from 'react';
-import AdminLayout from '@/components/admin/AdminLayout';
+import AccountantLayout from '@/components/accountant/AccountantLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
@@ -340,7 +340,7 @@ export default function DayEndPage() {
 
       const fullname = getFullname();
       const username = getUsername();
-      const closingBy = fullname || username || 'Admin';
+      const closingBy = fullname || username || 'Accountant';
 
       const data = {
         opening_balance: parseFloat(formData.opening_balance || 0),
@@ -514,7 +514,7 @@ export default function DayEndPage() {
   );
 
   return (
-    <AdminLayout>
+    <AccountantLayout>
       <div className="space-y-4 sm:space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -947,7 +947,7 @@ export default function DayEndPage() {
           </>
         )}
       </div>
-    </AdminLayout>
+    </AccountantLayout>
   );
 }
 
