@@ -112,9 +112,9 @@ export default function SalesReportPage() {
       
       const result = await apiPost('api/get_sales_report.php', params);
 
+      let salesData = [];
+      
       if (result.success && result.data) {
-        let salesData = [];
-        
         if (Array.isArray(result.data)) {
           salesData = result.data;
         } else if (result.data.data && Array.isArray(result.data.data)) {
@@ -122,51 +122,153 @@ export default function SalesReportPage() {
         } else if (result.data.sales && Array.isArray(result.data.sales)) {
           salesData = result.data.sales;
         }
-
-        // Ensure all sales are included (paid, unpaid, and credit)
-        // Filter out any null/undefined entries
-        salesData = salesData.filter(sale => sale !== null && sale !== undefined);
+      }
+      
+      // IMPORTANT: Also fetch from bills_management.php to ensure we get ALL bills including credit
+      // This is the same API used by dayend to calculate credit sales
+      try {
+        const billsParams = {
+          start_date: params.start_date,
+          end_date: params.end_date,
+        };
+        if (params.branch_id) {
+          billsParams.branch_id = params.branch_id;
+        }
         
-        // Log all sales data for debugging credit sales
-        console.log('=== Sales Report Data ===');
-        console.log('Total records:', salesData.length);
-        console.log('Sample sale:', salesData[0]);
+        const billsResult = await apiGet('api/bills_management.php', billsParams);
         
-        // Log credit sales count for debugging - check multiple field names
-        const creditSalesCount = salesData.filter(sale => {
-          const isCredit = sale.payment_mode === 'Credit' || 
-                          sale.payment_method === 'Credit' || 
-                          sale.payment_status === 'Credit' || 
-                          sale.is_credit === true ||
-                          sale.is_credit === 1 ||
-                          (sale.payment_status && sale.payment_status.toLowerCase() === 'credit') ||
-                          (sale.payment_method && sale.payment_method.toLowerCase() === 'credit') ||
-                          (sale.payment_mode && sale.payment_mode.toLowerCase() === 'credit');
-          
-          if (isCredit) {
-            console.log('Credit sale found:', {
-              order_id: sale.order_id,
-              payment_mode: sale.payment_mode,
-              payment_method: sale.payment_method,
-              payment_status: sale.payment_status,
-              is_credit: sale.is_credit,
-              customer_name: sale.customer_name
-            });
+        if (billsResult.success && billsResult.data) {
+          let billsData = [];
+          if (Array.isArray(billsResult.data)) {
+            billsData = billsResult.data;
+          } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
+            billsData = billsResult.data.data;
+          } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
+            billsData = billsResult.data.bills;
           }
           
-          return isCredit;
-        }).length;
-        
-        console.log(`Sales Report: Total records: ${salesData.length}, Credit sales: ${creditSalesCount}`);
-
-        setReportData(salesData);
-        setReportGenerated(true);
-        setAlert({ type: 'success', message: `Report generated successfully. Found ${salesData.length} records (${creditSalesCount} credit sales).` });
-      } else {
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to generate report' });
-        setReportData([]);
-        setReportGenerated(false);
+          console.log('📋 Bills from bills_management.php:', billsData.length, 'bills');
+          
+          // Merge bills data with sales data, avoiding duplicates
+          const existingOrderIds = new Set(salesData.map(s => s.order_id || s.id));
+          billsData.forEach(bill => {
+            const orderId = bill.order_id || bill.id;
+            if (!existingOrderIds.has(orderId)) {
+              // Add bill to sales data
+              salesData.push({
+                ...bill,
+                order_id: orderId,
+                bill_id: bill.bill_id || bill.id,
+                // Map bill fields to sales report format
+                bill_amount: bill.total_amount || bill.bill_amount,
+                net_total: bill.grand_total || bill.net_total || bill.total_amount,
+                grand_total: bill.grand_total || bill.total_amount,
+                payment_method: bill.payment_method,
+                payment_status: bill.payment_status,
+                payment_mode: bill.payment_method, // Use payment_method as payment_mode
+                is_credit: bill.is_credit,
+                customer_id: bill.customer_id,
+                customer_name: bill.customer_name,
+                created_at: bill.created_at || bill.date,
+              });
+              existingOrderIds.add(orderId);
+            } else {
+              // Update existing sale with bill data if bill has more complete info
+              const existingSale = salesData.find(s => (s.order_id || s.id) === orderId);
+              if (existingSale) {
+                // Update payment fields from bill if they're missing in sale
+                if (!existingSale.payment_method && bill.payment_method) {
+                  existingSale.payment_method = bill.payment_method;
+                }
+                if (!existingSale.payment_status && bill.payment_status) {
+                  existingSale.payment_status = bill.payment_status;
+                }
+                if (existingSale.is_credit === undefined && bill.is_credit !== undefined) {
+                  existingSale.is_credit = bill.is_credit;
+                }
+                if (!existingSale.customer_id && bill.customer_id) {
+                  existingSale.customer_id = bill.customer_id;
+                  existingSale.customer_name = bill.customer_name;
+                }
+              }
+            }
+          });
+          
+          console.log('✅ Merged sales data:', salesData.length, 'total records');
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not fetch from bills_management.php:', error);
+        // Continue with sales data from get_sales_report.php
       }
+
+      // Ensure all sales are included (paid, unpaid, and credit)
+      // Filter out any null/undefined entries
+      salesData = salesData.filter(sale => sale !== null && sale !== undefined);
+      
+      // Log all sales data for debugging credit sales
+      console.log('=== Sales Report Data ===');
+      console.log('API Response:', result);
+      console.log('Total records:', salesData.length);
+      console.log('First 3 sales:', salesData.slice(0, 3));
+      
+      // Log ALL payment-related fields from each sale to understand the data structure
+      if (salesData.length > 0) {
+        console.log('=== Payment Fields Analysis ===');
+        salesData.slice(0, 5).forEach((sale, idx) => {
+          console.log(`Sale ${idx + 1} payment fields:`, {
+            order_id: sale.order_id,
+            payment_mode: sale.payment_mode,
+            payment_method: sale.payment_method,
+            payment_status: sale.payment_status,
+            is_credit: sale.is_credit,
+            customer_id: sale.customer_id,
+            customer_name: sale.customer_name,
+            all_keys: Object.keys(sale).filter(k => k.toLowerCase().includes('payment') || k.toLowerCase().includes('credit') || k.toLowerCase().includes('customer'))
+          });
+        });
+      }
+      
+      // Log credit sales count for debugging - check multiple field names
+      // Use the same logic as dayend page
+      const creditSalesCount = salesData.filter(sale => {
+        // Check all possible field names and formats (same as dayend)
+        const paymentMode = (sale.payment_mode || sale.paymentMethod || sale.paymentMode || '').toLowerCase();
+        const paymentMethod = (sale.payment_method || sale.paymentMethod || '').toLowerCase();
+        const paymentStatus = (sale.payment_status || sale.paymentStatus || '').toLowerCase();
+        const isCredit = sale.is_credit || sale.isCredit;
+        
+        // Same detection logic as dayend page
+        const isCreditSale = 
+          paymentStatus === 'credit' || 
+          paymentMethod === 'credit' || 
+          paymentMode === 'credit' ||
+          isCredit === true ||
+          isCredit === 1 ||
+          isCredit === '1' ||
+          (sale.customer_id && sale.customer_id > 0 && (paymentStatus === 'unpaid' || paymentStatus === 'credit') && paymentMethod === 'credit');
+        
+        if (isCreditSale) {
+          console.log('✅ Credit sale found:', {
+            order_id: sale.order_id,
+            bill_id: sale.bill_id,
+            payment_mode: sale.payment_mode,
+            payment_method: sale.payment_method,
+            payment_status: sale.payment_status,
+            is_credit: sale.is_credit,
+            customer_id: sale.customer_id,
+            customer_name: sale.customer_name,
+            net_total: sale.net_total || sale.net_total_amount || sale.grand_total
+          });
+        }
+        
+        return isCreditSale;
+      }).length;
+      
+      console.log(`📊 Sales Report Summary: Total records: ${salesData.length}, Credit sales detected: ${creditSalesCount}`);
+
+      setReportData(salesData);
+      setReportGenerated(true);
+      setAlert({ type: 'success', message: `Report generated successfully. Found ${salesData.length} records (${creditSalesCount} credit sales).` });
     } catch (error) {
       console.error('Error generating report:', error);
       setAlert({ type: 'error', message: 'Failed to generate report: ' + (error.message || 'Network error') });
@@ -194,15 +296,22 @@ export default function SalesReportPage() {
 
   // Calculate totals - Enhanced credit detection
   const totals = reportData.reduce((acc, sale) => {
-    // Enhanced credit detection - check multiple field names and formats
-    const isCredit = sale.payment_mode === 'Credit' || 
-                    sale.payment_method === 'Credit' || 
-                    sale.payment_status === 'Credit' || 
-                    sale.is_credit === true ||
-                    sale.is_credit === 1 ||
-                    (sale.payment_status && String(sale.payment_status).toLowerCase() === 'credit') ||
-                    (sale.payment_method && String(sale.payment_method).toLowerCase() === 'credit') ||
-                    (sale.payment_mode && String(sale.payment_mode).toLowerCase() === 'credit');
+    // Enhanced credit detection - check all possible field names and formats
+    // Use same logic as dayend page (lowercase comparison)
+    const paymentMode = (sale.payment_mode || sale.paymentMethod || sale.paymentMode || '').toLowerCase();
+    const paymentMethod = (sale.payment_method || sale.paymentMethod || '').toLowerCase();
+    const paymentStatus = (sale.payment_status || sale.paymentStatus || '').toLowerCase();
+    const isCredit = sale.is_credit || sale.isCredit;
+    
+    // Same detection logic as dayend page
+    const isCreditSale = 
+      paymentStatus === 'credit' || 
+      paymentMethod === 'credit' || 
+      paymentMode === 'credit' ||
+      isCredit === true ||
+      isCredit === 1 ||
+      isCredit === '1' ||
+      (sale.customer_id && sale.customer_id > 0 && (paymentStatus === 'unpaid' || paymentStatus === 'credit') && paymentMethod === 'credit');
     
     const billAmount = parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || sale.total_amount || 0);
     const serviceCharge = parseFloat(sale.service_charge || 0);
@@ -215,7 +324,7 @@ export default function SalesReportPage() {
     acc.netTotal += netTotal;
     
     // Calculate credit sales total
-    if (isCredit) {
+    if (isCreditSale) {
       acc.creditSales += netTotal;
       // Debug log for credit sales
       console.log('Credit sale in totals:', {
