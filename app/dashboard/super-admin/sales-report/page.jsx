@@ -143,6 +143,18 @@ export default function SalesReportPage() {
         }
       }
       
+      console.log('📊 Initial sales data from get_sales_report.php:', salesData.length, 'records');
+      if (salesData.length > 0) {
+        console.log('Sample sale from API:', {
+          order_id: salesData[0].order_id,
+          payment_status: salesData[0].payment_status,
+          payment_method: salesData[0].payment_method,
+          customer_id: salesData[0].customer_id,
+          customer_name: salesData[0].customer_name,
+          is_credit: salesData[0].is_credit
+        });
+      }
+      
       // IMPORTANT: Also fetch from bills_management.php to ensure we get ALL bills including credit
       // This is the same API used by dayend to calculate credit sales
       try {
@@ -192,6 +204,13 @@ export default function SalesReportPage() {
               : (bill.branch_name || bill.branchName || (billBranchId ? `Branch ${billBranchId}` : 'Unknown Branch'));
             
             if (!existingOrderIds.has(orderId)) {
+              // Determine if this is a credit sale
+              const billPaymentStatus = (bill.payment_status || '').toString().toLowerCase().trim();
+              const billPaymentMethod = (bill.payment_method || '').toString().toLowerCase().trim();
+              const billIsCredit = bill.is_credit === true || bill.is_credit === 1 || bill.is_credit === '1' ||
+                                   billPaymentMethod === 'credit' ||
+                                   (billPaymentStatus === 'unpaid' && bill.customer_id && bill.customer_id > 0);
+              
               // Add bill to sales data
               salesData.push({
                 ...bill,
@@ -201,12 +220,13 @@ export default function SalesReportPage() {
                 bill_amount: bill.total_amount || bill.bill_amount,
                 net_total: bill.grand_total || bill.net_total || bill.total_amount,
                 grand_total: bill.grand_total || bill.total_amount,
-                payment_method: bill.payment_method,
-                payment_status: bill.payment_status,
-                payment_mode: bill.payment_method, // Use payment_method as payment_mode
-                is_credit: bill.is_credit,
+                payment_method: billIsCredit ? 'Credit' : (bill.payment_method || 'N/A'),
+                payment_status: billIsCredit ? 'Credit' : (bill.payment_status || 'N/A'),
+                payment_mode: billIsCredit ? 'Credit' : (bill.payment_method || 'N/A'),
+                is_credit: billIsCredit,
                 customer_id: bill.customer_id,
-                customer_name: bill.customer_name,
+                customer_name: bill.customer_name || bill.customerName || bill.name || bill.customer_name || null,
+                customer_phone: bill.customer_phone || bill.customerPhone || bill.phone || bill.mobile || null,
                 created_at: bill.created_at || bill.date,
                 branch_id: billBranchId,
                 branch_name: branchName,
@@ -232,12 +252,24 @@ export default function SalesReportPage() {
                 // If bill has customer_id, it's likely a credit sale
                 if (bill.customer_id) {
                   existingSale.customer_id = bill.customer_id;
-                  existingSale.customer_name = bill.customer_name;
+                  existingSale.customer_name = bill.customer_name || bill.customerName || bill.name || existingSale.customer_name;
+                  existingSale.customer_phone = bill.customer_phone || bill.customerPhone || bill.phone || bill.mobile || existingSale.customer_phone;
+                  
                   // If payment_status is unpaid but there's a customer_id, mark as credit
-                  if (bill.payment_status === 'unpaid' || existingSale.payment_status === 'unpaid') {
+                  const billPaymentStatus = (bill.payment_status || '').toString().toLowerCase().trim();
+                  const existingPaymentStatus = (existingSale.payment_status || '').toString().toLowerCase().trim();
+                  
+                  if (billPaymentStatus === 'unpaid' || existingPaymentStatus === 'unpaid' || 
+                      billPaymentStatus === 'pending' || existingPaymentStatus === 'pending') {
                     existingSale.is_credit = true;
                     existingSale.payment_method = 'Credit';
                     existingSale.payment_mode = 'Credit';
+                    existingSale.payment_status = 'Credit';
+                    console.log('✅ Updated existing sale as credit from bill:', {
+                      order_id: existingSale.order_id,
+                      customer_id: bill.customer_id,
+                      customer_name: bill.customer_name
+                    });
                   }
                 }
                 // Update branch information - always update if we have better info
@@ -292,6 +324,44 @@ export default function SalesReportPage() {
       console.log('Branches count:', branches.length);
       
       salesData = salesData.map((sale, index) => {
+        // Normalize customer information - try multiple field names
+        // Check all possible customer name fields
+        const possibleCustomerNames = [
+          sale.customer_name,
+          sale.customerName,
+          sale.name,
+          sale.customer,
+          sale.customer_name,
+          sale.customer_full_name,
+          sale.full_name
+        ];
+        sale.customer_name = possibleCustomerNames.find(name => name && name.trim() !== '') || null;
+        
+        // Check all possible customer phone fields
+        const possibleCustomerPhones = [
+          sale.customer_phone,
+          sale.customerPhone,
+          sale.phone,
+          sale.mobile,
+          sale.mobile_no,
+          sale.contact_number
+        ];
+        sale.customer_phone = possibleCustomerPhones.find(phone => phone && phone.trim() !== '') || null;
+        
+        // Log if we have customer_id but no customer_name (for debugging)
+        if (sale.customer_id && sale.customer_id > 0 && !sale.customer_name) {
+          console.warn('⚠️ Sale has customer_id but no customer_name found:', {
+            order_id: sale.order_id,
+            customer_id: sale.customer_id,
+            available_fields: Object.keys(sale).filter(k => 
+              k.toLowerCase().includes('customer') || 
+              k.toLowerCase().includes('name') || 
+              k.toLowerCase() === 'phone' ||
+              k.toLowerCase() === 'mobile'
+            )
+          });
+        }
+        
         // Try multiple field names for branch_id
         const saleBranchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
         
@@ -334,22 +404,53 @@ export default function SalesReportPage() {
         }
         
         // Ensure credit sales are properly marked
-        // If there's a customer_id and payment_status is unpaid, it's a credit sale
-        if (sale.customer_id && sale.customer_id > 0) {
-          if (sale.payment_status === 'unpaid' || sale.payment_status === 'Unpaid') {
-            // Mark as credit if not already marked
-            if (!sale.is_credit && sale.payment_method !== 'Credit' && sale.payment_mode !== 'Credit') {
-              sale.is_credit = true;
-              sale.payment_method = 'Credit';
-              sale.payment_mode = 'Credit';
-              sale.payment_status = 'Credit';
-              console.log('✅ Marked sale as credit based on customer_id:', {
-                order_id: sale.order_id,
-                customer_id: sale.customer_id,
-                customer_name: sale.customer_name
-              });
-            }
+        // Check multiple conditions to identify credit sales
+        const paymentStatus = (sale.payment_status || '').toString().toLowerCase().trim();
+        const paymentMethod = (sale.payment_method || sale.payment_mode || '').toString().toLowerCase().trim();
+        const hasCustomerId = sale.customer_id && sale.customer_id > 0;
+        const isUnpaid = paymentStatus === 'unpaid' || paymentStatus === 'pending';
+        const isCreditMethod = paymentMethod === 'credit';
+        const isCreditFlag = sale.is_credit === true || sale.is_credit === 1 || sale.is_credit === '1';
+        
+        // Mark as credit if:
+        // 1. Explicitly marked as credit (is_credit flag)
+        // 2. Payment method is credit
+        // 3. Payment status is unpaid AND has customer_id (credit sale)
+        // 4. Payment status is unpaid AND payment method is credit
+        // 5. Payment status is unpaid AND no payment method is set (likely credit if unpaid)
+        const shouldBeCredit = isCreditFlag || isCreditMethod || (isUnpaid && hasCustomerId) || 
+                               (isUnpaid && isCreditMethod) || 
+                               (isUnpaid && !paymentMethod && !paymentStatus.match(/^(paid|complete|cash|easypaisa|card)$/i));
+        
+        if (shouldBeCredit) {
+          if (!sale.is_credit) {
+            sale.is_credit = true;
           }
+          if (sale.payment_method !== 'Credit' && sale.payment_mode !== 'Credit') {
+            sale.payment_method = 'Credit';
+            sale.payment_mode = 'Credit';
+          }
+          if (sale.payment_status !== 'Credit') {
+            sale.payment_status = 'Credit';
+          }
+          
+          // If unpaid and has customer_id but no customer_name, try to get it
+          if (hasCustomerId && !sale.customer_name) {
+            console.warn('⚠️ Credit sale has customer_id but no customer_name:', {
+              order_id: sale.order_id,
+              customer_id: sale.customer_id
+            });
+          }
+          
+          console.log('✅ Marked sale as credit:', {
+            order_id: sale.order_id,
+            customer_id: sale.customer_id,
+            customer_name: sale.customer_name,
+            payment_status: sale.payment_status,
+            payment_method: sale.payment_method,
+            reason: isCreditFlag ? 'is_credit flag' : isCreditMethod ? 'payment method' : 
+                   (isUnpaid && hasCustomerId) ? 'unpaid with customer' : 'unpaid status'
+          });
         }
         
         return sale;
@@ -425,10 +526,27 @@ export default function SalesReportPage() {
       return;
     }
 
-    // Small delay to ensure DOM is ready
-    setTimeout(() => {
-      window.print();
-    }, 100);
+    // Ensure print view is visible before printing
+    if (printRef.current) {
+      // Scroll to print view
+      printRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      
+      // Small delay to ensure DOM is ready and styles are applied
+      setTimeout(() => {
+        // Force print view to be visible
+        const printElement = printRef.current;
+        if (printElement) {
+          printElement.style.display = 'block';
+          printElement.style.visibility = 'visible';
+        }
+        window.print();
+      }, 200);
+    } else {
+      // Fallback if ref is not available
+      setTimeout(() => {
+        window.print();
+      }, 100);
+    }
   };
 
   // Calculate totals - use standardized credit detection
@@ -609,7 +727,8 @@ export default function SalesReportPage() {
                     // Use standardized utility functions
                     const isCredit = isCreditPayment(sale);
                     const paymentDisplay = getPaymentMethodDisplay(sale);
-                    const customerName = sale.customer_name || sale.customerName || null;
+                    // Try multiple field names for customer name
+                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || null;
                     
                     // Create a unique key combining order_id, bill_id, and index
                     const uniqueKey = `sale-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
@@ -733,7 +852,7 @@ export default function SalesReportPage() {
                 margin: 2cm 1cm 1.5cm 1cm;
               }
               
-              body {
+              * {
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
               }
@@ -745,32 +864,64 @@ export default function SalesReportPage() {
                 visibility: hidden !important;
               }
               
-              /* Show print content - must be visible even if parent is hidden */
+              /* Hide all elements except print-only and its children */
+              body * {
+                visibility: hidden;
+              }
+              
+              /* Show print content */
+              .print-only,
+              .print-only * {
+                visibility: visible !important;
+              }
+              
+              /* Ensure proper display for print-only */
               .print-only {
                 display: block !important;
-                visibility: visible !important;
-                position: absolute !important;
+                position: relative !important;
                 left: 0 !important;
                 top: 0 !important;
                 width: 100% !important;
                 height: auto !important;
                 overflow: visible !important;
                 background: white !important;
-                z-index: 9999 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                page-break-after: auto;
               }
               
-              .print-only * {
-                visibility: visible !important;
+              /* Ensure tables display correctly */
+              .print-only table {
+                display: table !important;
+                width: 100% !important;
+                border-collapse: collapse !important;
               }
               
-              /* Hide everything else */
-              body * {
-                visibility: hidden;
+              .print-only thead {
+                display: table-header-group !important;
               }
               
-              .print-only,
-              .print-only * {
-                visibility: visible !important;
+              .print-only tbody {
+                display: table-row-group !important;
+              }
+              
+              .print-only tfoot {
+                display: table-footer-group !important;
+              }
+              
+              .print-only tr {
+                display: table-row !important;
+              }
+              
+              .print-only td,
+              .print-only th {
+                display: table-cell !important;
+              }
+              
+              /* Hide no-print elements even inside print-only */
+              .print-only .no-print {
+                display: none !important;
+                visibility: hidden !important;
               }
               
               .print-container {
@@ -985,7 +1136,8 @@ export default function SalesReportPage() {
                     // Use standardized utility functions
                     const isCredit = isCreditPayment(sale);
                     const paymentDisplay = getPaymentMethodDisplay(sale);
-                    const customerName = sale.customer_name || sale.customerName || null;
+                    // Try multiple field names for customer name
+                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || null;
                     
                     // Create a unique key combining order_id, bill_id, and index
                     const uniqueKey = `sale-print-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
@@ -1072,4 +1224,5 @@ export default function SalesReportPage() {
     </SuperAdminLayout>
   );
 }
+
 
