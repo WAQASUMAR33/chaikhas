@@ -129,7 +129,24 @@ export default function SalesReportPage() {
       return;
     }
 
-    window.print();
+    // Wait for DOM to be ready and ensure print view is visible
+    setTimeout(() => {
+      // Force print view to be visible
+      const printElement = printRef.current;
+      if (printElement) {
+        printElement.style.display = 'block';
+      }
+      
+      // Trigger print
+      window.print();
+      
+      // After print dialog closes, hide it again (for screen view)
+      setTimeout(() => {
+        if (printElement) {
+          printElement.style.display = 'none';
+        }
+      }, 100);
+    }, 200);
   };
 
   // Calculate totals
@@ -143,7 +160,7 @@ export default function SalesReportPage() {
 
   return (
     <AdminLayout>
-      <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-4 sm:space-y-6 no-print">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -323,177 +340,264 @@ export default function SalesReportPage() {
           </div>
         )}
 
-        {/* Print View */}
-        <div ref={printRef} className="hidden print:block">
-          <style jsx global>{`
-            @media print {
-              @page {
-                size: A4 landscape;
-                margin: 1.5cm 1cm;
-                @top-center {
-                  content: element(header);
-                }
-                @bottom-center {
-                  content: "Page " counter(page) " of " counter(pages);
-                  font-size: 10px;
-                }
-              }
-              
-              body {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-              }
-              
-              .no-print {
-                display: none !important;
-              }
-              
-              .print-header {
-                position: running(header);
-              }
-              
-              .print-footer {
-                position: running(footer);
-              }
-              
-              .print-page-break {
-                page-break-after: always;
-              }
-              
-              table {
-                page-break-inside: auto;
-                border-collapse: collapse;
-              }
-              
-              tr {
-                page-break-inside: avoid;
-                page-break-after: auto;
-              }
-              
-              thead {
-                display: table-header-group;
-              }
-              
-              thead tr {
-                page-break-after: avoid;
-                page-break-inside: avoid;
-              }
-              
-              tfoot {
-                display: table-footer-group;
-              }
-              
-              tbody tr:last-child {
-                page-break-after: avoid;
-              }
-            }
-          `}</style>
-          
-          {reportGenerated && reportData.length > 0 && (
+        {/* Print View - Only visible when printing */}
+        {reportGenerated && reportData.length > 0 && (
+          <div ref={printRef} className="print-only">
             <div className="print-container">
               {/* Report Header - Repeats on each page */}
-              <div className="print-header" style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'flex-start',
-                marginBottom: '20px',
-                paddingBottom: '10px',
-                borderBottom: '2px solid #000',
-                position: 'running(header)'
-              }}>
-                <div style={{ width: '20%' }}>
-                  {/* Logo placeholder - replace with your logo */}
-                  <div style={{ 
-                    width: '80px', 
-                    height: '80px', 
-                    border: '1px solid #ccc',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '10px',
-                    color: '#666'
-                  }}>
-                    LOGO
+              <div className="print-header">
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'flex-start',
+                  marginBottom: '15px',
+                  paddingBottom: '10px',
+                  borderBottom: '2px solid #000'
+                }}>
+                  <div style={{ width: '15%', textAlign: 'left' }}>
+                    {/* Restaurant Logo */}
+                    <img 
+                      src="/assets/CHAIKHAS.PNG" 
+                      alt="Resturant Khas Logo"
+                      style={{ 
+                        maxWidth: '80px', 
+                        maxHeight: '80px',
+                        objectFit: 'contain'
+                      }}
+                      onError={(e) => {
+                        // Fallback if image doesn't load
+                        e.target.style.display = 'none';
+                        e.target.nextSibling.style.display = 'flex';
+                      }}
+                    />
+                    <div style={{ 
+                      width: '70px', 
+                      height: '70px', 
+                      border: '2px solid #000',
+                      display: 'none',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      backgroundColor: '#f9f9f9'
+                    }}>
+                      LOGO
+                    </div>
                   </div>
-                </div>
-                <div style={{ width: '60%', textAlign: 'center' }}>
-                  <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>
-                    {branchInfo?.branch_name || 'Branch Name'}
-                  </h1>
-                  <p style={{ margin: '5px 0', fontSize: '12px' }}>
-                    {branchInfo?.address || 'Branch Address'}
-                  </p>
-                  <p style={{ margin: '5px 0', fontSize: '14px', fontWeight: 'bold' }}>
-                    Monthly Sales Report - {new Date(selectedMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                  </p>
-                </div>
-                <div style={{ width: '20%', textAlign: 'right' }}>
-                  <p style={{ margin: 0, fontSize: '12px' }}>
-                    <strong>Report No:</strong><br />
-                    {reportNumber}
-                  </p>
-                  <p style={{ margin: '10px 0 0 0', fontSize: '12px' }}>
-                    Generated: {new Date().toLocaleDateString('en-GB')}
-                  </p>
+                  <div style={{ width: '70%', textAlign: 'center' }}>
+                    <h1 style={{ 
+                      margin: 0, 
+                      fontSize: '28px', 
+                      fontWeight: 'bold',
+                      color: '#000',
+                      textTransform: 'uppercase',
+                      letterSpacing: '1px'
+                    }}>
+                      Resturant Khas
+                    </h1>
+                    {branchInfo?.branch_name && (
+                      <p style={{ margin: '5px 0 0 0', fontSize: '14px', fontWeight: '600' }}>
+                        {branchInfo.branch_name}
+                      </p>
+                    )}
+                    <p style={{ margin: '8px 0 0 0', fontSize: '16px', fontWeight: 'bold' }}>
+                      Monthly Sales Report - {new Date(selectedMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </p>
+                  </div>
+                  <div style={{ width: '15%', textAlign: 'right', fontSize: '11px' }}>
+                    <p style={{ margin: '0 0 5px 0', fontWeight: 'bold' }}>
+                      Report No: {reportNumber}
+                    </p>
+                    <p style={{ margin: '5px 0 0 0' }}>
+                      Print Date: {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    </p>
+                  </div>
                 </div>
               </div>
 
               {/* Report Table */}
-              <table style={{ 
-                width: '100%', 
-                borderCollapse: 'collapse',
-                fontSize: '10px'
-              }}>
+              <table className="print-table">
                 <thead>
-                  <tr style={{ backgroundColor: '#f3f4f6', borderBottom: '2px solid #000' }}>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Order ID</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Created At</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Order Type</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Hall</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Table</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Order Taker</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Bill Amount</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Service Charge</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Discount</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Net Total</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Payment Mode</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Bill By</th>
-                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Last Update</th>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Hall</th>
+                    <th>Table</th>
+                    <th>Order Taker</th>
+                    <th>Bill Amount</th>
+                    <th>Service</th>
+                    <th>Discount</th>
+                    <th>Net Total</th>
+                    <th>Payment</th>
+                    <th>Bill By</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportData.map((sale, index) => (
                     <tr key={sale.order_id || index}>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_id || sale.id || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.created_at || sale.order_date)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_type || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.hall_name || sale.hall || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.table_number || sale.table || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_taker_name || sale.order_taker || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.service_charge || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.payment_mode || sale.payment_method || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.updated_at || sale.last_update)}</td>
+                      <td>{sale.order_id || sale.id || 'N/A'}</td>
+                      <td>{formatDateTime(sale.created_at || sale.order_date)}</td>
+                      <td>{sale.order_type || 'N/A'}</td>
+                      <td>{sale.hall_name || sale.hall || 'N/A'}</td>
+                      <td>{sale.table_number || sale.table || 'N/A'}</td>
+                      <td>{sale.order_taker_name || sale.order_taker || 'N/A'}</td>
+                      <td style={{ textAlign: 'right' }}>{formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatPKR(sale.service_charge || 0)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
+                      <td>{sale.payment_mode || sale.payment_method || 'N/A'}</td>
+                      <td>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr style={{ backgroundColor: '#f3f4f6', borderTop: '2px solid #000', fontWeight: 'bold' }}>
-                    <td colSpan="6" style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Totals:</td>
-                    <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.billAmount)}</td>
-                    <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.serviceCharge)}</td>
-                    <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.discount)}</td>
-                    <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.netTotal)}</td>
-                    <td colSpan="3" style={{ padding: '8px', border: '1px solid #000' }}></td>
+                  <tr>
+                    <td colSpan="6" style={{ textAlign: 'right', fontWeight: 'bold' }}>Totals:</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(totals.billAmount)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(totals.serviceCharge)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(totals.discount)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(totals.netTotal)}</td>
+                    <td colSpan="2"></td>
                   </tr>
                 </tfoot>
               </table>
+              
+              {/* Footer with Page Number */}
+              <div className="print-footer">
+                Page <span className="page-number"></span>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+        
+        {/* Print Styles */}
+        <style jsx global>{`
+          @media print {
+            @page {
+              size: A4 landscape;
+              margin: 2cm 1cm 1.5cm 1cm;
+            }
+            
+            body * {
+              visibility: hidden;
+            }
+            
+            .print-only,
+            .print-only * {
+              visibility: visible;
+            }
+            
+            .print-only {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              display: block !important;
+            }
+            
+            .no-print,
+            .no-print * {
+              display: none !important;
+            }
+            
+            .print-container {
+              width: 100%;
+            }
+            
+            .print-header {
+              margin-bottom: 15px;
+              padding-bottom: 10px;
+              border-bottom: 2px solid #000;
+              page-break-inside: avoid;
+              page-break-after: avoid;
+            }
+            
+            /* Repeat table header on each page */
+            .print-table thead {
+              display: table-header-group;
+            }
+            
+            .print-table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 9px;
+              margin-top: 10px;
+            }
+            
+            .print-table thead {
+              display: table-header-group;
+            }
+            
+            .print-table thead tr {
+              page-break-after: avoid;
+              page-break-inside: avoid;
+            }
+            
+            .print-table tfoot {
+              display: table-footer-group;
+            }
+            
+            .print-table tfoot tr {
+              page-break-inside: avoid;
+            }
+            
+            .print-table th,
+            .print-table td {
+              padding: 6px 4px;
+              border: 1px solid #000;
+              text-align: left;
+            }
+            
+            .print-table th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+            
+            .print-table tbody tr {
+              page-break-inside: avoid;
+            }
+            
+            .print-table tbody tr:nth-child(even) {
+              background-color: #f9f9f9;
+            }
+            
+            .print-table tfoot tr {
+              background-color: #f3f4f6;
+              border-top: 2px solid #000;
+              font-weight: bold;
+            }
+            
+            /* Page number footer */
+            .print-footer {
+              position: fixed;
+              bottom: 0.5cm;
+              left: 0;
+              right: 0;
+              text-align: center;
+              font-size: 10px;
+              border-top: 1px solid #ccc;
+              padding-top: 5px;
+              margin-top: 15px;
+            }
+            
+            .print-footer::after {
+              content: "Page " counter(page) " of " counter(pages);
+            }
+            
+            /* Hide the span inside footer, use ::after instead */
+            .print-footer .page-number {
+              display: none;
+            }
+          }
+          
+          /* Screen styles - hide print view */
+          @media screen {
+            .print-only {
+              display: none !important;
+            }
+          }
+        `}</style>
       </div>
     </AdminLayout>
   );

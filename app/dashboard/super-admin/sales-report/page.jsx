@@ -146,7 +146,10 @@ export default function SalesReportPage() {
       return;
     }
 
-    window.print();
+    // Small delay to ensure DOM is ready
+    setTimeout(() => {
+      window.print();
+    }, 100);
   };
 
   // Calculate totals
@@ -160,7 +163,7 @@ export default function SalesReportPage() {
 
   return (
     <SuperAdminLayout>
-      <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-4 sm:space-y-6 no-print">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
