@@ -53,6 +53,7 @@ const menuItems = [
   { icon: Receipt, label: 'Expenses', path: '/dashboard/super-admin/expenses' },
   { icon: Building2, label: 'Halls', path: '/dashboard/super-admin/halls' },
   { icon: Table2, label: 'Tables', path: '/dashboard/super-admin/tables' },
+  { icon: Users, label: 'Customers', path: '/dashboard/super-admin/customers' },
   { icon: Users, label: 'Users', path: '/dashboard/super-admin/accounts' },
 ];
 

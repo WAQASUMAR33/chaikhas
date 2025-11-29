@@ -6,7 +6,7 @@
  * Uses real APIs: get_halls.php, get_tables.php, get_products.php, create_order.php
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -36,6 +36,7 @@ export default function CreateOrderPage() {
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [orderReceipt, setOrderReceipt] = useState(null);
+  const [printingStatus, setPrintingStatus] = useState(null);
 
   useEffect(() => {
     fetchHalls();
@@ -843,6 +844,164 @@ export default function CreateOrderPage() {
     }
   };
 
+  /**
+   * Handle printing of KOT (Kitchen Order Ticket) receipt
+   * Prints KOT to respective kitchens automatically
+   */
+  const handlePrintReceipt = useCallback(async () => {
+    if (!orderReceipt || !orderReceipt.order_id) {
+      setAlert({ type: 'error', message: 'No order data available to print KOT' });
+      return;
+    }
+
+    try {
+      const orderId = orderReceipt.order_id;
+      let items = orderReceipt.items || [];
+      
+      if (items.length === 0) {
+        setAlert({ type: 'error', message: 'No items found to print KOT' });
+        return;
+      }
+
+      const currentCategories = Array.isArray(categories) ? categories : [];
+      const categoryToKitchenMap = {};
+      if (currentCategories && currentCategories.length > 0) {
+        currentCategories.forEach(cat => {
+          const catId = cat.category_id || cat.id;
+          const kitchenId = cat.kitchen_id || cat.kitchen;
+          if (catId && kitchenId) {
+            categoryToKitchenMap[catId] = kitchenId;
+          }
+        });
+      }
+      
+      const kitchenIds = [...new Set(
+        items
+          .map((item) => {
+            if (item.kitchen_id) return item.kitchen_id;
+            if (item.kitchen) return item.kitchen;
+            const categoryId = item.category_id || item.cat_id;
+            if (categoryId) {
+              const kitchenId = categoryToKitchenMap[categoryId];
+              if (kitchenId) return kitchenId;
+            }
+            if (item.category?.kitchen_id) return item.category.kitchen_id;
+            if (item.category?.kitchen) return item.category.kitchen;
+            return null;
+          })
+          .filter(Boolean)
+      )];
+
+      if (kitchenIds.length === 0) {
+        setAlert({ 
+          type: 'error', 
+          message: 'No kitchen information found in items. Please ensure items have category/kitchen assigned.' 
+        });
+        return;
+      }
+
+      const branchId = getBranchId() || getTerminal();
+      const terminal = getTerminal();
+      const printPromises = kitchenIds.map(async (kitchenId) => {
+        try {
+          const result = await apiPost('api/print_kitchen_receipt.php', {
+            order_id: orderId,
+            kitchen_id: kitchenId,
+            branch_id: branchId,
+            terminal: terminal
+          });
+
+          if (!result || result.success === false) {
+            const errorMsg = result?.data?.message || result?.message || 'Network error';
+            return { kitchenId, success: false, message: errorMsg };
+          }
+
+          if (result.data) {
+            const responseData = result.data;
+            if (responseData.success === true || responseData.kitchen_name) {
+              const kitchenName = responseData.kitchen_name || responseData.name || `Kitchen ${kitchenId}`;
+              const printerIp = responseData.printer_ip || responseData.printer || '';
+              return { 
+                kitchenId, 
+                kitchenName,
+                printerIp,
+                success: true, 
+                message: responseData.message || 'Printed successfully' 
+              };
+            }
+            if (responseData.error || responseData.message) {
+              return { 
+                kitchenId, 
+                success: false, 
+                message: responseData.message || responseData.error || 'Failed to print' 
+              };
+            }
+          }
+          
+          if (result.success === true) {
+            return { 
+              kitchenId, 
+              kitchenName: `Kitchen ${kitchenId}`,
+              printerIp: '',
+              success: true, 
+              message: 'Printed successfully' 
+            };
+          }
+          
+          return { 
+            kitchenId, 
+            success: false, 
+            message: result?.data?.message || result?.message || 'Unexpected response from server' 
+          };
+        } catch (error) {
+          const errorMessage = error?.message || error?.toString() || 'Unexpected error occurred';
+          return { kitchenId, success: false, message: errorMessage };
+        }
+      });
+
+      const results = await Promise.all(printPromises);
+      const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+      
+      if (successful.length > 0) {
+        const kitchenNames = successful.map(r => {
+          const name = r.kitchenName || `Kitchen ${r.kitchenId}`;
+          const printer = r.printerIp ? ` (${r.printerIp})` : '';
+          return `${name}${printer}`;
+        }).join(', ');
+        
+        setAlert({ 
+          type: 'success', 
+          message: `KOT sent successfully to ${successful.length} kitchen(s): ${kitchenNames}` 
+        });
+      } else {
+        const errorMessages = failed.map(r => `Kitchen ${r.kitchenId}: ${r.message}`).join('; ');
+        setAlert({ 
+          type: 'error', 
+          message: `KOT printing failed for all kitchens. ${errorMessages}` 
+        });
+      }
+    } catch (error) {
+      const errorMessage = error?.message || error?.toString() || 'Network error';
+      setAlert({ 
+        type: 'error', 
+        message: `Error printing KOT: ${errorMessage}` 
+      });
+    }
+  }, [orderReceipt, categories]);
+
+  /**
+   * Auto-print KOT when order is placed and receipt modal opens
+   */
+  useEffect(() => {
+    if (receiptModalOpen && orderReceipt && orderReceipt.order_id) {
+      const timer = setTimeout(() => {
+        handlePrintReceipt();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [receiptModalOpen, orderReceipt, handlePrintReceipt]);
+
   const { subtotal } = calculateTotals();
   
   // Filter dishes by selected category - only show items when category is selected
@@ -1219,7 +1378,9 @@ export default function CreateOrderPage() {
               {/* Success Message */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
                 <Check className="w-5 h-5 text-green-600" />
-                <p className="text-sm text-green-800 font-medium">Order placed successfully and sent to kitchen!</p>
+                <p className="text-sm text-green-800 font-medium">
+                  Order placed successfully! KOT is being printed to kitchen printers automatically.
+                </p>
               </div>
 
               {/* Thermal Receipt - Print View */}
@@ -1232,7 +1393,7 @@ export default function CreateOrderPage() {
               </div>
 
               {/* Actions */}
-              <div className="flex gap-3 pt-4 border-t">
+              <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t">
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -1246,6 +1407,14 @@ export default function CreateOrderPage() {
                   className="flex-1"
                 >
                   New Order
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handlePrintReceipt}
+                  className="flex-1 flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-4 h-4" />
+                  Re-Print KOT
                 </Button>
                 <Button
                   onClick={() => {

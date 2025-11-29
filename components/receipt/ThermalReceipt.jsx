@@ -85,6 +85,11 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
   const change = parseFloat(order?.change || 0);
   const billId = order?.bill_id || null;
   
+  // Customer information for credit sales
+  const isCredit = paymentMethod === 'Credit' || order?.is_credit || paymentStatus === 'Credit';
+  const customerName = order?.customer_name || null;
+  const customerPhone = order?.customer_phone || null;
+  
   // Format order type for display
   const displayOrderType = orderType === 'Dine In' ? 'Dine-In' : 
                           orderType === 'Take Away' ? 'Takeaway' : 
@@ -351,6 +356,17 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
           {order?.table_number && orderType === 'Dine In' && (
             <div className="info-row">
               <span className="info-label">Table:</span> {order.table_number}
+            </div>
+          )}
+          {isCredit && customerName && (
+            <div className="info-row" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #ccc' }}>
+              <span className="info-label" style={{ fontWeight: 'bold', color: '#FF5F15' }}>Credit Customer:</span>
+              <div style={{ marginTop: '4px' }}>
+                <div style={{ fontWeight: 'bold' }}>{customerName}</div>
+                {customerPhone && (
+                  <div style={{ fontSize: '10px', color: '#666' }}>{customerPhone}</div>
+                )}
+              </div>
             </div>
           )}
         </div>

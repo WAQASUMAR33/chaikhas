@@ -99,48 +99,94 @@ export default function DayEndPage() {
       let totalReceivings = 0;
       let creditSales = 0;
 
-      // Fetch today's orders
+      // Fetch today's bills to get accurate payment method data
       try {
-        const ordersPayload = { terminal };
-        const ordersResult = await apiPost('/getOrders.php', ordersPayload);
+        const billsResult = await apiGet('api/bills_management.php', { 
+          branch_id: branchId 
+        });
         
-        let ordersData = [];
-        if (ordersResult.success && ordersResult.data) {
-          if (Array.isArray(ordersResult.data)) {
-            ordersData = ordersResult.data;
-          } else if (ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
-            ordersData = ordersResult.data.data;
-          } else if (ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
-            ordersData = ordersResult.data.orders;
+        let billsData = [];
+        if (billsResult.success && billsResult.data) {
+          if (Array.isArray(billsResult.data)) {
+            billsData = billsResult.data;
+          } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
+            billsData = billsResult.data.data;
+          } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
+            billsData = billsResult.data.bills;
           }
         }
 
-        // Filter today's orders and calculate totals by payment method
-        const todayOrders = ordersData.filter(order => {
-          if (!order.created_at && !order.date) return false;
-          const orderDate = new Date(order.created_at || order.date);
-          orderDate.setHours(0, 0, 0, 0);
-          return orderDate.toISOString().split('T')[0] === todayStr;
+        // Filter today's bills and calculate totals by payment method
+        const todayBills = billsData.filter(bill => {
+          if (!bill.created_at && !bill.date) return false;
+          const billDate = new Date(bill.created_at || bill.date);
+          billDate.setHours(0, 0, 0, 0);
+          return billDate.toISOString().split('T')[0] === todayStr;
         });
 
-        todayOrders.forEach(order => {
-          const paymentMode = (order.payment_mode || order.payment_method || 'Cash').toLowerCase();
-          const netTotal = parseFloat(order.net_total_amount || order.netTotal || order.grand_total || order.g_total_amount || order.total || 0);
+        todayBills.forEach(bill => {
+          const paymentMode = (bill.payment_method || bill.payment_mode || 'Cash').toLowerCase();
+          const paymentStatus = (bill.payment_status || '').toLowerCase();
+          const netTotal = parseFloat(bill.grand_total || bill.net_total || bill.total_amount || 0);
           
           totalSales += netTotal;
 
-          if (paymentMode.includes('cash')) {
+          // Check if it's a credit bill (payment_status='Credit' or payment_method='Credit')
+          if (paymentStatus === 'credit' || paymentMode === 'credit' || bill.is_credit === true) {
+            creditSales += netTotal;
+          } else if (paymentMode.includes('cash')) {
             totalCash += netTotal;
           } else if (paymentMode.includes('easypaisa') || paymentMode.includes('easy') || paymentMode.includes('online')) {
             totalEasypaisa += netTotal;
           } else if (paymentMode.includes('bank') || paymentMode.includes('card')) {
             totalBank += netTotal;
-          } else if (paymentMode.includes('credit')) {
-            creditSales += netTotal;
           }
         });
       } catch (error) {
-        console.error('Error fetching orders:', error);
+        console.error('Error fetching bills:', error);
+        // Fallback to orders if bills API fails
+        try {
+          const ordersPayload = { terminal };
+          const ordersResult = await apiPost('/getOrders.php', ordersPayload);
+          
+          let ordersData = [];
+          if (ordersResult.success && ordersResult.data) {
+            if (Array.isArray(ordersResult.data)) {
+              ordersData = ordersResult.data;
+            } else if (ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
+              ordersData = ordersResult.data.data;
+            } else if (ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
+              ordersData = ordersResult.data.orders;
+            }
+          }
+
+          // Filter today's orders and calculate totals by payment method
+          const todayOrders = ordersData.filter(order => {
+            if (!order.created_at && !order.date) return false;
+            const orderDate = new Date(order.created_at || order.date);
+            orderDate.setHours(0, 0, 0, 0);
+            return orderDate.toISOString().split('T')[0] === todayStr;
+          });
+
+          todayOrders.forEach(order => {
+            const paymentMode = (order.payment_mode || order.payment_method || 'Cash').toLowerCase();
+            const netTotal = parseFloat(order.net_total_amount || order.netTotal || order.grand_total || order.g_total_amount || order.total || 0);
+            
+            totalSales += netTotal;
+
+            if (paymentMode.includes('cash')) {
+              totalCash += netTotal;
+            } else if (paymentMode.includes('easypaisa') || paymentMode.includes('easy') || paymentMode.includes('online')) {
+              totalEasypaisa += netTotal;
+            } else if (paymentMode.includes('bank') || paymentMode.includes('card')) {
+              totalBank += netTotal;
+            } else if (paymentMode.includes('credit')) {
+              creditSales += netTotal;
+            }
+          });
+        } catch (orderError) {
+          console.error('Error fetching orders:', orderError);
+        }
       }
 
       // Fetch today's expenses

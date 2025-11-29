@@ -37,7 +37,10 @@ export default function OrderManagementPage() {
     discount_percentage: 0, // Discount as percentage (e.g., 10 means 10%)
     service_charge: 0,
     payment_mode: 'Cash',
+    customer_id: null, // For credit customers
+    is_credit: false, // Whether this is a credit sale
   });
+  const [customers, setCustomers] = useState([]); // Credit customers list
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentData, setPaymentData] = useState({
@@ -58,6 +61,7 @@ export default function OrderManagementPage() {
 
   useEffect(() => {
     fetchOrders();
+    fetchCustomers(); // Fetch credit customers
     // Auto-refresh every 30 seconds to show new orders
     const interval = setInterval(fetchOrders, 30000);
     
@@ -89,7 +93,19 @@ export default function OrderManagementPage() {
         ...prev,
         service_charge: prev.service_charge || 0,
         discount_percentage: prev.discount_percentage || 0,
+        payment_mode: prev.payment_mode || 'Cash',
+        customer_id: prev.customer_id || null,
+        is_credit: prev.is_credit || false,
       }));
+    } else if (!billModalOpen) {
+      // Reset bill data when modal closes
+      setBillData({
+        discount_percentage: 0,
+        service_charge: 0,
+        payment_mode: 'Cash',
+        customer_id: null,
+        is_credit: false,
+      });
     }
   }, [billModalOpen, billOrder]);
 
@@ -266,6 +282,46 @@ export default function OrderManagementPage() {
       setAlert({ type: 'error', message: 'Failed to load orders: ' + (error.message || 'Network error') });
       setLoading(false);
       setOrders([]);
+    }
+  };
+
+  /**
+   * Fetch credit customers for the current branch
+   * API: api/customer_management.php (GET with branch_id)
+   */
+  const fetchCustomers = async () => {
+    try {
+      const branchId = getBranchId();
+      if (!branchId) {
+        return; // No branch ID, skip fetching customers
+      }
+
+      const result = await apiGet('api/customer_management.php', { 
+        branch_id: branchId 
+      });
+      
+      let customersData = [];
+      
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          customersData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          customersData = result.data.data;
+        }
+      }
+
+      // Map customers
+      const mappedCustomers = customersData.map(customer => ({
+        id: customer.id,
+        customer_name: customer.customer_name || customer.name || '',
+        phone: customer.phone || '',
+        credit_limit: parseFloat(customer.credit_limit || 0),
+      }));
+
+      setCustomers(mappedCustomers);
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+      // Don't show error to user, just log it
     }
   };
 
@@ -2065,6 +2121,7 @@ export default function OrderManagementPage() {
       'bill generated': 'bg-purple-100 text-purple-800',
       complete: 'bg-green-100 text-green-800',
       completed: 'bg-green-100 text-green-800',
+      credit: 'bg-amber-100 text-amber-800',
       cancelled: 'bg-red-100 text-red-800',
     };
     return colors[statusLower] || colors.pending;
@@ -2320,7 +2377,7 @@ export default function OrderManagementPage() {
         {/* Filter Buttons */}
         <div className="flex gap-2 flex-wrap items-center">
           <span className="text-sm font-medium text-gray-700 mr-2">Filter by Status:</span>
-          {['all', 'Pending', 'Running', 'Bill Generated', 'Complete', 'Cancelled'].map((status) => {
+          {['all', 'Pending', 'Running', 'Bill Generated', 'Credit', 'Complete', 'Cancelled'].map((status) => {
             const count = filter === status.toLowerCase() 
               ? filteredOrders.length 
               : orders.filter(o => o.status.toLowerCase() === status.toLowerCase()).length;
@@ -2560,7 +2617,34 @@ export default function OrderManagementPage() {
                 </div>
               )}
 
-              {/* Pay Bill Button - Only show if order status is "Bill Generated" or "Complete", NOT for "Running" orders */}
+              {/* Credit Bill Indicator - Show when bill is credit */}
+              {existingBill && (() => {
+                const paymentStatus = (existingBill.payment_status || existingBill.payment_method || 'Unpaid').toString().toLowerCase();
+                const isCredit = paymentStatus === 'credit' || 
+                                 existingBill.is_credit === true || 
+                                 existingBill.payment_method === 'Credit' ||
+                                 existingBill.payment_mode === 'Credit';
+                return isCredit;
+              })() && (
+                <div className="pt-2">
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CreditCard className="w-5 h-5 text-amber-600" />
+                      <h3 className="font-semibold text-amber-900">Credit Bill</h3>
+                    </div>
+                    <p className="text-sm text-amber-800">
+                      This is a credit bill. Payment will be received from the customer at a later date.
+                    </p>
+                    {existingBill.customer_id && (
+                      <p className="text-xs text-amber-700 mt-2">
+                        Customer ID: {existingBill.customer_id}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Pay Bill Button - Only show if order status is "Bill Generated" or "Complete", NOT for "Running" orders, NOT for Credit bills */}
               {(() => {
                 // Check order status (case-insensitive)
                 const orderStatus = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
@@ -2573,6 +2657,20 @@ export default function OrderManagementPage() {
                   return false;
                 }
                 
+                // Check if bill is credit - don't show Pay Bill for credit bills
+                if (existingBill) {
+                  const paymentStatus = (existingBill.payment_status || existingBill.payment_method || 'Unpaid').toString().toLowerCase();
+                  const isCredit = paymentStatus === 'credit' || 
+                                   existingBill.is_credit === true || 
+                                   existingBill.payment_method === 'Credit' ||
+                                   existingBill.payment_mode === 'Credit';
+                  
+                  // Don't show Pay Bill for credit bills - payment will be received later
+                  if (isCredit) {
+                    return false;
+                  }
+                }
+                
                 // Show Pay Bill if status is "Bill Generated" (even if bill fetch failed)
                 if (isBillGenerated) {
                   return true;
@@ -2581,7 +2679,7 @@ export default function OrderManagementPage() {
                 // Show Pay Bill if bill exists and is unpaid (for Complete or other statuses)
                 if (existingBill) {
                   const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
-                  return paymentStatus !== 'paid';
+                  return paymentStatus !== 'paid' && paymentStatus !== 'credit';
                 }
                 
                 return false;
@@ -2903,14 +3001,50 @@ export default function OrderManagementPage() {
                   </label>
                   <select
                     value={billData.payment_mode}
-                    onChange={(e) => setBillData({ ...billData, payment_mode: e.target.value })}
+                    onChange={(e) => {
+                      const newPaymentMode = e.target.value;
+                      setBillData({ 
+                        ...billData, 
+                        payment_mode: newPaymentMode,
+                        is_credit: newPaymentMode === 'Credit',
+                        customer_id: newPaymentMode === 'Credit' ? billData.customer_id : null
+                      });
+                    }}
                     className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
                   >
                     <option value="Cash">Cash</option>
                     <option value="Card">Card</option>
                     <option value="Online">Online</option>
+                    <option value="Credit">Credit</option>
                   </select>
                 </div>
+
+                {/* Customer Selection - Only show when payment mode is Credit */}
+                {billData.payment_mode === 'Credit' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Select Customer <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={billData.customer_id || ''}
+                      onChange={(e) => setBillData({ ...billData, customer_id: e.target.value ? parseInt(e.target.value) : null })}
+                      className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                      required={billData.payment_mode === 'Credit'}
+                    >
+                      <option value="">-- Select Customer --</option>
+                      {customers.map(customer => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.customer_name} {customer.phone ? `(${customer.phone})` : ''} - Limit: {formatPKR(customer.credit_limit)}
+                        </option>
+                      ))}
+                    </select>
+                    {customers.length === 0 && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        No credit customers found. Please add customers in the Customer Management page.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
@@ -2975,8 +3109,15 @@ export default function OrderManagementPage() {
                         discount: discountAmount, // Store discount amount (not percentage)
                         grand_total: grandTotal,
                         payment_method: billData.payment_mode,
-                        payment_status: 'Unpaid', // Bill starts as Unpaid
+                        payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have 'Credit' status, others are 'Unpaid'
                       };
+
+                      // Add customer_id and is_credit for credit sales
+                      if (billData.payment_mode === 'Credit' && billData.customer_id) {
+                        billPayload.customer_id = billData.customer_id;
+                        billPayload.is_credit = true;
+                        billPayload.payment_status = 'Credit'; // Explicitly set to Credit
+                      }
 
                       // Log the payload being sent
                       console.log('Bill payload being sent:', billPayload);
@@ -3189,6 +3330,11 @@ export default function OrderManagementPage() {
                           console.log('Sample formatted item:', JSON.stringify(formattedItems[0], null, 2));
                         }
                         
+                        // Get customer information if it's a credit sale
+                        const selectedCustomer = billData.customer_id 
+                          ? customers.find(c => c.id === billData.customer_id) 
+                          : null;
+
                         // Store bill data for receipt - use calculated values from frontend
                         const receiptData = {
                           bill_id: billId,
@@ -3202,9 +3348,14 @@ export default function OrderManagementPage() {
                           discount_amount: discountAmount,
                           grand_total: grandTotal,
                           payment_method: billData.payment_method || billData.payment_mode || 'Cash',
-                          payment_status: 'Unpaid', // Bill starts as Unpaid
+                          payment_status: billData.payment_mode === 'Credit' ? 'Credit' : 'Unpaid', // Credit bills have Credit status
                           items: formattedItems,
                           date: new Date().toLocaleString(),
+                          // Customer information for credit sales
+                          customer_id: billData.customer_id || null,
+                          customer_name: selectedCustomer?.customer_name || null,
+                          customer_phone: selectedCustomer?.phone || null,
+                          is_credit: billData.payment_mode === 'Credit',
                         };
                         
                         console.log('=== Receipt Data Prepared ===');
@@ -3218,20 +3369,23 @@ export default function OrderManagementPage() {
                         // Close bill modal
                         setBillModalOpen(false);
                         setBillOrder(null);
-                        setBillData({ discount_percentage: 0, service_charge: 0, payment_mode: 'Cash' });
+                        setBillData({ discount_percentage: 0, service_charge: 0, payment_mode: 'Cash', customer_id: null, is_credit: false });
                         
-                        // Update order status to "Bill Generated" when receipt is printed
+                        // Update order status - "Credit" for credit bills, "Bill Generated" for others
                         const orderIdValue = billOrder.order_id || billOrder.id;
                         const orderidValue = billOrder.order_id ? `ORD-${billOrder.order_id}` : (billOrder.orderid || billOrder.id);
                         
-                        // Update order status to "Bill Generated"
+                        // Determine order status based on payment mode
+                        const orderStatus = billData.payment_mode === 'Credit' ? 'Credit' : 'Bill Generated';
+                        
                         try {
                           const statusPayload = { 
-                            status: 'Bill Generated',
+                            status: orderStatus,
                             order_id: orderIdValue,
                             orderid: orderidValue
                           };
                           await apiPost('api/chnageorder_status.php', statusPayload);
+                          console.log(`Order status updated to: ${orderStatus}`);
                         } catch (error) {
                           console.error('Error updating order status:', error);
                           // Continue even if status update fails

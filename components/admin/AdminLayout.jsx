@@ -55,6 +55,7 @@ const menuItems = [
   { icon: Clock, label: 'Day End', path: '/dashboard/branch-admin/dayend' },
   { icon: Building2, label: 'Halls', path: '/dashboard/branch-admin/halls' },
   { icon: Table2, label: 'Tables', path: '/dashboard/branch-admin/tables' },
+  { icon: Users, label: 'Customers', path: '/dashboard/branch-admin/customers' },
   { icon: Users, label: 'Accounts', path: '/dashboard/branch-admin/accounts' },
 ];
 

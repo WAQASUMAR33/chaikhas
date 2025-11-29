@@ -154,12 +154,24 @@ export default function SalesReportPage() {
 
   // Calculate totals
   const totals = reportData.reduce((acc, sale) => {
-    acc.billAmount += parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || 0);
-    acc.serviceCharge += parseFloat(sale.service_charge || 0);
-    acc.discount += parseFloat(sale.discount_amount || sale.discount || 0);
-    acc.netTotal += parseFloat(sale.net_total || sale.net_total_amount || sale.grand_total || 0);
+    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
+    const billAmount = parseFloat(sale.bill_amount || sale.g_total_amount || sale.total || 0);
+    const serviceCharge = parseFloat(sale.service_charge || 0);
+    const discount = parseFloat(sale.discount_amount || sale.discount || 0);
+    const netTotal = parseFloat(sale.net_total || sale.net_total_amount || sale.grand_total || 0);
+    
+    acc.billAmount += billAmount;
+    acc.serviceCharge += serviceCharge;
+    acc.discount += discount;
+    acc.netTotal += netTotal;
+    
+    // Calculate credit sales total
+    if (isCredit) {
+      acc.creditSales += netTotal;
+    }
+    
     return acc;
-  }, { billAmount: 0, serviceCharge: 0, discount: 0, netTotal: 0 });
+  }, { billAmount: 0, serviceCharge: 0, discount: 0, netTotal: 0, creditSales: 0 });
 
   return (
     <SuperAdminLayout>
@@ -255,7 +267,7 @@ export default function SalesReportPage() {
 
         {/* Report Summary */}
         {reportGenerated && reportData.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm font-medium text-gray-600">Total Orders</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">{reportData.length}</p>
@@ -271,6 +283,10 @@ export default function SalesReportPage() {
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm font-medium text-gray-600">Net Total</p>
               <p className="text-2xl font-bold text-green-600 mt-1">{formatPKR(totals.netTotal)}</p>
+            </div>
+            <div className="bg-amber-50 rounded-lg shadow p-4 border-2 border-amber-200">
+              <p className="text-sm font-medium text-amber-700">Credit Sales</p>
+              <p className="text-2xl font-bold text-amber-800 mt-1">{formatPKR(totals.creditSales)}</p>
             </div>
           </div>
         )}
@@ -294,53 +310,77 @@ export default function SalesReportPage() {
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Discount</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Net Total</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill By</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {reportData.map((sale, index) => (
-                    <tr key={sale.order_id || index} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {sale.order_id || sale.id || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.branch_name || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {formatDateTime(sale.created_at || sale.order_date)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.order_type || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.hall_name || sale.hall || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.table_number || sale.table || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.order_taker_name || sale.order_taker || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
-                        {formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-blue-600">
-                        {formatPKR(sale.service_charge || 0)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600">
-                        {formatPKR(sale.discount_amount || sale.discount || 0)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-[#FF5F15]">
-                        {formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.payment_mode || sale.payment_method || 'N/A'}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                        {sale.bill_by_name || sale.bill_by || 'N/A'}
-                      </td>
-                    </tr>
-                  ))}
+                  {reportData.map((sale, index) => {
+                    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
+                    const customerName = sale.customer_name || null;
+                    
+                    return (
+                      <tr key={sale.order_id || index} className={`hover:bg-gray-50 ${isCredit ? 'bg-amber-50' : ''}`}>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {sale.order_id || sale.id || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.branch_name || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {formatDateTime(sale.created_at || sale.order_date)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.order_type || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.hall_name || sale.hall || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.table_number || sale.table || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.order_taker_name || sale.order_taker || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                          {formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-blue-600">
+                          {formatPKR(sale.service_charge || 0)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600">
+                          {formatPKR(sale.discount_amount || sale.discount || 0)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-[#FF5F15]">
+                          {formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm">
+                          {isCredit ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                              Credit
+                            </span>
+                          ) : (
+                            <span className="text-gray-600">{sale.payment_mode || sale.payment_method || 'N/A'}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {customerName ? (
+                            <div>
+                              <div className="font-medium text-amber-700">{customerName}</div>
+                              {sale.customer_phone && (
+                                <div className="text-xs text-gray-500">{sale.customer_phone}</div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {sale.bill_by_name || sale.bill_by || 'N/A'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot className="bg-gray-50">
                   <tr>
@@ -359,7 +399,7 @@ export default function SalesReportPage() {
                     <td className="px-4 py-3 text-sm font-bold text-[#FF5F15] text-right">
                       {formatPKR(totals.netTotal)}
                     </td>
-                    <td colSpan="2"></td>
+                    <td colSpan="3"></td>
                   </tr>
                 </tfoot>
               </table>
@@ -502,29 +542,49 @@ export default function SalesReportPage() {
                     <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Discount</th>
                     <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>Net Total</th>
                     <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Payment Mode</th>
+                    <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Customer</th>
                     <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Bill By</th>
                     <th style={{ padding: '8px', border: '1px solid #000', textAlign: 'left' }}>Last Update</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reportData.map((sale, index) => (
-                    <tr key={sale.order_id || index}>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_id || sale.id || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.branch_name || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.created_at || sale.order_date)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_type || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.hall_name || sale.hall || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.table_number || sale.table || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_taker_name || sale.order_taker || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.service_charge || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.payment_mode || sale.payment_method || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>
-                      <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.updated_at || sale.last_update)}</td>
-                    </tr>
-                  ))}
+                  {reportData.map((sale, index) => {
+                    const isCredit = (sale.payment_mode === 'Credit' || sale.payment_method === 'Credit' || sale.payment_status === 'Credit' || sale.is_credit);
+                    const customerName = sale.customer_name || null;
+                    
+                    return (
+                      <tr key={sale.order_id || index} style={{ backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_id || sale.id || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.branch_name || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.created_at || sale.order_date)}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_type || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.hall_name || sale.hall || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.table_number || sale.table || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_taker_name || sale.order_taker || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(sale.bill_amount || sale.g_total_amount || sale.total || 0)}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.service_charge || 0)}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', fontWeight: isCredit ? 'bold' : 'normal' }}>
+                          {isCredit ? 'Credit' : (sale.payment_mode || sale.payment_method || 'N/A')}
+                        </td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>
+                          {customerName ? (
+                            <div>
+                              <div style={{ fontWeight: 'bold', color: '#92400e' }}>{customerName}</div>
+                              {sale.customer_phone && (
+                                <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
+                              )}
+                            </div>
+                          ) : (
+                            <span style={{ color: '#999' }}>-</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>
+                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.updated_at || sale.last_update)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={{ backgroundColor: '#f3f4f6', borderTop: '2px solid #000', fontWeight: 'bold' }}>
@@ -533,7 +593,7 @@ export default function SalesReportPage() {
                     <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.serviceCharge)}</td>
                     <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.discount)}</td>
                     <td style={{ padding: '8px', border: '1px solid #000', textAlign: 'right' }}>{formatPKR(totals.netTotal)}</td>
-                    <td colSpan="3" style={{ padding: '8px', border: '1px solid #000' }}></td>
+                    <td colSpan="4" style={{ padding: '8px', border: '1px solid #000' }}></td>
                   </tr>
                 </tfoot>
               </table>
