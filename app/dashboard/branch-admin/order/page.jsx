@@ -3,7 +3,7 @@
 /**
  * Order Management Page
  * View and manage all orders with full CRUD operations
- * Uses real APIs: getOrders.php, get_ordersbyid.php, get_orderdetails.php, chnageorder_status.php, order_management.php, bills_management.php
+ * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
 import { useEffect, useState } from 'react';
@@ -102,6 +102,7 @@ export default function OrderManagementPage() {
       
       if (!generatedBill.items || generatedBill.items.length === 0) {
         console.error('❌ WARNING: Generated bill has no items!');
+        console.error('Generated bill:', JSON.stringify(generatedBill, null, 2));
       } else {
         console.log('✅ Generated bill has items:', generatedBill.items.length);
       }
@@ -179,7 +180,7 @@ export default function OrderManagementPage() {
 
   /**
    * Fetch orders from API
-   * API: getOrders.php (POST with terminal and optional status)
+   * API: order_management.php (GET with terminal and optional status)
    */
   const fetchOrders = async () => {
     setLoading(true);
@@ -241,21 +242,22 @@ export default function OrderManagementPage() {
         toDate = customDate;
       }
       
-      const payload = { 
+      const params = { 
         terminal,
         branch_id: branchId  // Always include branch_id for branch-admin
       };
       if (filter !== 'all') {
-        payload.status = filter;
+        params.status = filter;
       }
       if (fromDate && toDate) {
-        payload.from_date = fromDate;
-        payload.to_date = toDate;
+        params.from_date = fromDate;
+        params.to_date = toDate;
       }
       
       logger.info('Date filter applied', { dateFilter, fromDate, toDate });
       
-      const result = await apiPost('api/getOrders.php', payload);
+      // Use GET method for fetching orders list
+      const result = await apiGet('api/order_management.php', params);
       
       // Handle multiple possible response structures
       let ordersData = [];
@@ -483,21 +485,15 @@ export default function OrderManagementPage() {
 
   /**
    * Fetch order details and items
-   * APIs: get_ordersbyid.php and get_orderdetails.php
+   * API: get_ordersbyid.php (returns order with items array)
    */
   const fetchOrderDetails = async (orderId, orderNumber) => {
     try {
       // Prepare order ID - prefer numeric order_id over orderid string
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
-      // Fetch order details - send both order_id (numeric) and orderid (string) for flexibility
+      // Fetch order details with items - get_ordersbyid.php returns order with items array
       const orderResult = await apiPost('api/get_ordersbyid.php', { 
-        order_id: orderIdParam,
-        orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
-      });
-      
-      // Fetch order items - send both order_id (numeric) and orderid (string) for flexibility
-      const itemsResult = await apiPost('api/get_orderdetails.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
@@ -660,11 +656,31 @@ export default function OrderManagementPage() {
         }
       }
       
-      // Fetch bill if exists for this order
+      // Extract items from order response (get_ordersbyid.php returns order with items)
+      let itemsData = [];
+      if (orderData && orderData.items && Array.isArray(orderData.items)) {
+        itemsData = orderData.items;
+        console.log('✅ Found items in order data (items):', itemsData.length);
+      } else if (orderResult.success && orderResult.data) {
+        // Try to find items in the response structure
+        if (orderResult.data.items && Array.isArray(orderResult.data.items)) {
+          itemsData = orderResult.data.items;
+          console.log('✅ Found items in response data.items:', itemsData.length);
+        } else if (orderResult.data.data && orderResult.data.data.items && Array.isArray(orderResult.data.data.items)) {
+          itemsData = orderResult.data.data.items;
+          console.log('✅ Found items in response data.data.items:', itemsData.length);
+        } else if (Array.isArray(orderResult.data) && orderResult.data.length > 0 && orderResult.data[0].items) {
+          itemsData = orderResult.data[0].items;
+          console.log('✅ Found items in response data[0].items:', itemsData.length);
+        }
+      }
+      
+      // Fetch bill if exists for this order (GET request - no total_amount means fetch, not create)
       let billData = null;
       if (orderIdParam) {
         try {
-          const billResult = await apiPost('api/bills_management.php', { order_id: orderIdParam });
+          // Use GET to fetch existing bill
+          const billResult = await apiGet('api/bills_management.php', { order_id: orderIdParam });
           
           // Debug: Log bill fetch result
           console.log('=== Bill Fetch Result ===');
@@ -697,31 +713,10 @@ export default function OrderManagementPage() {
         }
       }
       
-      // Handle order items response - extract items array from various structures
-      let itemsData = [];
-      if (itemsResult.data) {
-        if (Array.isArray(itemsResult.data)) {
-          itemsData = itemsResult.data;
-          console.log('✅ Found items in result.data (array), count:', itemsData.length);
-        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-          itemsData = itemsResult.data.data;
-          console.log('✅ Found items in result.data.data (array), count:', itemsData.length);
-        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-          itemsData = itemsResult.data.items;
-          console.log('✅ Found items in result.data.items (array), count:', itemsData.length);
-        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-          itemsData = itemsResult.data.order_items;
-          console.log('✅ Found items in result.data.order_items (array), count:', itemsData.length);
-        } else if (typeof itemsResult.data === 'object') {
-          // Search for any array in the response
-          for (const key in itemsResult.data) {
-            if (Array.isArray(itemsResult.data[key])) {
-              itemsData = itemsResult.data[key];
-              console.log(`✅ Found items in result.data.${key} (array), count:`, itemsData.length);
-              break;
-            }
-          }
-        }
+      // Items should already be extracted from orderData above
+      // If itemsData is still empty, log a warning
+      if (itemsData.length === 0) {
+        console.warn('⚠️ No items found in order response. Order might not have items.');
       }
       
       setOrderItems(itemsData);
@@ -1046,7 +1041,7 @@ export default function OrderManagementPage() {
         discount_amount: orderData?.discount_amount,
         service_charge: orderData?.service_charge
       });
-      console.log('Order Items:', itemsResult.data);
+      console.log('Order Items:', itemsData);
       console.log('Calculated Subtotal:', calculatedSubtotal);
       
       // Ensure we're setting a proper object
@@ -1356,28 +1351,37 @@ export default function OrderManagementPage() {
       console.log('=== Order Details API Response ===');
       console.log('Order details API response:', JSON.stringify(orderResult, null, 2));
       
-      const itemsResult = await apiPost('api/get_orderdetails.php', { 
-        order_id: orderId,
-        orderid: orderNumber
-      });
-      
-      console.log('=== Order Items API Response ===');
-      console.log('Order items API response:', JSON.stringify(itemsResult, null, 2));
-      console.log('Items result success:', itemsResult.success);
-      console.log('Items result data:', itemsResult.data);
-      console.log('Items result data type:', typeof itemsResult.data);
-      
+      // get_ordersbyid.php returns order with items, so extract items from orderResult
       // Handle multiple response structures for order data
       let orderData = null;
+      let orderItems = [];
+      
       if (orderResult.success && orderResult.data) {
         if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
           orderData = orderResult.data[0];
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
           orderData = orderResult.data.data[0];
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
           orderData = orderResult.data.order;
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
           orderData = orderResult.data;
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
+        }
+        
+        // Also check for items at response level
+        if (orderItems.length === 0 && orderResult.data.items && Array.isArray(orderResult.data.items)) {
+          orderItems = orderResult.data.items;
         }
       }
       
@@ -1387,56 +1391,9 @@ export default function OrderManagementPage() {
         orderData = order;
       }
       
-      // Handle multiple response structures for order items
-      let orderItems = [];
-      if (itemsResult.success && itemsResult.data) {
-        if (Array.isArray(itemsResult.data)) {
-          orderItems = itemsResult.data;
-          console.log('✅ Found items in result.data (array):', orderItems.length);
-        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-          orderItems = itemsResult.data.data;
-          console.log('✅ Found items in result.data.data:', orderItems.length);
-        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-          orderItems = itemsResult.data.items;
-          console.log('✅ Found items in result.data.items:', orderItems.length);
-        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-          orderItems = itemsResult.data.order_items;
-          console.log('✅ Found items in result.data.order_items:', orderItems.length);
-        } else if (itemsResult.data.orderdetails && Array.isArray(itemsResult.data.orderdetails)) {
-          orderItems = itemsResult.data.orderdetails;
-          console.log('✅ Found items in result.data.orderdetails:', orderItems.length);
-        } else if (typeof itemsResult.data === 'object') {
-          // Try to find any array in the response
-          console.log('🔍 Searching for items array in response object...');
-          console.log('Response keys:', Object.keys(itemsResult.data));
-          for (const key in itemsResult.data) {
-            if (Array.isArray(itemsResult.data[key])) {
-              orderItems = itemsResult.data[key];
-              console.log(`✅ Found items in result.data.${key}:`, orderItems.length);
-              console.log('Sample item from array:', orderItems[0]);
-              break;
-            }
-          }
-        }
-      } else {
-        console.error('❌ Items API call failed or returned no data');
-        console.error('Items result:', itemsResult);
-        if (!itemsResult.success) {
-          console.error('API call was not successful');
-        }
-        if (!itemsResult.data) {
-          console.error('No data in response');
-        }
-      }
-      
+      // If items are still empty, log a warning
       if (orderItems.length === 0) {
-        console.warn('⚠️ No order items found in API response for edit');
-        console.warn('Full items result:', JSON.stringify(itemsResult, null, 2));
-        // Try to show user-friendly error
-        setAlert({ 
-          type: 'error', 
-          message: 'No order items found. The order may not have any items, or there was an error fetching them. Check console for details.' 
-        });
+        console.warn('⚠️ No items found in order response');
       } else {
         console.log('✅ Found', orderItems.length, 'order items for editing');
         console.log('First item sample:', JSON.stringify(orderItems[0], null, 2));
@@ -2228,7 +2185,8 @@ export default function OrderManagementPage() {
       
       // Call backend API to print directly to network printers
       // Backend will handle printing to two default printers based on category
-      const printResult = await apiPost('api/print_receipt_direct.php', {
+      // Use api/print.php for printing receipts (replaces print_receipt_direct.php)
+      const printResult = await apiPost('api/print.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
         receipt_content: receiptHTML,
@@ -3214,28 +3172,29 @@ export default function OrderManagementPage() {
                           const orderId = orderDetails.order_id || orderDetails.id;
                           const orderNumber = orderDetails.orderid || orderDetails.order_number || (orderId ? `ORD-${orderId}` : '');
                           
-                          const itemsResult = await apiPost('api/get_orderdetails.php', { 
+                          // Use get_ordersbyid.php to get order with items
+                          const orderResult = await apiPost('api/get_ordersbyid.php', { 
                             order_id: orderId,
                             orderid: orderNumber
                           });
                           
-                          // Extract items from response
-                          if (itemsResult.success && itemsResult.data) {
-                            if (Array.isArray(itemsResult.data)) {
-                              itemsForReceipt = itemsResult.data;
-                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-                              itemsForReceipt = itemsResult.data.data;
-                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-                              itemsForReceipt = itemsResult.data.items;
-                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-                              itemsForReceipt = itemsResult.data.order_items;
-                            } else if (typeof itemsResult.data === 'object') {
-                              for (const key in itemsResult.data) {
-                                if (Array.isArray(itemsResult.data[key])) {
-                                  itemsForReceipt = itemsResult.data[key];
-                                  break;
-                                }
-                              }
+                          // Extract items from order response
+                          if (orderResult.success && orderResult.data) {
+                            let orderData = null;
+                            if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
+                              orderData = orderResult.data[0];
+                            } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
+                              orderData = orderResult.data.data[0];
+                            } else if (orderResult.data.order) {
+                              orderData = orderResult.data.order;
+                            } else if (typeof orderResult.data === 'object') {
+                              orderData = orderResult.data;
+                            }
+                            
+                            if (orderData && orderData.items && Array.isArray(orderData.items)) {
+                              itemsForReceipt = orderData.items;
+                            } else if (orderResult.data.items && Array.isArray(orderResult.data.items)) {
+                              itemsForReceipt = orderResult.data.items;
                             }
                           }
                           console.log('✅ Fetched items for paid receipt:', itemsForReceipt.length);
@@ -3566,33 +3525,39 @@ export default function OrderManagementPage() {
                           console.log('Order ID:', orderId);
                           console.log('Order Number:', orderNumber);
                           
-                          const itemsResult = await apiPost('api/get_orderdetails.php', { 
+                          // Use get_ordersbyid.php to get order with items
+                          const orderResult = await apiPost('api/get_ordersbyid.php', { 
                             order_id: orderId,
                             orderid: orderNumber
                           });
                           
-                          console.log('Items API response:', itemsResult);
-                          console.log('Items API response data:', JSON.stringify(itemsResult.data, null, 2));
+                          console.log('Order API response:', orderResult);
+                          console.log('Order API response data:', JSON.stringify(orderResult.data, null, 2));
                           
-                          // Extract items from response - handle multiple structures
-                          if (itemsResult.success && itemsResult.data) {
-                            if (Array.isArray(itemsResult.data)) {
-                              itemsForReceipt = itemsResult.data;
-                              console.log('✅ Found items in result.data (array):', itemsForReceipt.length);
-                            } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-                              itemsForReceipt = itemsResult.data.data;
-                              console.log('✅ Found items in result.data.data:', itemsForReceipt.length);
-                            } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-                              itemsForReceipt = itemsResult.data.items;
-                              console.log('✅ Found items in result.data.items:', itemsForReceipt.length);
-                            } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-                              itemsForReceipt = itemsResult.data.order_items;
-                              console.log('✅ Found items in result.data.order_items:', itemsForReceipt.length);
-                            } else if (typeof itemsResult.data === 'object') {
+                          // Extract items from order response - handle multiple structures
+                          if (orderResult.success && orderResult.data) {
+                            let orderData = null;
+                            if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
+                              orderData = orderResult.data[0];
+                            } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
+                              orderData = orderResult.data.data[0];
+                            } else if (orderResult.data.order) {
+                              orderData = orderResult.data.order;
+                            } else if (typeof orderResult.data === 'object') {
+                              orderData = orderResult.data;
+                            }
+                            
+                            if (orderData && orderData.items && Array.isArray(orderData.items)) {
+                              itemsForReceipt = orderData.items;
+                              console.log('✅ Found items in order data (items):', itemsForReceipt.length);
+                            } else if (orderResult.data.items && Array.isArray(orderResult.data.items)) {
+                              itemsForReceipt = orderResult.data.items;
+                              console.log('✅ Found items in response (items):', itemsForReceipt.length);
+                            } else if (typeof orderResult.data === 'object') {
                               // Search for any array in the response
-                              for (const key in itemsResult.data) {
-                                if (Array.isArray(itemsResult.data[key])) {
-                                  itemsForReceipt = itemsResult.data[key];
+                              for (const key in orderResult.data) {
+                                if (Array.isArray(orderResult.data[key])) {
+                                  itemsForReceipt = orderResult.data[key];
                                   console.log(`✅ Found items in result.data.${key}:`, itemsForReceipt.length);
                                   break;
                                 }

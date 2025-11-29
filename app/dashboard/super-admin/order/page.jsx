@@ -3,7 +3,7 @@
 /**
  * Order Management Page
  * View and manage all orders with full CRUD operations
- * Uses real APIs: getOrders.php, get_ordersbyid.php, get_orderdetails.php, chnageorder_status.php, order_management.php, bills_management.php
+ * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
 import { useEffect, useState } from 'react';
@@ -144,28 +144,29 @@ export default function OrderManagementPage() {
 
   /**
    * Fetch orders from API
-   * API: getOrders.php (POST with terminal and optional status)
+   * API: order_management.php (GET with terminal and optional status)
    */
   const fetchOrders = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
       
-      // Build payload - include branch_id only if filtering by branch
-      const payload = { terminal };
+      // Build params - include branch_id only if filtering by branch
+      const params = { terminal };
       if (selectedBranchFilter) {
-        payload.branch_id = selectedBranchFilter;
+        params.branch_id = selectedBranchFilter;
       }
       // If selectedBranchFilter is empty, don't include branch_id - API will return all
       
       if (filter !== 'all') {
-        payload.status = filter;
+        params.status = filter;
       }
       
       console.log('=== Fetching Orders (Super Admin) ===');
-      console.log('Params:', payload);
+      console.log('Params:', params);
       
-      const result = await apiPost('api/getOrders.php', payload);
+      // Use GET method for fetching orders list
+      const result = await apiGet('api/order_management.php', params);
       
       console.log('getOrders.php response:', result);
       console.log('Full API response structure:', JSON.stringify(result, null, 2));
@@ -301,21 +302,15 @@ export default function OrderManagementPage() {
 
   /**
    * Fetch order details and items
-   * APIs: get_ordersbyid.php and get_orderdetails.php
+   * API: get_ordersbyid.php (returns order with items array)
    */
   const fetchOrderDetails = async (orderId, orderNumber) => {
     try {
       // Prepare order ID - prefer numeric order_id over orderid string
       const orderIdParam = orderId || (orderNumber ? (orderNumber.toString().replace(/ORD-?/i, '') || orderNumber) : null);
       
-      // Fetch order details - send both order_id (numeric) and orderid (string) for flexibility
+      // Fetch order details with items - get_ordersbyid.php returns order with items array
       const orderResult = await apiPost('api/get_ordersbyid.php', { 
-        order_id: orderIdParam,
-        orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
-      });
-      
-      // Fetch order items - send both order_id (numeric) and orderid (string) for flexibility
-      const itemsResult = await apiPost('api/get_orderdetails.php', { 
         order_id: orderIdParam,
         orderid: orderNumber || `ORD-${orderIdParam}` || orderIdParam
       });
@@ -442,11 +437,31 @@ export default function OrderManagementPage() {
       
       console.log('✅ Extracted order data (raw from API):', orderData);
       
-      // Fetch bill if exists for this order
+      // Extract items from order response (get_ordersbyid.php returns order with items)
+      let itemsData = [];
+      if (orderData && orderData.items && Array.isArray(orderData.items)) {
+        itemsData = orderData.items;
+        console.log('✅ Found items in order data (items):', itemsData.length);
+      } else if (orderResult.success && orderResult.data) {
+        // Try to find items in the response structure
+        if (orderResult.data.items && Array.isArray(orderResult.data.items)) {
+          itemsData = orderResult.data.items;
+          console.log('✅ Found items in response data.items:', itemsData.length);
+        } else if (orderResult.data.data && orderResult.data.data.items && Array.isArray(orderResult.data.data.items)) {
+          itemsData = orderResult.data.data.items;
+          console.log('✅ Found items in response data.data.items:', itemsData.length);
+        } else if (Array.isArray(orderResult.data) && orderResult.data.length > 0 && orderResult.data[0].items) {
+          itemsData = orderResult.data[0].items;
+          console.log('✅ Found items in response data[0].items:', itemsData.length);
+        }
+      }
+      
+      // Fetch bill if exists for this order (GET request - no total_amount means fetch, not create)
       let billData = null;
       if (orderIdParam) {
         try {
-          const billResult = await apiPost('/bills_management.php', { order_id: orderIdParam });
+          // Use GET to fetch existing bill (no total_amount means fetch, not create)
+          const billResult = await apiGet('api/bills_management.php', { order_id: orderIdParam });
           
           // Debug: Log bill fetch result
           console.log('=== Bill Fetch Result ===');
@@ -479,31 +494,10 @@ export default function OrderManagementPage() {
         }
       }
       
-      // Handle order items response - extract items array from various structures
-      let itemsData = [];
-      if (itemsResult.data) {
-        if (Array.isArray(itemsResult.data)) {
-          itemsData = itemsResult.data;
-          console.log('✅ Found items in result.data (array), count:', itemsData.length);
-        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-          itemsData = itemsResult.data.data;
-          console.log('✅ Found items in result.data.data (array), count:', itemsData.length);
-        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-          itemsData = itemsResult.data.items;
-          console.log('✅ Found items in result.data.items (array), count:', itemsData.length);
-        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-          itemsData = itemsResult.data.order_items;
-          console.log('✅ Found items in result.data.order_items (array), count:', itemsData.length);
-        } else if (typeof itemsResult.data === 'object') {
-          // Search for any array in the response
-          for (const key in itemsResult.data) {
-            if (Array.isArray(itemsResult.data[key])) {
-              itemsData = itemsResult.data[key];
-              console.log(`✅ Found items in result.data.${key} (array), count:`, itemsData.length);
-              break;
-            }
-          }
-        }
+      // Items should already be extracted from orderData above
+      // If itemsData is still empty, log a warning
+      if (itemsData.length === 0) {
+        console.warn('⚠️ No items found in order response. Order might not have items.');
       }
       
       setOrderItems(itemsData);
@@ -779,7 +773,7 @@ export default function OrderManagementPage() {
         payload.orderid = orderidValue;
       }
       
-      const result = await apiPost('/chnageorder_status.php', payload);
+      const result = await apiPost('api/chnageorder_status.php', payload);
 
       // Check response - API can return success in different formats
       const apiResponse = result.data;
@@ -1044,28 +1038,37 @@ export default function OrderManagementPage() {
       console.log('=== Order Details API Response ===');
       console.log('Order details API response:', JSON.stringify(orderResult, null, 2));
       
-      const itemsResult = await apiPost('api/get_orderdetails.php', { 
-        order_id: orderId,
-        orderid: orderNumber
-      });
-      
-      console.log('=== Order Items API Response ===');
-      console.log('Order items API response:', JSON.stringify(itemsResult, null, 2));
-      console.log('Items result success:', itemsResult.success);
-      console.log('Items result data:', itemsResult.data);
-      console.log('Items result data type:', typeof itemsResult.data);
-      
+      // get_ordersbyid.php returns order with items, so extract items from orderResult
       // Handle multiple response structures for order data
       let orderData = null;
+      let orderItems = [];
+      
       if (orderResult.success && orderResult.data) {
         if (Array.isArray(orderResult.data) && orderResult.data.length > 0) {
           orderData = orderResult.data[0];
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (orderResult.data.data && Array.isArray(orderResult.data.data) && orderResult.data.data.length > 0) {
           orderData = orderResult.data.data[0];
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (orderResult.data.order && typeof orderResult.data.order === 'object') {
           orderData = orderResult.data.order;
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
         } else if (!Array.isArray(orderResult.data) && typeof orderResult.data === 'object') {
           orderData = orderResult.data;
+          if (orderData.items && Array.isArray(orderData.items)) {
+            orderItems = orderData.items;
+          }
+        }
+        
+        // Also check for items at response level
+        if (orderItems.length === 0 && orderResult.data.items && Array.isArray(orderResult.data.items)) {
+          orderItems = orderResult.data.items;
         }
       }
       
@@ -1075,51 +1078,8 @@ export default function OrderManagementPage() {
         orderData = order;
       }
       
-      // Handle multiple response structures for order items
-      let orderItems = [];
-      if (itemsResult.success && itemsResult.data) {
-        if (Array.isArray(itemsResult.data)) {
-          orderItems = itemsResult.data;
-          console.log('✅ Found items in result.data (array):', orderItems.length);
-        } else if (itemsResult.data.data && Array.isArray(itemsResult.data.data)) {
-          orderItems = itemsResult.data.data;
-          console.log('✅ Found items in result.data.data:', orderItems.length);
-        } else if (itemsResult.data.items && Array.isArray(itemsResult.data.items)) {
-          orderItems = itemsResult.data.items;
-          console.log('✅ Found items in result.data.items:', orderItems.length);
-        } else if (itemsResult.data.order_items && Array.isArray(itemsResult.data.order_items)) {
-          orderItems = itemsResult.data.order_items;
-          console.log('✅ Found items in result.data.order_items:', orderItems.length);
-        } else if (itemsResult.data.orderdetails && Array.isArray(itemsResult.data.orderdetails)) {
-          orderItems = itemsResult.data.orderdetails;
-          console.log('✅ Found items in result.data.orderdetails:', orderItems.length);
-        } else if (typeof itemsResult.data === 'object') {
-          // Try to find any array in the response
-          console.log('🔍 Searching for items array in response object...');
-          console.log('Response keys:', Object.keys(itemsResult.data));
-          for (const key in itemsResult.data) {
-            if (Array.isArray(itemsResult.data[key])) {
-              orderItems = itemsResult.data[key];
-              console.log(`✅ Found items in result.data.${key}:`, orderItems.length);
-              console.log('Sample item from array:', orderItems[0]);
-              break;
-            }
-          }
-        }
-      } else {
-        console.error('❌ Items API call failed or returned no data');
-        console.error('Items result:', itemsResult);
-        if (!itemsResult.success) {
-          console.error('API call was not successful');
-        }
-        if (!itemsResult.data) {
-          console.error('No data in response');
-        }
-      }
-      
       if (orderItems.length === 0) {
         console.warn('⚠️ No order items found in API response for edit');
-        console.warn('Full items result:', JSON.stringify(itemsResult, null, 2));
         // Try to show user-friendly error
         setAlert({ 
           type: 'error', 
@@ -1348,7 +1308,7 @@ export default function OrderManagementPage() {
       };
 
       // Update order first
-      const orderResult = await apiPost('/order_management.php', orderData);
+      const orderResult = await apiPost('api/order_management.php', orderData);
 
       if (!orderResult.success || !orderResult.data || !orderResult.data.success) {
         setAlert({ type: 'error', message: orderResult.data?.message || 'Failed to update order details' });
@@ -1414,7 +1374,7 @@ export default function OrderManagementPage() {
     if (!confirm('Are you sure you want to delete this order? This action cannot be undone.')) return;
 
     try {
-      const result = await apiDelete('/order_management.php', {
+      const result = await apiDelete('api/order_management.php', {
         order_id: orderId || orderNumber,
         orderid: orderNumber || orderId,
       });
@@ -1613,7 +1573,7 @@ export default function OrderManagementPage() {
       let orderUpdateSuccess = false;
       let orderUpdateError = null;
       try {
-        const orderStatusResult = await apiPost('/chnageorder_status.php', orderStatusPayload);
+        const orderStatusResult = await apiPost('api/chnageorder_status.php', orderStatusPayload);
         
         console.log('=== Order Status Update Result ===');
         console.log('Result:', JSON.stringify(orderStatusResult, null, 2));
@@ -1809,7 +1769,8 @@ export default function OrderManagementPage() {
       const receiptHTML = printContent.innerHTML;
       
       // Call backend API to print directly to network printers
-      const printResult = await apiPost('/print_receipt_direct.php', {
+      // Use api/print.php for printing receipts (replaces print_receipt_direct.php)
+      const printResult = await apiPost('api/print.php', {
         order_id: generatedBill.order_id,
         bill_id: generatedBill.bill_id,
         receipt_content: receiptHTML,
@@ -1845,7 +1806,7 @@ export default function OrderManagementPage() {
               orderid: orderidValue
             };
             
-            await apiPost('/chnageorder_status.php', statusPayload);
+            await apiPost('api/chnageorder_status.php', statusPayload);
             fetchOrders(); // Refresh orders list
           } catch (error) {
             console.error('Error updating order status on print:', error);
@@ -2889,7 +2850,7 @@ export default function OrderManagementPage() {
                             order_id: orderIdValue,
                             orderid: orderidValue
                           };
-                          await apiPost('/chnageorder_status.php', statusPayload);
+                          await apiPost('api/chnageorder_status.php', statusPayload);
                         } catch (error) {
                           console.error('Error updating order status:', error);
                           // Continue even if status update fails
