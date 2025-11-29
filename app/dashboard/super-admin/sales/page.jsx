@@ -17,15 +17,17 @@ import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiGet, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
-import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X } from 'lucide-react';
+import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X, Building2, Filter } from 'lucide-react';
 
 export default function SalesListPage() {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState('daily'); // daily, weekly, monthly, custom
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchId, setSelectedBranchId] = useState('all'); // 'all' or specific branch_id
   const [summary, setSummary] = useState({
     totalSales: 0,
     totalOrders: 0,
@@ -42,6 +44,49 @@ export default function SalesListPage() {
     toDate: '',
   });
   const [showDateRange, setShowDateRange] = useState(false);
+
+  // Fetch branches for filter dropdown
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        const result = await apiPost('/branch_management.php', { action: 'get' });
+        console.log('=== Branches API Response (Sales) ===');
+        console.log('Full result:', JSON.stringify(result, null, 2));
+        
+        let branchesData = [];
+        
+        if (result.success && result.data) {
+          if (Array.isArray(result.data)) {
+            branchesData = result.data;
+          } else if (result.data.data && Array.isArray(result.data.data)) {
+            branchesData = result.data.data;
+          } else if (result.data.success && result.data.data && Array.isArray(result.data.data)) {
+            branchesData = result.data.data;
+          } else if (result.data.branches && Array.isArray(result.data.branches)) {
+            branchesData = result.data.branches;
+          }
+        }
+        
+        // Normalize branch data to ensure consistent field names
+        branchesData = branchesData.map(branch => ({
+          ...branch,
+          branch_id: branch.branch_id || branch.id || branch.branch_ID || branch.ID,
+          branch_name: branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch',
+        }));
+        
+        console.log('✅ Branches loaded for sales:', branchesData.length);
+        console.log('Sample branches:', branchesData.slice(0, 3));
+        
+        setBranches(branchesData);
+      } catch (error) {
+        console.error('Error fetching branches:', error);
+        setBranches([]);
+      }
+    };
+    
+    fetchBranches();
+  }, []);
+
 
   /**
    * Fetch sales data from API
@@ -70,10 +115,9 @@ export default function SalesListPage() {
         apiParams.to_date = dateRange.toDate;
       }
       
-      // For super admin, optionally include branch_id (null means all branches)
-      const branchId = getBranchId();
-      if (branchId) {
-        apiParams.branch_id = branchId;
+      // For super admin, include branch_id filter if selected (null means all branches)
+      if (selectedBranchId && selectedBranchId !== 'all') {
+        apiParams.branch_id = selectedBranchId;
       }
       
       console.log('Fetching sales data with params:', apiParams);
@@ -254,6 +298,18 @@ export default function SalesListPage() {
         console.warn('No sales data found in response. Full response:', result);
       }
 
+      // Log sales data structure for debugging
+      console.log('📊 Processing sales data');
+      console.log('Sales count:', salesData.length);
+      console.log('Branches count:', branches.length);
+      if (salesData.length > 0) {
+        console.log('Sample sale:', {
+          order_id: salesData[0].order_id || salesData[0].id,
+          branch_id: salesData[0].branch_id || salesData[0].branchId,
+          branch_name: salesData[0].branch_name,
+        });
+      }
+      
       // Process and format sales data
       const processedSales = salesData.map((sale, index) => {
         // Format date based on period
@@ -284,6 +340,25 @@ export default function SalesListPage() {
         const totalOrders = parseInt(sale.total_orders || sale.orders_count || sale.count || 0);
         const averageOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
 
+        // Get branch information - try multiple field names
+        const branchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
+        
+        // Try to find branch by multiple ID field names
+        let branch = null;
+        if (branchId && branches.length > 0) {
+          branch = branches.find(b => 
+            (b.branch_id && b.branch_id == branchId) ||
+            (b.id && b.id == branchId) ||
+            (b.branch_ID && b.branch_ID == branchId) ||
+            (b.ID && b.ID == branchId)
+          );
+        }
+        
+        // Get branch name from multiple possible sources
+        const branchName = branch 
+          ? (branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch')
+          : (sale.branch_name || sale.branchName || (branchId ? `Branch ${branchId}` : 'Unknown Branch'));
+
         return {
           id: sale.id || index,
           date: formattedDate,
@@ -291,6 +366,8 @@ export default function SalesListPage() {
           total_orders: totalOrders,
           average_order: averageOrder,
           raw_date: sale.date || sale.date_period || sale.period,
+          branch_id: branchId,
+          branch_name: branchName,
         };
       });
 
@@ -339,7 +416,7 @@ export default function SalesListPage() {
         setLoading(false);
       }
     }
-  }, [period, dateRange]);
+  }, [period, dateRange, selectedBranchId, branches]);
 
   // Initial fetch and period change
   useEffect(() => {
@@ -614,6 +691,17 @@ export default function SalesListPage() {
       wrap: false,
     },
     {
+      header: 'Branch',
+      accessor: (row) => (
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-[#FF5F15]" />
+          <span className="font-medium text-[#FF5F15]">{row.branch_name || 'Unknown Branch'}</span>
+        </div>
+      ),
+      className: 'min-w-[150px]',
+      wrap: false,
+    },
+    {
       header: 'Total Orders',
       accessor: 'total_orders',
       className: 'w-32 text-center',
@@ -644,13 +732,32 @@ export default function SalesListPage() {
   return (
     <SuperAdminLayout>
       <div className="space-y-4 sm:space-y-6">
-        {/* Page Header */}
+        {/* Page Header with Branch Filter */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
+          <div className="flex-1">
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Sales List</h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1">
-              View daily, weekly, and monthly sales reports
+              {selectedBranchId === 'all' 
+                ? 'View daily, weekly, and monthly sales reports from all branches' 
+                : `Viewing: ${branches.find(b => (b.branch_id || b.id) == selectedBranchId)?.branch_name || branches.find(b => (b.branch_id || b.id) == selectedBranchId)?.name || 'Selected Branch'}`}
             </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Filter className="w-5 h-5 text-gray-500" />
+            <select
+              value={selectedBranchId}
+              onChange={(e) => {
+                setSelectedBranchId(e.target.value);
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] bg-white text-gray-900"
+            >
+              <option value="all">All Branches</option>
+              {branches.map((branch) => (
+                <option key={branch.branch_id || branch.id} value={branch.branch_id || branch.id}>
+                  {branch.branch_name || branch.name}
+                </option>
+              ))}
+            </select>
           </div>
           
           {/* Action Buttons */}

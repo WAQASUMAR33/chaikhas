@@ -32,7 +32,7 @@ import {
   Settings,
   FileBarChart
 } from 'lucide-react';
-import { getToken, getRole, getFullname, getUsername, getBranchName, getBranchId, clearAuth, apiGet } from '@/utils/api';
+import { getToken, getRole, getFullname, getUsername, clearAuth } from '@/utils/api';
 
 /**
  * Sidebar Menu Items with Lucide icons
@@ -110,32 +110,6 @@ export default function SuperAdminLayout({ children }) {
     }
 
     console.log('SuperAdminLayout: Auth check passed');
-
-    // Fetch branch name if not in localStorage but branch_id exists
-    const storedBranchName = getBranchName();
-    const branchId = getBranchId();
-    
-    if (!storedBranchName && branchId) {
-      // Try to fetch branch name from API
-      const fetchBranchName = async () => {
-        try {
-          const result = await apiGet('/branch_management.php');
-          if (result.success && result.data) {
-            const branches = Array.isArray(result.data) ? result.data : (result.data.data || []);
-            const branch = branches.find(b => parseInt(b.branch_id) === branchId);
-            if (branch && branch.branch_name) {
-              // Save to localStorage for future use
-              if (typeof window !== 'undefined') {
-                localStorage.setItem('branch_name', branch.branch_name);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching branch name:', error);
-        }
-      };
-      fetchBranchName();
-    }
   }, [router]);
 
   /**
@@ -155,18 +129,13 @@ export default function SuperAdminLayout({ children }) {
     }
   };
 
-  const role = getRole();
   const fullname = getFullname();
   const username = getUsername();
-  const branchName = getBranchName();
-  // Display priority: fullname > username > role > 'User'
+  // Display priority: fullname > username > 'Super Admin'
   // Ensure we never display boolean values
   const displayName = (fullname && typeof fullname === 'string') ? fullname : 
                       (username && typeof username === 'string') ? username : 
-                      (role && typeof role === 'string') ? role.replace('_', ' ') : 
                       'Super Admin';
-  // Ensure branchName is a string, not boolean
-  const displayBranchName = (branchName && typeof branchName === 'string') ? branchName : null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex overflow-hidden">
@@ -263,9 +232,7 @@ export default function SuperAdminLayout({ children }) {
                       {displayName}
                     </p>
                     <p className="text-xs text-gray-500 capitalize truncate">
-                      {displayBranchName && typeof displayBranchName === 'string' 
-                        ? `${displayBranchName} • Super Admin` 
-                        : 'Super Admin'}
+                      Super Admin
                     </p>
                   </div>
                 )}

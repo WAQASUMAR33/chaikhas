@@ -74,8 +74,18 @@ export default function SalesReportPage() {
 
     try {
       const branchId = getBranchId();
+      
+      // STRICT BRANCH RESTRICTION: Branch-admin MUST have branch_id
       if (!branchId) {
-        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
+        setAlert({ type: 'error', message: 'Branch ID not found. Please login again. Branch admin can only view their own branch sales reports.' });
+        setLoading(false);
+        return;
+      }
+      
+      // Additional validation: Ensure branch_id is a valid number
+      const numBranchId = parseInt(branchId, 10);
+      if (isNaN(numBranchId) || numBranchId <= 0) {
+        setAlert({ type: 'error', message: 'Invalid Branch ID. Please log in again.' });
         setLoading(false);
         return;
       }
@@ -88,6 +98,7 @@ export default function SalesReportPage() {
 
       // Fetch sales report including credit sales
       // The API should return all bills (paid, unpaid, and credit) in the date range
+      // ALWAYS include branch_id for branch-admin - strict restriction
       const result = await apiPost('api/get_sales_report.php', {
         branch_id: branchId,
         start_date: startDate,
@@ -184,13 +195,25 @@ export default function SalesReportPage() {
       // Filter out any null/undefined entries
       salesData = salesData.filter(sale => sale !== null && sale !== undefined);
       
+      // STRICT BRANCH FILTERING: Filter out any sales that don't belong to this branch
+      // This is a safety measure in case the API returns data from other branches
+      const filteredSalesData = salesData.filter(sale => {
+        const saleBranchId = sale.branch_id || sale.branchId;
+        // If sale has no branch_id, include it (might be aggregated data)
+        // If sale has branch_id, it MUST match the current branch
+        return !saleBranchId || saleBranchId == branchId;
+      });
+      
+      console.log(`Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);
+      salesData = filteredSalesData;
+      
       // Log all sales data for debugging credit sales
       console.log('=== Sales Report Data ===');
       console.log('API Response:', result);
       console.log('Total records:', salesData.length);
       console.log('First 3 sales:', salesData.slice(0, 3));
       
-      // Log ALL payment-related fields from each sale to understand the data structure
+      // Log piLL payment-related fields from each sale to understand the data structure
       if (salesData.length > 0) {
         console.log('=== Payment Fields Analysis ===');
         salesData.slice(0, 5).forEach((sale, idx) => {

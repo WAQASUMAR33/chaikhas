@@ -250,10 +250,21 @@ export default function OrderManagementPage() {
         }
       }
       
-      // Branch-admin MUST have branch_id
+      // STRICT BRANCH RESTRICTION: Branch-admin MUST have branch_id
+      // Branch-admin can ONLY see orders from their own branch
       if (!branchId) {
         console.error('❌ Branch ID is missing for branch-admin');
-        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again.' });
+        setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again. Branch admin can only view their own branch orders.' });
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      
+      // Additional validation: Ensure branch_id is a valid number
+      const numBranchId = parseInt(branchId, 10);
+      if (isNaN(numBranchId) || numBranchId <= 0) {
+        console.error('❌ Invalid Branch ID for branch-admin:', branchId);
+        setAlert({ type: 'error', message: 'Invalid Branch ID. Please log in again.' });
         setOrders([]);
         setLoading(false);
         return;
@@ -369,8 +380,20 @@ export default function OrderManagementPage() {
       if (ordersData.length > 0) {
         logger.info(`Mapping ${ordersData.length} orders from API response`);
         
+        // STRICT BRANCH FILTERING: Filter out any orders that don't belong to this branch
+        // This is a safety measure in case the API returns data from other branches
+        const filteredOrdersData = ordersData.filter(order => {
+          if (!order) return false; // Filter out null/undefined
+          const orderBranchId = order.branch_id || order.branchId;
+          // If order has no branch_id, include it (might be from API that doesn't return branch_id)
+          // If order has branch_id, it MUST match the current branch
+          return !orderBranchId || orderBranchId == branchId;
+        });
+        
+        console.log(`Branch filtering: ${ordersData.length} total orders, ${filteredOrdersData.length} from branch ${branchId}`);
+        
         // Map API response - matching actual database structure
-        const mappedOrders = ordersData
+        const mappedOrders = filteredOrdersData
           .filter(order => order !== null && order !== undefined) // Filter out null/undefined orders
           .map((order, index) => {
             try {
@@ -1146,8 +1169,12 @@ export default function OrderManagementPage() {
       );
 
       if (isSuccess) {
-        // If order is completed and it's a Dine In order, update table status to Available
-        if (newStatus.toLowerCase() === 'complete' && isDineIn && tableId) {
+        // If order is completed or Bill Generated (credit) and it's a Dine In order, update table status to Available
+        // Check if this is a credit order by checking payment status
+        const isCreditOrder = order?.payment_status === 'Credit' || order?.payment_method === 'Credit' || order?.is_credit === true;
+        const shouldUpdateTable = (newStatus.toLowerCase() === 'complete' || (newStatus.toLowerCase() === 'bill generated' && isCreditOrder)) && isDineIn && tableId;
+        
+        if (shouldUpdateTable) {
           try {
             // Fetch current table details first
             const terminal = getTerminal();
@@ -1181,46 +1208,6 @@ export default function OrderManagementPage() {
         }
         
         setAlert({ type: 'success', message: apiResponse.message || 'Order status updated successfully!' });
-        
-        // Update table status if order is completed
-        if (newStatus.toLowerCase() === 'complete' && isDineIn && tableId) {
-          try {
-            const terminal = getTerminal();
-            const branchId = getBranchId();
-            const tablesResult = await apiPost('api/get_tables.php', { 
-              terminal,
-              branch_id: branchId || terminal
-            });
-            
-            // Handle different response structures
-            let tablesData = [];
-            if (tablesResult.data && Array.isArray(tablesResult.data)) {
-              tablesData = tablesResult.data;
-            } else if (tablesResult.data && tablesResult.data.data && Array.isArray(tablesResult.data.data)) {
-              tablesData = tablesResult.data.data;
-            }
-            
-            const table = tablesData.find(t => (t.table_id || t.id) == tableId);
-            if (table) {
-              console.log('🔄 Updating table status to Available for table:', tableId);
-              const updateResult = await apiPost('/table_management.php', {
-                table_id: parseInt(tableId),
-                hall_id: table.hall_id || table.hall_ID,
-                table_number: table.table_number || table.table_name || table.number,
-                capacity: table.capacity || table.Capacity || 0,
-                status: 'available', // Use lowercase to match API
-                terminal: terminal,
-                branch_id: branchId || terminal
-              });
-              console.log('✅ Table status update result:', updateResult);
-            } else {
-              console.warn('⚠️ Table not found for table_id:', tableId);
-            }
-          } catch (error) {
-            console.error('❌ Error updating table status:', error);
-            // Don't show error to user, table status update is secondary
-          }
-        }
         
         fetchOrders(); // Refresh list
       } else {
@@ -2046,17 +2033,21 @@ export default function OrderManagementPage() {
         // Don't return - allow the success flow to continue since payment was successful
       }
       
-      // If order is completed and it's a Dine In order, update table status to Available
+      // If order is completed/credit and it's a Dine In order, update table status to Available
       // This should happen regardless of orderUpdateSuccess since payment was successful
+      // Update table for both 'Complete' status and credit payments ('Bill Generated' status with credit payment)
       // Use generatedBill data if orderDetails is not available
       const orderForTableUpdate = orderDetails || generatedBill;
-      if (orderForTableUpdate && orderForTableUpdate.order_type === 'Dine In' && (orderForTableUpdate.table_id || orderForTableUpdate.table_number)) {
+      const isCreditPayment = paymentMode === 'Credit';
+      const shouldUpdateTable = finalOrderStatus === 'Complete' || isCreditPayment;
+      
+      if (shouldUpdateTable && orderForTableUpdate && orderForTableUpdate.order_type === 'Dine In' && (orderForTableUpdate.table_id || orderForTableUpdate.table_number)) {
         try {
           const terminal = getTerminal();
           const branchId = getBranchId();
           const tableId = orderForTableUpdate.table_id || orderForTableUpdate.table_number;
           
-          console.log('🔄 Updating table status to Available after order completion');
+          console.log(`🔄 Updating table status to Available after ${isCreditPayment ? 'credit payment' : 'order completion'}`);
           console.log('Table ID:', tableId);
           console.log('Order type:', orderForTableUpdate.order_type);
           

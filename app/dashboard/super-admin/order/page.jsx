@@ -789,8 +789,12 @@ export default function OrderManagementPage() {
       );
 
       if (isSuccess) {
-        // If order is completed and it's a Dine In order, update table status to Available
-        if (newStatus.toLowerCase() === 'complete' && isDineIn && tableId) {
+        // If order is completed or Bill Generated (credit) and it's a Dine In order, update table status to Available
+        // Check if this is a credit order by checking payment status
+        const isCreditOrder = order?.payment_status === 'Credit' || order?.payment_method === 'Credit' || order?.is_credit === true;
+        const shouldUpdateTable = (newStatus.toLowerCase() === 'complete' || (newStatus.toLowerCase() === 'bill generated' && isCreditOrder)) && isDineIn && tableId;
+        
+        if (shouldUpdateTable) {
           try {
             // Fetch current table details first
             const terminal = getTerminal();
@@ -824,46 +828,6 @@ export default function OrderManagementPage() {
         }
         
         setAlert({ type: 'success', message: apiResponse.message || 'Order status updated successfully!' });
-        
-        // Update table status if order is completed
-        if (newStatus.toLowerCase() === 'complete' && isDineIn && tableId) {
-          try {
-            const terminal = getTerminal();
-            const branchId = getBranchId();
-            const tablesResult = await apiPost('/get_tables.php', { 
-              terminal,
-              branch_id: branchId || terminal
-            });
-            
-            // Handle different response structures
-            let tablesData = [];
-            if (tablesResult.data && Array.isArray(tablesResult.data)) {
-              tablesData = tablesResult.data;
-            } else if (tablesResult.data && tablesResult.data.data && Array.isArray(tablesResult.data.data)) {
-              tablesData = tablesResult.data.data;
-            }
-            
-            const table = tablesData.find(t => (t.table_id || t.id) == tableId);
-            if (table) {
-              console.log('🔄 Updating table status to Available for table:', tableId);
-              const updateResult = await apiPost('/table_management.php', {
-                table_id: parseInt(tableId),
-                hall_id: table.hall_id || table.hall_ID,
-                table_number: table.table_number || table.table_name || table.number,
-                capacity: table.capacity || table.Capacity || 0,
-                status: 'available', // Use lowercase to match API
-                terminal: terminal,
-                branch_id: branchId || terminal
-              });
-              console.log('✅ Table status update result:', updateResult);
-            } else {
-              console.warn('⚠️ Table not found for table_id:', tableId);
-            }
-          } catch (error) {
-            console.error('❌ Error updating table status:', error);
-            // Don't show error to user, table status update is secondary
-          }
-        }
         
         fetchOrders(); // Refresh list
       } else {
@@ -1695,37 +1659,43 @@ export default function OrderManagementPage() {
         // Don't return - allow the success flow to continue since payment was successful
       }
       
-      // If order is completed and it's a Dine In order, update table status to Available
+      // If order is completed/credit and it's a Dine In order, update table status to Available
+      // Update table for both 'Complete' status and credit payments ('Bill Generated' status with credit payment)
       if (orderUpdateSuccess && orderDetails && orderDetails.order_type === 'Dine In' && orderDetails.table_id) {
-        try {
-          const terminal = getTerminal();
-          const branchId = getBranchId();
-          // Fetch current table details
-          const tablesResult = await apiPost('/get_tables.php', { 
-            terminal,
-            branch_id: branchId || terminal
-          });
-          if (tablesResult.data && Array.isArray(tablesResult.data)) {
-            const table = tablesResult.data.find(t => t.table_id == orderDetails.table_id);
-            if (table) {
-              // Update table status to Available
-              console.log('Updating table status to Available for table:', orderDetails.table_id);
-              const updateResult = await apiPost('/table_management.php', {
-                table_id: parseInt(orderDetails.table_id),
-                hall_id: table.hall_id,
-                table_number: table.table_number,
-                capacity: table.capacity,
-                status: 'Available',
-                terminal: terminal,
-                branch_id: branchId || terminal,
-                action: 'update'
-              });
-              console.log('Table status update result:', updateResult);
+        // Update table for completed orders OR credit payments
+        const shouldUpdateTable = finalOrderStatus === 'Complete' || isCreditPayment;
+        
+        if (shouldUpdateTable) {
+          try {
+            const terminal = getTerminal();
+            const branchId = getBranchId();
+            // Fetch current table details
+            const tablesResult = await apiPost('/get_tables.php', { 
+              terminal,
+              branch_id: branchId || terminal
+            });
+            if (tablesResult.data && Array.isArray(tablesResult.data)) {
+              const table = tablesResult.data.find(t => t.table_id == orderDetails.table_id);
+              if (table) {
+                // Update table status to Available
+                console.log(`Updating table status to Available for table: ${orderDetails.table_id} (${isCreditPayment ? 'Credit Payment' : 'Order Completed'})`);
+                const updateResult = await apiPost('/table_management.php', {
+                  table_id: parseInt(orderDetails.table_id),
+                  hall_id: table.hall_id,
+                  table_number: table.table_number,
+                  capacity: table.capacity,
+                  status: 'Available',
+                  terminal: terminal,
+                  branch_id: branchId || terminal,
+                  action: 'update'
+                });
+                console.log('Table status update result:', updateResult);
+              }
             }
+          } catch (error) {
+            console.error('Error updating table status after payment:', error);
+            // Don't show error to user, table status update is secondary
           }
-        } catch (error) {
-          console.error('Error updating table status after payment:', error);
-          // Don't show error to user, table status update is secondary
         }
       }
 

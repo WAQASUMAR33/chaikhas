@@ -63,9 +63,26 @@ export default function SalesListPage() {
       const terminal = getTerminal();
       const branchId = getBranchId();
       
+      // STRICT BRANCH RESTRICTION: Branch-admin MUST have branch_id
+      if (!branchId) {
+        setAlert({ 
+          type: 'error', 
+          message: 'Branch ID not found. Please login again. Branch admin can only view their own branch data.' 
+        });
+        setSales([]);
+        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        if (showRefreshing) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        return;
+      }
+      
       // Prepare API parameters
       // For custom date range, use 'custom' period and include dates
       const apiPeriod = period === 'custom' ? 'custom' : period;
+      // ALWAYS include branch_id for branch-admin - strict restriction
       const apiParams = { terminal, period: apiPeriod, branch_id: branchId };
       
       // Add date range if custom period is selected
@@ -294,8 +311,19 @@ export default function SalesListPage() {
         console.warn('No sales data found in response. Full response:', result);
       }
 
+      // STRICT BRANCH FILTERING: Filter out any sales that don't belong to this branch
+      // This is a safety measure in case the API returns data from other branches
+      const filteredSalesData = salesData.filter(sale => {
+        const saleBranchId = sale.branch_id || sale.branchId;
+        // If sale has no branch_id, include it (might be aggregated data)
+        // If sale has branch_id, it MUST match the current branch
+        return !saleBranchId || saleBranchId == branchId;
+      });
+      
+      console.log(`Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);
+      
       // Process and format sales data
-      const processedSales = salesData.map((sale, index) => {
+      const processedSales = filteredSalesData.map((sale, index) => {
         // Format date based on period
         let formattedDate = sale.date || sale.date_period || sale.period || '';
         

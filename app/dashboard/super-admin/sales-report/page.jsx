@@ -46,7 +46,10 @@ export default function SalesReportPage() {
    */
   const fetchBranches = async () => {
     try {
-      const result = await apiGet('/branch_management.php');
+      const result = await apiPost('api/branch_management.php', { action: 'get' });
+      console.log('=== Branches API Response (Sales Report) ===');
+      console.log('Full result:', JSON.stringify(result, null, 2));
+      
       let branchesData = [];
       
       if (result.success && result.data) {
@@ -54,12 +57,27 @@ export default function SalesReportPage() {
           branchesData = result.data;
         } else if (result.data.data && Array.isArray(result.data.data)) {
           branchesData = result.data.data;
+        } else if (result.data.success && result.data.data && Array.isArray(result.data.data)) {
+          branchesData = result.data.data;
+        } else if (result.data.branches && Array.isArray(result.data.branches)) {
+          branchesData = result.data.branches;
         }
       }
+      
+      // Normalize branch data to ensure consistent field names
+      branchesData = branchesData.map(branch => ({
+        ...branch,
+        branch_id: branch.branch_id || branch.id || branch.branch_ID || branch.ID,
+        branch_name: branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch',
+      }));
+      
+      console.log('✅ Branches loaded for sales report:', branchesData.length);
+      console.log('Sample branches:', branchesData.slice(0, 3));
       
       setBranches(branchesData);
     } catch (error) {
       console.error('Error fetching branches:', error);
+      setBranches([]);
     }
   };
 
@@ -154,6 +172,25 @@ export default function SalesReportPage() {
           const existingOrderIds = new Set(salesData.map(s => s.order_id || s.id));
           billsData.forEach(bill => {
             const orderId = bill.order_id || bill.id;
+            // Get branch information for bill - try multiple field names
+            const billBranchId = bill.branch_id || bill.branchId || bill.branch_ID || bill.BranchID;
+            
+            // Try to find branch by multiple ID field names
+            let branch = null;
+            if (billBranchId && branches.length > 0) {
+              branch = branches.find(b => 
+                (b.branch_id && b.branch_id == billBranchId) ||
+                (b.id && b.id == billBranchId) ||
+                (b.branch_ID && b.branch_ID == billBranchId) ||
+                (b.ID && b.ID == billBranchId)
+              );
+            }
+            
+            // Get branch name from multiple possible sources
+            const branchName = branch 
+              ? (branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch')
+              : (bill.branch_name || bill.branchName || (billBranchId ? `Branch ${billBranchId}` : 'Unknown Branch'));
+            
             if (!existingOrderIds.has(orderId)) {
               // Add bill to sales data
               salesData.push({
@@ -171,6 +208,8 @@ export default function SalesReportPage() {
                 customer_id: bill.customer_id,
                 customer_name: bill.customer_name,
                 created_at: bill.created_at || bill.date,
+                branch_id: billBranchId,
+                branch_name: branchName,
               });
               existingOrderIds.add(orderId);
             } else {
@@ -191,6 +230,14 @@ export default function SalesReportPage() {
                   existingSale.customer_id = bill.customer_id;
                   existingSale.customer_name = bill.customer_name;
                 }
+                // Update branch information - always update if we have better info
+                if (branchName && branchName !== 'Unknown Branch' && branchName !== 'N/A') {
+                  existingSale.branch_id = billBranchId;
+                  existingSale.branch_name = branchName;
+                } else if (!existingSale.branch_name || existingSale.branch_name === 'Unknown Branch' || existingSale.branch_name === 'N/A') {
+                  existingSale.branch_id = billBranchId;
+                  existingSale.branch_name = branchName;
+                }
               }
             }
           });
@@ -205,6 +252,80 @@ export default function SalesReportPage() {
       // Ensure all sales are included (paid, unpaid, and credit)
       // Filter out any null/undefined entries
       salesData = salesData.filter(sale => sale !== null && sale !== undefined);
+      
+      // Deduplicate sales data first to avoid duplicate keys
+      // Use a combination of order_id, bill_id, and created_at to identify unique records
+      const seenKeys = new Set();
+      const uniqueSalesData = [];
+      
+      salesData.forEach(sale => {
+        // Create a unique key for this sale
+        const orderId = sale.order_id || sale.id || '';
+        const billId = sale.bill_id || sale.id || '';
+        const createdAt = sale.created_at || sale.date || '';
+        const uniqueKey = `${orderId}-${billId}-${createdAt}`;
+        
+        // Only add if we haven't seen this combination before
+        if (!seenKeys.has(uniqueKey)) {
+          seenKeys.add(uniqueKey);
+          uniqueSalesData.push(sale);
+        } else {
+          console.warn('⚠️ Duplicate sale detected and removed:', { orderId, billId, createdAt });
+        }
+      });
+      
+      salesData = uniqueSalesData;
+      
+      // Enrich sales data with branch information if missing
+      console.log('📊 Enriching sales data with branch information');
+      console.log('Sales count (after deduplication):', salesData.length);
+      console.log('Branches count:', branches.length);
+      
+      salesData = salesData.map((sale, index) => {
+        // Try multiple field names for branch_id
+        const saleBranchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
+        
+        // If branch_name is missing or we want to ensure it's correct
+        if (!sale.branch_name || sale.branch_name === 'Unknown Branch' || sale.branch_name === 'N/A') {
+          // Try to find branch by multiple ID field names
+          let branch = null;
+          if (saleBranchId && branches.length > 0) {
+            branch = branches.find(b => 
+              (b.branch_id && b.branch_id == saleBranchId) ||
+              (b.id && b.id == saleBranchId) ||
+              (b.branch_ID && b.branch_ID == saleBranchId) ||
+              (b.ID && b.ID == saleBranchId)
+            );
+          }
+          
+          if (branch) {
+            sale.branch_name = branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch';
+            sale.branch_id = saleBranchId;
+          } else if (saleBranchId) {
+            console.warn(`⚠️ Branch not found for branch_id: ${saleBranchId} in sale`, {
+              order_id: sale.order_id || sale.id,
+              available_branch_ids: branches.map(b => b.branch_id || b.id)
+            });
+            sale.branch_name = `Branch ${saleBranchId}`;
+            sale.branch_id = saleBranchId;
+          } else {
+            sale.branch_name = 'N/A';
+          }
+        } else {
+          // Ensure branch_id is set if we have branch_name
+          if (!sale.branch_id) {
+            const branch = branches.find(b => 
+              (b.branch_name || b.name) === sale.branch_name
+            );
+            if (branch) {
+              sale.branch_id = branch.branch_id || branch.id;
+            }
+          }
+        }
+        return sale;
+      });
+      
+      console.log('✅ Enriched sales data with branch information');
       
       // Log all sales data for debugging credit sales
       console.log('=== Sales Report Data ===');
@@ -460,13 +581,19 @@ export default function SalesReportPage() {
                     const paymentDisplay = getPaymentMethodDisplay(sale);
                     const customerName = sale.customer_name || sale.customerName || null;
                     
+                    // Create a unique key combining order_id, bill_id, and index
+                    const uniqueKey = `sale-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
+                    
                     return (
-                      <tr key={sale.order_id || index} className={`hover:bg-gray-50 ${isCredit ? 'bg-amber-50' : ''}`}>
+                      <tr key={uniqueKey} className={`hover:bg-gray-50 ${isCredit ? 'bg-amber-50' : ''}`}>
                         <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                           {sale.order_id || sale.id || 'N/A'}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {sale.branch_name || 'N/A'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="w-4 h-4 text-[#FF5F15]" />
+                            <span className="font-medium text-[#FF5F15]">{sale.branch_name || 'N/A'}</span>
+                          </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
                           {formatDateTime(sale.created_at || sale.order_date)}
@@ -812,8 +939,11 @@ export default function SalesReportPage() {
                     const paymentDisplay = getPaymentMethodDisplay(sale);
                     const customerName = sale.customer_name || sale.customerName || null;
                     
+                    // Create a unique key combining order_id, bill_id, and index
+                    const uniqueKey = `sale-print-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
+                    
                     return (
-                      <tr key={sale.order_id || index} style={{ backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
+                      <tr key={uniqueKey} style={{ backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
                         <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.order_id || sale.id || 'N/A'}</td>
                         <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.branch_name || 'N/A'}</td>
                         <td style={{ padding: '6px', border: '1px solid #ccc' }}>{formatDateTime(sale.created_at || sale.order_date)}</td>
