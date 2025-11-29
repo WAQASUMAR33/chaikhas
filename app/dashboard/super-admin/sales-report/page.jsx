@@ -217,18 +217,28 @@ export default function SalesReportPage() {
               const existingSale = salesData.find(s => (s.order_id || s.id) === orderId);
               if (existingSale) {
                 // Update payment fields from bill if they're missing in sale
-                if (!existingSale.payment_method && bill.payment_method) {
+                // Prioritize bill data for payment information
+                if (bill.payment_method) {
                   existingSale.payment_method = bill.payment_method;
+                  existingSale.payment_mode = bill.payment_method; // Also update payment_mode
                 }
-                if (!existingSale.payment_status && bill.payment_status) {
+                if (bill.payment_status) {
                   existingSale.payment_status = bill.payment_status;
                 }
-                if (existingSale.is_credit === undefined && bill.is_credit !== undefined) {
+                // Always update is_credit if bill has it
+                if (bill.is_credit !== undefined && bill.is_credit !== null) {
                   existingSale.is_credit = bill.is_credit;
                 }
-                if (!existingSale.customer_id && bill.customer_id) {
+                // If bill has customer_id, it's likely a credit sale
+                if (bill.customer_id) {
                   existingSale.customer_id = bill.customer_id;
                   existingSale.customer_name = bill.customer_name;
+                  // If payment_status is unpaid but there's a customer_id, mark as credit
+                  if (bill.payment_status === 'unpaid' || existingSale.payment_status === 'unpaid') {
+                    existingSale.is_credit = true;
+                    existingSale.payment_method = 'Credit';
+                    existingSale.payment_mode = 'Credit';
+                  }
                 }
                 // Update branch information - always update if we have better info
                 if (branchName && branchName !== 'Unknown Branch' && branchName !== 'N/A') {
@@ -322,6 +332,26 @@ export default function SalesReportPage() {
             }
           }
         }
+        
+        // Ensure credit sales are properly marked
+        // If there's a customer_id and payment_status is unpaid, it's a credit sale
+        if (sale.customer_id && sale.customer_id > 0) {
+          if (sale.payment_status === 'unpaid' || sale.payment_status === 'Unpaid') {
+            // Mark as credit if not already marked
+            if (!sale.is_credit && sale.payment_method !== 'Credit' && sale.payment_mode !== 'Credit') {
+              sale.is_credit = true;
+              sale.payment_method = 'Credit';
+              sale.payment_mode = 'Credit';
+              sale.payment_status = 'Credit';
+              console.log('✅ Marked sale as credit based on customer_id:', {
+                order_id: sale.order_id,
+                customer_id: sale.customer_id,
+                customer_name: sale.customer_name
+              });
+            }
+          }
+        }
+        
         return sale;
       });
       
@@ -632,15 +662,33 @@ export default function SalesReportPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {customerName ? (
-                            <div>
-                              <div className="font-medium text-amber-700">{customerName}</div>
-                              {sale.customer_phone && (
-                                <div className="text-xs text-gray-500">{sale.customer_phone}</div>
-                              )}
-                            </div>
+                          {isCredit ? (
+                            // For credit sales, always show customer name prominently
+                            customerName ? (
+                              <div className="bg-amber-50 px-2 py-1 rounded">
+                                <div className="font-semibold text-amber-800">{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div className="text-xs text-amber-600 mt-0.5">{sale.customer_phone}</div>
+                                )}
+                                <div className="text-xs text-amber-700 font-medium mt-0.5">Credit Sale</div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                                Customer Missing
+                              </span>
+                            )
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            // For non-credit sales, show customer name if available
+                            customerName ? (
+                              <div>
+                                <div className="font-medium text-gray-700">{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div className="text-xs text-gray-500">{sale.customer_phone}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
@@ -955,19 +1003,37 @@ export default function SalesReportPage() {
                         <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.service_charge || 0)}</td>
                         <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right' }}>{formatPKR(sale.discount_amount || sale.discount || 0)}</td>
                         <td style={{ padding: '6px', border: '1px solid #ccc', textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(sale.net_total || sale.net_total_amount || sale.grand_total || 0)}</td>
-                        <td style={{ padding: '6px', border: '1px solid #ccc', fontWeight: isCredit ? 'bold' : 'normal' }}>
-                          {paymentDisplay}
+                        <td style={{ padding: '6px', border: '1px solid #ccc', fontWeight: isCredit ? 'bold' : 'normal', color: isCredit ? '#92400e' : '#000' }}>
+                          {isCredit ? 'Credit' : paymentDisplay}
                         </td>
-                        <td style={{ padding: '6px', border: '1px solid #ccc' }}>
-                          {customerName ? (
-                            <div>
-                              <div style={{ fontWeight: 'bold', color: '#92400e' }}>{customerName}</div>
-                              {sale.customer_phone && (
-                                <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
-                              )}
-                            </div>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
+                          {isCredit ? (
+                            // For credit sales, always show customer name prominently
+                            customerName ? (
+                              <div style={{ padding: '4px', backgroundColor: '#fef3c7', borderRadius: '4px' }}>
+                                <div style={{ fontWeight: 'bold', color: '#92400e', fontSize: '11px' }}>{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div style={{ fontSize: '8px', color: '#b45309', marginTop: '2px' }}>{sale.customer_phone}</div>
+                                )}
+                                <div style={{ fontSize: '8px', color: '#92400e', fontWeight: 'bold', marginTop: '2px' }}>Credit Sale</div>
+                              </div>
+                            ) : (
+                              <span style={{ padding: '2px 6px', backgroundColor: '#fee2e2', color: '#991b1b', fontSize: '9px', fontWeight: 'bold', borderRadius: '3px' }}>
+                                Customer Missing
+                              </span>
+                            )
                           ) : (
-                            <span style={{ color: '#999' }}>-</span>
+                            // For non-credit sales, show customer name if available
+                            customerName ? (
+                              <div>
+                                <div style={{ fontWeight: 'normal', color: '#000', fontSize: '10px' }}>{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#999' }}>-</span>
+                            )
                           )}
                         </td>
                         <td style={{ padding: '6px', border: '1px solid #ccc' }}>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>

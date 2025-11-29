@@ -499,15 +499,33 @@ export default function SalesReportPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {customerName ? (
-                            <div>
-                              <div className="font-medium text-amber-700">{customerName}</div>
-                              {sale.customer_phone && (
-                                <div className="text-xs text-gray-500">{sale.customer_phone}</div>
-                              )}
-                            </div>
+                          {isCredit ? (
+                            // For credit sales, always show customer name prominently
+                            customerName ? (
+                              <div className="bg-amber-50 px-2 py-1 rounded">
+                                <div className="font-semibold text-amber-800">{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div className="text-xs text-amber-600 mt-0.5">{sale.customer_phone}</div>
+                                )}
+                                <div className="text-xs text-amber-700 font-medium mt-0.5">Credit Sale</div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                                Customer Missing
+                              </span>
+                            )
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            // For non-credit sales, show customer name if available
+                            customerName ? (
+                              <div>
+                                <div className="font-medium text-gray-700">{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div className="text-xs text-gray-500">{sale.customer_phone}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
@@ -658,16 +676,34 @@ export default function SalesReportPage() {
                         <td style={{ fontWeight: isCredit ? 'bold' : 'normal' }}>
                           {paymentDisplay}
                         </td>
-                        <td>
-                          {customerName ? (
-                            <div>
-                              <div style={{ fontWeight: 'bold', color: '#92400e' }}>{customerName}</div>
-                              {sale.customer_phone && (
-                                <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
-                              )}
-                            </div>
+                        <td style={{ padding: '6px', border: '1px solid #ccc', backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
+                          {isCredit ? (
+                            // For credit sales, always show customer name prominently
+                            customerName ? (
+                              <div style={{ padding: '4px', backgroundColor: '#fef3c7', borderRadius: '4px' }}>
+                                <div style={{ fontWeight: 'bold', color: '#92400e', fontSize: '11px' }}>{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div style={{ fontSize: '8px', color: '#b45309', marginTop: '2px' }}>{sale.customer_phone}</div>
+                                )}
+                                <div style={{ fontSize: '8px', color: '#92400e', fontWeight: 'bold', marginTop: '2px' }}>Credit Sale</div>
+                              </div>
+                            ) : (
+                              <span style={{ padding: '2px 6px', backgroundColor: '#fee2e2', color: '#991b1b', fontSize: '9px', fontWeight: 'bold', borderRadius: '3px' }}>
+                                Customer Missing
+                              </span>
+                            )
                           ) : (
-                            <span style={{ color: '#999' }}>-</span>
+                            // For non-credit sales, show customer name if available
+                            customerName ? (
+                              <div>
+                                <div style={{ fontWeight: 'normal', color: '#000', fontSize: '10px' }}>{customerName}</div>
+                                {sale.customer_phone && (
+                                  <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#999' }}>-</span>
+                            )
                           )}
                         </td>
                         <td>{sale.bill_by_name || sale.bill_by || 'N/A'}</td>

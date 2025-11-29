@@ -28,7 +28,12 @@ export function isCreditPayment(sale) {
     isCreditFlag === true ||
     isCreditFlag === 1 ||
     isCreditFlag === '1' ||
-    (customerId && customerId > 0 && paymentStatus.toLowerCase() === 'unpaid' && paymentMethod.toLowerCase() === 'credit');
+    // If there's a customer_id and payment is unpaid, it's likely credit
+    (customerId && customerId > 0 && paymentStatus.toLowerCase() === 'unpaid') ||
+    // If payment_method is credit even if status is unpaid
+    (paymentMethod.toLowerCase() === 'credit' && paymentStatus.toLowerCase() === 'unpaid') ||
+    // If payment_mode is credit even if status is unpaid
+    (paymentMode.toLowerCase() === 'credit' && paymentStatus.toLowerCase() === 'unpaid');
 
   return isCredit;
 }
