@@ -297,12 +297,14 @@ export default function TableManagementPage() {
         hall_id: formData.hall_id,
         table_number: formData.table_number,
         capacity: formData.capacity || 0,
-        status: formData.status,
+        status: (formData.status || 'available').toLowerCase(), // Normalize status to lowercase
         terminal: terminal,
         branch_id: branchId, // Always include branch_id for branch-admin
+        action: editingTable ? 'update' : 'create', // Specify action for API
       };
       
       console.log('Saving table with data:', data);
+      console.log('Action:', editingTable ? 'Update' : 'Create');
 
       const result = await apiPost('/table_management.php', data);
 
@@ -335,7 +337,7 @@ export default function TableManagementPage() {
       table_number: table.table_number,
       hall_id: table.hall_id,
       capacity: table.capacity,
-      status: table.status || 'available',
+      status: (table.status || 'available').toLowerCase(), // Normalize status to lowercase
     });
     setModalOpen(true);
   };

@@ -313,11 +313,28 @@ export default function SalesListPage() {
 
       // STRICT BRANCH FILTERING: Filter out any sales that don't belong to this branch
       // This is a safety measure in case the API returns data from other branches
+      // CRITICAL: Only show sales that explicitly belong to this branch
       const filteredSalesData = salesData.filter(sale => {
-        const saleBranchId = sale.branch_id || sale.branchId;
-        // If sale has no branch_id, include it (might be aggregated data)
-        // If sale has branch_id, it MUST match the current branch
-        return !saleBranchId || saleBranchId == branchId;
+        if (!sale) return false; // Filter out null/undefined
+        const saleBranchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
+        // STRICT: Sale MUST have branch_id AND it MUST match the current branch
+        // Do NOT include sales without branch_id - they might be from other branches
+        if (!saleBranchId) {
+          console.warn('⚠️ Sale missing branch_id, excluding:', sale.order_id || sale.id || sale.date);
+          return false;
+        }
+        // Convert both to strings for comparison to handle number/string mismatches
+        const saleBranchIdStr = String(saleBranchId).trim();
+        const currentBranchIdStr = String(branchId).trim();
+        const matches = saleBranchIdStr === currentBranchIdStr;
+        if (!matches) {
+          console.warn('⚠️ Sale from different branch excluded:', {
+            order_id: sale.order_id || sale.id,
+            sale_branch_id: saleBranchId,
+            current_branch_id: branchId
+          });
+        }
+        return matches;
       });
       
       console.log(`Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);

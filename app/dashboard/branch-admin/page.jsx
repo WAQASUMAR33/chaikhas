@@ -86,6 +86,33 @@ export default function AdminDashboardPage() {
           };
         }
         
+        // STRICT BRANCH FILTERING: Filter recent orders to only show orders from this branch
+        // This is a safety measure in case the API returns data from other branches
+        if (statsData.recentOrders && Array.isArray(statsData.recentOrders)) {
+          const filteredRecentOrders = statsData.recentOrders.filter(order => {
+            if (!order) return false;
+            const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
+            // STRICT: Order MUST have branch_id AND it MUST match the current branch
+            if (!orderBranchId) {
+              console.warn('⚠️ Recent order missing branch_id, excluding:', order.order_id || order.id);
+              return false;
+            }
+            const orderBranchIdStr = String(orderBranchId).trim();
+            const currentBranchIdStr = String(branchId).trim();
+            return orderBranchIdStr === currentBranchIdStr;
+          });
+          
+          // Recalculate totals based on filtered orders
+          statsData.recentOrders = filteredRecentOrders;
+          statsData.totalOrders = filteredRecentOrders.length;
+          
+          // Recalculate total sales from filtered orders only
+          const filteredSales = filteredRecentOrders.reduce((sum, order) => {
+            return sum + (parseFloat(order.total || order.g_total_amount || order.net_total_amount || 0));
+          }, 0);
+          statsData.totalSales = filteredSales;
+        }
+        
         logger.logDataFetch('Dashboard Stats', statsData, statsData.totalOrders);
         logger.success('Dashboard stats loaded successfully', statsData);
         

@@ -59,6 +59,8 @@ export default function OrderManagementPage() {
   const [dishes, setDishes] = useState([]); // All available dishes for edit modal
   const [categories, setCategories] = useState([]); // Categories for filtering dishes
   const [selectedCategory, setSelectedCategory] = useState(''); // Selected category in edit modal
+  const [tables, setTables] = useState([]); // Tables for transfer functionality
+  const [originalTableId, setOriginalTableId] = useState(null); // Store original table ID for transfer
 
   useEffect(() => {
     fetchBranches();
@@ -789,10 +791,14 @@ export default function OrderManagementPage() {
       );
 
       if (isSuccess) {
-        // If order is completed or Bill Generated (credit) and it's a Dine In order, update table status to Available
+        // If order is completed, Credit, or Bill Generated (credit) and it's a Dine In order, update table status to Available
         // Check if this is a credit order by checking payment status
-        const isCreditOrder = order?.payment_status === 'Credit' || order?.payment_method === 'Credit' || order?.is_credit === true;
-        const shouldUpdateTable = (newStatus.toLowerCase() === 'complete' || (newStatus.toLowerCase() === 'bill generated' && isCreditOrder)) && isDineIn && tableId;
+        const isCreditOrder = order?.payment_status === 'Credit' || order?.payment_method === 'Credit' || order?.is_credit === true || newStatus.toLowerCase() === 'credit';
+        const shouldUpdateTable = (
+          newStatus.toLowerCase() === 'complete' || 
+          newStatus.toLowerCase() === 'credit' ||
+          (newStatus.toLowerCase() === 'bill generated' && isCreditOrder)
+        ) && isDineIn && tableId;
         
         if (shouldUpdateTable) {
           try {
@@ -976,6 +982,68 @@ export default function OrderManagementPage() {
   };
 
   /**
+   * Fetch tables for table transfer functionality
+   */
+  const fetchTables = async (branchId) => {
+    try {
+      const terminal = getTerminal();
+      const targetBranchId = branchId || getBranchId();
+      
+      console.log('=== Fetching Tables for Transfer ===');
+      console.log('Terminal:', terminal);
+      console.log('Branch ID:', targetBranchId);
+      
+      const result = await apiPost('api/get_tables.php', {
+        terminal,
+        branch_id: targetBranchId || terminal
+      });
+      
+      console.log('Tables API response:', result);
+      
+      let tablesData = [];
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          tablesData = result.data;
+          console.log('Found tables in result.data (array):', tablesData.length);
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          tablesData = result.data.data;
+          console.log('Found tables in result.data.data:', tablesData.length);
+        } else if (result.data.tables && Array.isArray(result.data.tables)) {
+          tablesData = result.data.tables;
+          console.log('Found tables in result.data.tables:', tablesData.length);
+        } else if (typeof result.data === 'object') {
+          // Try to find any array in the response
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              tablesData = result.data[key];
+              console.log(`Found tables in result.data.${key}:`, tablesData.length);
+              break;
+            }
+          }
+        }
+      }
+      
+      if (tablesData.length === 0) {
+        console.warn('⚠️ No tables found in API response');
+        console.warn('Response structure:', JSON.stringify(result, null, 2));
+      } else {
+        console.log('✅ Found', tablesData.length, 'tables');
+      }
+      
+      setTables(tablesData);
+    } catch (error) {
+      console.error('Error fetching tables:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        error: error
+      });
+      setTables([]);
+      setAlert({ type: 'error', message: 'Failed to fetch tables: ' + (error.message || 'Unknown error') });
+    }
+  };
+
+  /**
    * Edit order - open edit modal
    * Only allowed for Pending and Running orders
    */
@@ -988,6 +1056,12 @@ export default function OrderManagementPage() {
     // Fetch dishes and categories for editing
     await fetchDishes();
     await fetchCategories();
+    
+    // Fetch tables if this is a Dine In order
+    const isDineIn = (order.order_type || '').toLowerCase() === 'dine in';
+    if (isDineIn) {
+      await fetchTables(order.branch_id || getBranchId());
+    }
 
     // Fetch current order items for editing
     try {
@@ -1123,15 +1197,20 @@ export default function OrderManagementPage() {
       console.log('Formatted items count:', formattedItems.length);
       console.log('Formatted items:', JSON.stringify(formattedItems, null, 2));
       
+      const currentTableId = mergedOrderData.table_id || '';
       const newFormData = {
         status: mergedOrderData.order_status || mergedOrderData.status || 'Pending',
-        table_id: mergedOrderData.table_id || '',
+        table_id: currentTableId,
         discount: mergedOrderData.discount_amount || mergedOrderData.discount || 0,
         items: formattedItems,
       };
       
+      // Store original table ID for transfer functionality
+      setOriginalTableId(currentTableId || null);
+      
       console.log('New formData:', JSON.stringify(newFormData, null, 2));
       console.log('Items in newFormData:', newFormData.items.length);
+      console.log('Original table ID:', currentTableId);
       
       setFormData(newFormData);
       setSelectedCategory('');
@@ -1263,12 +1342,19 @@ export default function OrderManagementPage() {
       const discount = parseFloat(formData.discount || 0);
       const netTotal = Math.max(0, subtotal - discount);
 
+      // Check if table transfer is needed (for Dine In orders)
+      const isDineIn = (editingOrder.order_type || '').toLowerCase() === 'dine in';
+      const newTableId = formData.table_id || editingOrder.table_id;
+      const oldTableId = originalTableId;
+      const tableChanged = isDineIn && oldTableId && newTableId && oldTableId.toString() !== newTableId.toString();
+      const orderBranchId = editingOrder.branch_id || getBranchId();
+
       // Update order details
       const orderData = {
         order_id: editingOrder.order_id || editingOrder.id,
         order_type: editingOrder.order_type || 'Dine In',
         order_status: formData.status,
-        table_id: formData.table_id || editingOrder.table_id,
+        table_id: newTableId,
         discount_amount: discount,
         g_total_amount: subtotal,
         service_charge: editingOrder.service_charge || 0,
@@ -1282,6 +1368,59 @@ export default function OrderManagementPage() {
       if (!orderResult.success || !orderResult.data || !orderResult.data.success) {
         setAlert({ type: 'error', message: orderResult.data?.message || 'Failed to update order details' });
         return;
+      }
+
+      // Handle table transfer if table changed
+      if (tableChanged) {
+        try {
+          console.log('🔄 Transferring table from', oldTableId, 'to', newTableId);
+          
+          // Get tables to find table details
+          const tablesResult = await apiPost('api/get_tables.php', {
+            terminal,
+            branch_id: orderBranchId || terminal
+          });
+
+          if (tablesResult.success && tablesResult.data && Array.isArray(tablesResult.data)) {
+            // Find old table and set to Available
+            const oldTable = tablesResult.data.find(t => (t.table_id || t.id) == oldTableId);
+            if (oldTable) {
+              await apiPost('api/table_management.php', {
+                table_id: parseInt(oldTableId),
+                hall_id: oldTable.hall_id,
+                table_number: oldTable.table_number || oldTable.table_name || oldTable.number,
+                capacity: oldTable.capacity,
+                status: 'Available',
+                terminal: terminal,
+                branch_id: orderBranchId || terminal,
+                action: 'update'
+              });
+              console.log('✅ Old table', oldTableId, 'set to Available');
+            }
+
+            // Find new table and set to Running
+            const newTable = tablesResult.data.find(t => (t.table_id || t.id) == newTableId);
+            if (newTable) {
+              await apiPost('api/table_management.php', {
+                table_id: parseInt(newTableId),
+                hall_id: newTable.hall_id,
+                table_number: newTable.table_number || newTable.table_name || newTable.number,
+                capacity: newTable.capacity,
+                status: 'Running',
+                terminal: terminal,
+                branch_id: orderBranchId || terminal,
+                action: 'update'
+              });
+              console.log('✅ New table', newTableId, 'set to Running');
+            } else {
+              console.warn('⚠️ New table not found:', newTableId);
+            }
+          }
+        } catch (tableError) {
+          console.error('Error transferring table:', tableError);
+          // Don't fail the order update if table transfer fails
+          setAlert({ type: 'warning', message: 'Order updated but table transfer had an issue. Please check table statuses manually.' });
+        }
       }
 
       // Delete existing order items (if API supports it)
@@ -1306,11 +1445,16 @@ export default function OrderManagementPage() {
       });
 
       if (itemsResult.success) {
-        setAlert({ type: 'success', message: 'Order updated successfully with all items!' });
+        const successMessage = tableChanged 
+          ? `Order updated successfully! Table transferred from ${oldTableId} to ${newTableId}.`
+          : 'Order updated successfully with all items!';
+        setAlert({ type: 'success', message: successMessage });
         setEditModalOpen(false);
         setEditingOrder(null);
         setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
         setSelectedCategory('');
+        setOriginalTableId(null);
+        setTables([]);
         fetchOrders(); // Refresh list
       } else {
         // Even if items update fails, order was updated
@@ -1319,6 +1463,8 @@ export default function OrderManagementPage() {
         setEditingOrder(null);
         setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
         setSelectedCategory('');
+        setOriginalTableId(null);
+        setTables([]);
         fetchOrders(); // Refresh list
       }
     } catch (error) {
@@ -3117,6 +3263,8 @@ export default function OrderManagementPage() {
             setEditingOrder(null);
             setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
             setSelectedCategory('');
+            setOriginalTableId(null);
+            setTables([]);
           }}
           title="Edit Order"
           size="lg"
@@ -3158,13 +3306,55 @@ export default function OrderManagementPage() {
                   </p>
                 </div>
 
-                <Input
-                  label="Table ID"
-                  type="text"
-                  value={formData.table_id}
-                  onChange={(e) => setFormData({ ...formData, table_id: e.target.value })}
-                  placeholder="Table ID"
-                />
+                {/* Table Selection - Show dropdown for Dine In orders */}
+                {editingOrder && (editingOrder.order_type || '').toLowerCase() === 'dine in' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Table <span className="text-red-500">*</span>
+                      {originalTableId && formData.table_id && originalTableId.toString() !== formData.table_id.toString() && (
+                        <span className="ml-2 text-xs text-amber-600 font-normal">
+                          (Transferring from Table {originalTableId} to Table {formData.table_id})
+                        </span>
+                      )}
+                    </label>
+                    <select
+                      value={formData.table_id || ''}
+                      onChange={(e) => setFormData({ ...formData, table_id: e.target.value })}
+                      required
+                      className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                    >
+                      <option value="">Select Table</option>
+                      {tables.map((table) => {
+                        const tableId = table.table_id || table.id;
+                        const tableNumber = table.table_number || table.table_name || table.number || tableId;
+                        const tableStatus = table.status || 'Available';
+                        const isCurrentTable = tableId && originalTableId && tableId.toString() === originalTableId.toString();
+                        const isAvailable = tableStatus.toLowerCase() === 'available' || isCurrentTable;
+                        
+                        return (
+                          <option 
+                            key={tableId} 
+                            value={tableId}
+                            disabled={!isAvailable && !isCurrentTable}
+                          >
+                            {tableNumber} {isCurrentTable ? '(Current)' : ''} {!isAvailable && !isCurrentTable ? '(Occupied)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Select a table to transfer the order. Current table will be set to Available, new table will be set to Running.
+                    </p>
+                  </div>
+                ) : (
+                  <Input
+                    label="Table ID"
+                    type="text"
+                    value={formData.table_id}
+                    onChange={(e) => setFormData({ ...formData, table_id: e.target.value })}
+                    placeholder="Table ID"
+                  />
+                )}
 
                 {/* Current Order Items */}
                 <div className="border border-gray-200 rounded-lg p-4">
@@ -3317,6 +3507,8 @@ export default function OrderManagementPage() {
                       setEditingOrder(null);
                       setFormData({ status: 'Pending', table_id: '', discount: 0, items: [] });
                       setSelectedCategory('');
+                      setOriginalTableId(null);
+                      setTables([]);
                     }}
                   >
                     Cancel

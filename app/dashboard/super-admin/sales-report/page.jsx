@@ -225,7 +225,7 @@ export default function SalesReportPage() {
                 payment_mode: billIsCredit ? 'Credit' : (bill.payment_method || 'N/A'),
                 is_credit: billIsCredit,
                 customer_id: bill.customer_id,
-                customer_name: bill.customer_name || bill.customerName || bill.name || bill.customer_name || null,
+                customer_name: bill.customer_name || bill.customerName || bill.name || bill.customer || bill.customer_full_name || bill.full_name || null,
                 customer_phone: bill.customer_phone || bill.customerPhone || bill.phone || bill.mobile || null,
                 created_at: bill.created_at || bill.date,
                 branch_id: billBranchId,
@@ -252,8 +252,21 @@ export default function SalesReportPage() {
                 // If bill has customer_id, it's likely a credit sale
                 if (bill.customer_id) {
                   existingSale.customer_id = bill.customer_id;
-                  existingSale.customer_name = bill.customer_name || bill.customerName || bill.name || existingSale.customer_name;
-                  existingSale.customer_phone = bill.customer_phone || bill.customerPhone || bill.phone || bill.mobile || existingSale.customer_phone;
+                  // Update customer information with all possible field variations
+                  const billCustomerName = bill.customer_name || bill.customerName || bill.name || bill.customer || bill.customer_full_name || bill.full_name;
+                  const billCustomerPhone = bill.customer_phone || bill.customerPhone || bill.phone || bill.mobile || bill.mobile_no || bill.contact_number;
+                  
+                  if (billCustomerName) {
+                    existingSale.customer_name = billCustomerName;
+                  } else if (!existingSale.customer_name) {
+                    existingSale.customer_name = null;
+                  }
+                  
+                  if (billCustomerPhone) {
+                    existingSale.customer_phone = billCustomerPhone;
+                  } else if (!existingSale.customer_phone) {
+                    existingSale.customer_phone = null;
+                  }
                   
                   // If payment_status is unpaid but there's a customer_id, mark as credit
                   const billPaymentStatus = (bill.payment_status || '').toString().toLowerCase().trim();
@@ -727,8 +740,8 @@ export default function SalesReportPage() {
                     // Use standardized utility functions
                     const isCredit = isCreditPayment(sale);
                     const paymentDisplay = getPaymentMethodDisplay(sale);
-                    // Try multiple field names for customer name
-                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || null;
+                    // Try multiple field names for customer name - use normalized value from data processing
+                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || sale.customer_full_name || sale.full_name || null;
                     
                     // Create a unique key combining order_id, bill_id, and index
                     const uniqueKey = `sale-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
@@ -781,30 +794,27 @@ export default function SalesReportPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {isCredit ? (
-                            // For credit sales, always show customer name prominently
-                            customerName ? (
-                              <div className="bg-amber-50 px-2 py-1 rounded">
-                                <div className="font-semibold text-amber-800">{customerName}</div>
-                                {sale.customer_phone && (
-                                  <div className="text-xs text-amber-600 mt-0.5">{sale.customer_phone}</div>
-                                )}
-                                <div className="text-xs text-amber-700 font-medium mt-0.5">Credit Sale</div>
+                          {customerName ? (
+                            // Show customer name if available
+                            <div className={isCredit ? "bg-amber-50 px-2 py-1 rounded" : ""}>
+                              <div className={isCredit ? "font-semibold text-amber-800" : "font-medium text-gray-700"}>
+                                {customerName}
                               </div>
-                            ) : (
+                              {sale.customer_phone && (
+                                <div className={isCredit ? "text-xs text-amber-600 mt-0.5" : "text-xs text-gray-500"}>
+                                  {sale.customer_phone}
+                                </div>
+                              )}
+                              {isCredit && (
+                                <div className="text-xs text-amber-700 font-medium mt-0.5">Credit Sale</div>
+                              )}
+                            </div>
+                          ) : (
+                            // Show warning for credit sales without customer name
+                            isCredit ? (
                               <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
                                 Customer Missing
                               </span>
-                            )
-                          ) : (
-                            // For non-credit sales, show customer name if available
-                            customerName ? (
-                              <div>
-                                <div className="font-medium text-gray-700">{customerName}</div>
-                                {sale.customer_phone && (
-                                  <div className="text-xs text-gray-500">{sale.customer_phone}</div>
-                                )}
-                              </div>
                             ) : (
                               <span className="text-gray-400">-</span>
                             )
@@ -864,30 +874,26 @@ export default function SalesReportPage() {
                 visibility: hidden !important;
               }
               
-              /* Hide all elements except print-only and its children */
               body * {
                 visibility: hidden;
               }
               
-              /* Show print content */
               .print-only,
               .print-only * {
-                visibility: visible !important;
+                visibility: visible;
               }
               
-              /* Ensure proper display for print-only */
               .print-only {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
                 display: block !important;
-                position: relative !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                height: auto !important;
-                overflow: visible !important;
-                background: white !important;
-                margin: 0 !important;
-                padding: 0 !important;
-                page-break-after: auto;
+              }
+              
+              .no-print,
+              .no-print * {
+                display: none !important;
               }
               
               /* Ensure tables display correctly */
@@ -1007,53 +1013,10 @@ export default function SalesReportPage() {
               }
             }
           
-          /* Screen styles - show print view when report is generated */
+          /* Screen styles - hide print view */
           @media screen {
             .print-only {
-              display: block;
-              max-width: 100%;
-              overflow-x: auto;
-              margin-top: 20px;
-              padding: 20px;
-              background: white;
-              border: 1px solid #e5e7eb;
-              border-radius: 8px;
-              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            }
-            
-            .print-container {
-              width: 100%;
-            }
-            
-            .print-table {
-              width: 100%;
-              border-collapse: collapse;
-              font-size: 12px;
-              margin-top: 10px;
-            }
-            
-            .print-table th,
-            .print-table td {
-              padding: 8px 6px;
-              border: 1px solid #d1d5db;
-              text-align: left;
-            }
-            
-            .print-table th {
-              background-color: #f3f4f6;
-              font-weight: bold;
-            }
-            
-            .print-table tbody tr:nth-child(even) {
-              background-color: #f9fafb;
-            }
-            
-            .print-footer {
-              text-align: center;
-              font-size: 12px;
-              margin-top: 20px;
-              padding-top: 10px;
-              border-top: 1px solid #d1d5db;
+              display: none !important;
             }
           }
           `}</style>
@@ -1136,8 +1099,8 @@ export default function SalesReportPage() {
                     // Use standardized utility functions
                     const isCredit = isCreditPayment(sale);
                     const paymentDisplay = getPaymentMethodDisplay(sale);
-                    // Try multiple field names for customer name
-                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || null;
+                    // Try multiple field names for customer name - use normalized value from data processing
+                    const customerName = sale.customer_name || sale.customerName || sale.name || sale.customer || sale.customer_full_name || sale.full_name || null;
                     
                     // Create a unique key combining order_id, bill_id, and index
                     const uniqueKey = `sale-print-${sale.order_id || sale.id || 'unknown'}-${sale.bill_id || sale.id || 'no-bill'}-${index}`;
@@ -1159,30 +1122,37 @@ export default function SalesReportPage() {
                           {isCredit ? 'Credit' : paymentDisplay}
                         </td>
                         <td style={{ padding: '6px', border: '1px solid #ccc', backgroundColor: isCredit ? '#fef3c7' : 'transparent' }}>
-                          {isCredit ? (
-                            // For credit sales, always show customer name prominently
-                            customerName ? (
-                              <div style={{ padding: '4px', backgroundColor: '#fef3c7', borderRadius: '4px' }}>
-                                <div style={{ fontWeight: 'bold', color: '#92400e', fontSize: '11px' }}>{customerName}</div>
-                                {sale.customer_phone && (
-                                  <div style={{ fontSize: '8px', color: '#b45309', marginTop: '2px' }}>{sale.customer_phone}</div>
-                                )}
-                                <div style={{ fontSize: '8px', color: '#92400e', fontWeight: 'bold', marginTop: '2px' }}>Credit Sale</div>
+                          {customerName ? (
+                            // Show customer name if available
+                            <div style={isCredit ? { padding: '4px', backgroundColor: '#fef3c7', borderRadius: '4px' } : {}}>
+                              <div style={{ 
+                                fontWeight: isCredit ? 'bold' : 'normal', 
+                                color: isCredit ? '#92400e' : '#000', 
+                                fontSize: isCredit ? '11px' : '10px' 
+                              }}>
+                                {customerName}
                               </div>
-                            ) : (
+                              {sale.customer_phone && (
+                                <div style={{ 
+                                  fontSize: '8px', 
+                                  color: isCredit ? '#b45309' : '#666', 
+                                  marginTop: '2px' 
+                                }}>
+                                  {sale.customer_phone}
+                                </div>
+                              )}
+                              {isCredit && (
+                                <div style={{ fontSize: '8px', color: '#92400e', fontWeight: 'bold', marginTop: '2px' }}>
+                                  Credit Sale
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            // Show warning for credit sales without customer name
+                            isCredit ? (
                               <span style={{ padding: '2px 6px', backgroundColor: '#fee2e2', color: '#991b1b', fontSize: '9px', fontWeight: 'bold', borderRadius: '3px' }}>
                                 Customer Missing
                               </span>
-                            )
-                          ) : (
-                            // For non-credit sales, show customer name if available
-                            customerName ? (
-                              <div>
-                                <div style={{ fontWeight: 'normal', color: '#000', fontSize: '10px' }}>{customerName}</div>
-                                {sale.customer_phone && (
-                                  <div style={{ fontSize: '8px', color: '#666' }}>{sale.customer_phone}</div>
-                                )}
-                              </div>
                             ) : (
                               <span style={{ color: '#999' }}>-</span>
                             )
