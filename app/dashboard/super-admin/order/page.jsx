@@ -6,7 +6,7 @@
  * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -50,6 +50,7 @@ export default function OrderManagementPage() {
     change: 0,
   });
   const [generatedBill, setGeneratedBill] = useState(null);
+  const handlePrintReceiptRef = useRef(null);
   const [formData, setFormData] = useState({
     status: 'Pending',
     table_id: '',
@@ -148,6 +149,38 @@ export default function OrderManagementPage() {
       }));
     }
   }, [paymentModalOpen, paymentData.cash_received, generatedBill]);
+
+  // Auto-print paid receipt when receipt modal opens for Complete orders
+  // Note: handlePrintReceipt is defined later in the component, so we access it via closure
+  useEffect(() => {
+    if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
+      // Wait for DOM to render the receipt content before printing
+      const printTimer = setTimeout(() => {
+        const printContent = document.getElementById('receipt-print-area');
+        if (printContent && generatedBill.items && generatedBill.items.length > 0) {
+          console.log('🖨️ Auto-printing paid receipt...');
+          // Access handlePrintReceipt via closure - it will be available when this runs
+          if (typeof handlePrintReceipt === 'function') {
+            handlePrintReceipt();
+          }
+        } else {
+          console.warn('⚠️ Receipt content not ready for auto-print, will retry...');
+          // Retry after a bit more time if content not ready
+          setTimeout(() => {
+            const retryContent = document.getElementById('receipt-print-area');
+            if (retryContent && generatedBill.items && generatedBill.items.length > 0) {
+              if (typeof handlePrintReceipt === 'function') {
+                handlePrintReceipt();
+              }
+            }
+          }, 500);
+        }
+      }, 300);
+      
+      return () => clearTimeout(printTimer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptModalOpen, generatedBill]);
 
   /**
    * Fetch orders from API
@@ -1862,6 +1895,13 @@ export default function OrderManagementPage() {
         setPaymentModalOpen(false);
         setPaymentData({ cash_received: 0, change: 0 });
         
+        // Open receipt modal for paid receipts (not credit) - auto-print will happen via useEffect
+        if (finalPaymentStatus === 'Paid' && !isCreditPayment) {
+          setTimeout(() => {
+            setReceiptModalOpen(true);
+          }, 100);
+        }
+        
         // Refresh orders to show updated status
         fetchOrders();
         
@@ -2008,6 +2048,12 @@ export default function OrderManagementPage() {
       });
     }
   };
+
+  // Update ref with handlePrintReceipt function so it can be accessed in useEffect
+  useEffect(() => {
+    handlePrintReceiptRef.current = handlePrintReceipt;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Get status badge color

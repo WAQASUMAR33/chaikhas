@@ -6,7 +6,7 @@
  * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -51,6 +51,7 @@ export default function OrderManagementPage() {
     change: 0,
   });
   const [generatedBill, setGeneratedBill] = useState(null);
+  const handlePrintReceiptRef = useRef(null);
   const [formData, setFormData] = useState({
     status: 'Pending',
     table_id: '',
@@ -113,6 +114,31 @@ export default function OrderManagementPage() {
       }
     }
   }, [generatedBill]);
+
+  // Auto-print paid receipt when receipt modal opens for Complete orders
+  useEffect(() => {
+    if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
+      // Wait for DOM to render the receipt content before printing
+      const printTimer = setTimeout(() => {
+        const printContent = document.getElementById('receipt-print-area');
+        if (printContent && generatedBill.items && generatedBill.items.length > 0 && handlePrintReceiptRef.current) {
+          console.log('🖨️ Auto-printing paid receipt...');
+          handlePrintReceiptRef.current();
+        } else {
+          console.warn('⚠️ Receipt content not ready for auto-print, will retry...');
+          // Retry after a bit more time if content not ready
+          setTimeout(() => {
+            const retryContent = document.getElementById('receipt-print-area');
+            if (retryContent && generatedBill.items && generatedBill.items.length > 0 && handlePrintReceiptRef.current) {
+              handlePrintReceiptRef.current();
+            }
+          }, 500);
+        }
+      }, 300);
+      
+      return () => clearTimeout(printTimer);
+    }
+  }, [receiptModalOpen, generatedBill]);
 
   // Debug: Log orders state changes
   useEffect(() => {
@@ -2373,6 +2399,14 @@ export default function OrderManagementPage() {
         setPaymentMode('Cash'); // Reset to default
         setPaymentCustomerId(null); // Reset customer selection
         
+        // Open receipt modal for paid receipts (not credit) - auto-print will happen via useEffect
+        if (finalPaymentStatus === 'Paid' && paymentMode !== 'Credit') {
+          // Small delay to ensure state is updated
+          setTimeout(() => {
+            setReceiptModalOpen(true);
+          }, 100);
+        }
+        
         // Refresh orders to show updated status and update table status if needed
         await fetchOrders();
         
@@ -2487,6 +2521,7 @@ export default function OrderManagementPage() {
   /**
    * Handle print receipt - Print directly to network printers based on category
    * No dialog, prints to two default printers automatically
+   * This function is used by the auto-print useEffect above
    */
   const handlePrintReceipt = async () => {
     if (!generatedBill) {
@@ -2631,6 +2666,12 @@ export default function OrderManagementPage() {
       });
     }
   };
+
+  // Update ref with handlePrintReceipt function so it can be accessed in useEffect
+  useEffect(() => {
+    handlePrintReceiptRef.current = handlePrintReceipt;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Get status badge color
