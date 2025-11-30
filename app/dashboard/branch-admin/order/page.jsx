@@ -249,11 +249,11 @@ export default function OrderManagementPage() {
             
             const mapped = {
               id: customerId,
-              customer_id: customer.customer_id || customer.id,
+          customer_id: customer.customer_id || customer.id,
               customer_name: customerName,
               phone: phone,
-              email: customer.email || '',
-              address: customer.address || '',
+          email: customer.email || '',
+          address: customer.address || '',
               credit_limit: creditLimit,
             };
             
@@ -267,7 +267,7 @@ export default function OrderManagementPage() {
         if (mappedCustomers.length === 0) {
           console.error('❌ No customers after mapping. Raw data:', customersData);
         }
-        
+
         setCustomers(mappedCustomers);
         console.log('✅ Customers state updated, count:', mappedCustomers.length);
       } else {
@@ -2540,7 +2540,7 @@ export default function OrderManagementPage() {
         items: items.map(item => ({
           item_id: item.dish_id || item.id,
           category_id: item.category_id || item.kitchen_id,
-          name: item.dish_name || item.name,
+          name: item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item',
           quantity: item.quantity || item.qty,
           price: item.price || item.rate
         })),
@@ -3223,7 +3223,9 @@ export default function OrderManagementPage() {
                         <div key={index} className="flex justify-between items-center py-3 px-4 bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
-                              <p className="font-semibold text-gray-900 text-base">{item.title || item.dish_name || 'Item'}</p>
+                              <p className="font-semibold text-gray-900 text-base">
+                                {item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item'}
+                              </p>
                               {kitchenId && (
                                 <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-orange-100 text-orange-700">
                                   Kitchen {kitchenId}
@@ -3612,16 +3614,20 @@ export default function OrderManagementPage() {
                       }
                       
                       // Format items for receipt
-                      const formattedItems = (itemsForReceipt || []).map(item => ({
-                        dish_id: item.dish_id || item.id || item.product_id,
-                        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-                        name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-                        price: parseFloat(item.price || item.rate || item.unit_price || 0),
-                        quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
-                        qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-                        total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-                        total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-                      }));
+                      const formattedItems = (itemsForReceipt || []).map(item => {
+                        // Get dish name from multiple possible fields
+                        const dishName = item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item';
+                        return {
+                          dish_id: item.dish_id || item.id || item.product_id,
+                          dish_name: dishName,
+                          name: dishName,
+                          price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                          quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                        };
+                      });
                       
                       // Prepare paid bill receipt data
                       const receiptData = {
@@ -3684,12 +3690,16 @@ export default function OrderManagementPage() {
               {orderItems.length > 0 && (
                 <div className="border rounded-lg p-4 max-h-48 overflow-y-auto">
                   <h4 className="font-semibold text-gray-900 mb-2">Order Items</h4>
-                  {orderItems.map((item, index) => (
-                    <div key={index} className="flex justify-between text-sm py-1">
-                      <span className="text-gray-900">{item.title || item.dish_name || 'Item'}</span>
-                      <span className="text-gray-900 font-medium">{formatPKR(item.total_amount || item.total || 0)}</span>
-                    </div>
-                  ))}
+                  {orderItems.map((item, index) => {
+                    // Get dish name from multiple possible fields
+                    const dishName = item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item';
+                    return (
+                      <div key={index} className="flex justify-between text-sm py-1">
+                        <span className="text-gray-900 font-medium">{dishName}</span>
+                        <span className="text-gray-900 font-medium">{formatPKR(item.total_amount || item.total || 0)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -3981,16 +3991,20 @@ export default function OrderManagementPage() {
                         
                         // Store bill data for receipt - use calculated values from frontend
                         // Ensure orderItems are properly formatted for receipt
-                        const formattedItems = (itemsForReceipt || []).map(item => ({
-                          dish_id: item.dish_id || item.id || item.product_id,
-                          dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-                          name: item.dish_name || item.name || item.title || item.item_name || 'Item',
-                          price: parseFloat(item.price || item.rate || item.unit_price || 0),
-                          quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
-                          qty: parseInt(item.quantity || item.qty || item.qnty || 1),
-                          total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-                          total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
-                        }));
+                        const formattedItems = (itemsForReceipt || []).map(item => {
+                          // Get dish name from multiple possible fields
+                          const dishName = item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item';
+                          return {
+                            dish_id: item.dish_id || item.id || item.product_id,
+                            dish_name: dishName,
+                            name: dishName,
+                            price: parseFloat(item.price || item.rate || item.unit_price || 0),
+                            quantity: parseInt(item.quantity || item.qty || item.qnty || 1),
+                            qty: parseInt(item.quantity || item.qty || item.qnty || 1),
+                            total_amount: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                            total: parseFloat(item.total_amount || item.total || item.total_price || (parseFloat(item.price || item.rate || item.unit_price || 0) * parseInt(item.quantity || item.qty || item.qnty || 1))),
+                          };
+                        });
                         
                         console.log('✅ Formatted items for receipt:', formattedItems.length, formattedItems);
                         
@@ -4221,13 +4235,13 @@ export default function OrderManagementPage() {
                     </p>
                   </div>
                 ) : (
-                  <Input
-                    label="Table ID"
-                    type="text"
-                    value={formData.table_id}
-                    onChange={(e) => setFormData({ ...formData, table_id: e.target.value })}
-                    placeholder="Table ID"
-                  />
+                <Input
+                  label="Table ID"
+                  type="text"
+                  value={formData.table_id}
+                  onChange={(e) => setFormData({ ...formData, table_id: e.target.value })}
+                  placeholder="Table ID"
+                />
                 )}
 
                 {/* Current Order Items */}
@@ -4245,7 +4259,9 @@ export default function OrderManagementPage() {
                       {formData.items.map((item, index) => (
                         <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200">
                           <div className="flex-1">
-                            <p className="font-medium text-sm text-gray-900">{item.name}</p>
+                            <p className="font-medium text-sm text-gray-900">
+                              {item.name || item.dish_name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item'}
+                            </p>
                             <p className="text-xs text-gray-500">{formatPKR(item.price)} each</p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -4499,7 +4515,7 @@ export default function OrderManagementPage() {
                         return (
                           <option key={customerId || `customer-${index}`} value={customerId}>
                             {displayName} {displayPhone && displayPhone !== '0' ? `(${displayPhone})` : ''} - Limit: {displayLimit}
-                          </option>
+                      </option>
                         );
                       })
                     ) : (
@@ -4531,7 +4547,7 @@ export default function OrderManagementPage() {
                       </p>
                       <p className="text-xs text-gray-500">
                         Make sure customers are created in the Customer Management page.
-                      </p>
+                    </p>
                     </div>
                   )}
                 </div>

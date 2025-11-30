@@ -386,8 +386,8 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
             </thead>
             <tbody>
               {orderItems.map((item, index) => {
-                // Extract item data with multiple fallbacks
-                const itemName = item.dish_name || item.name || item.title || item.item_name || 'Item';
+                // Extract item data with multiple fallbacks - check all possible field name variations
+                const itemName = item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || item.ItemName || 'Item';
                 const itemPrice = parseFloat(item.price || item.rate || item.unit_price || 0);
                 const itemQty = parseInt(item.quantity || item.qty || item.qnty || 1);
                 // Calculate total if not provided
