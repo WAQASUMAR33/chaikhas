@@ -1729,7 +1729,9 @@ export default function OrderManagementPage() {
       const finalOrderStatus = isCreditPayment ? 'Bill Generated' : 'Complete';
       
       const orderStatusPayload = { 
-        status: finalOrderStatus,
+        order_status: finalOrderStatus,
+        payment_status: finalPaymentStatus,
+        payment_method: finalPaymentMethod,
         order_id: orderIdValue,
         orderid: orderidValue
       };
