@@ -191,12 +191,18 @@ export default function OrderManagementPage() {
     try {
       const branchId = getBranchId();
       if (!branchId) {
+        console.warn('⚠️ No branch ID found, cannot fetch customers');
+        setCustomers([]);
         return; // No branch ID, skip fetching customers
       }
+
+      console.log('🔄 Fetching customers for branch_id:', branchId);
 
       const result = await apiGet('api/customer_management.php', { 
         branch_id: branchId 
       });
+
+      console.log('📥 Customer API response:', result);
 
       if (result.success && result.data) {
         let customersData = [];
@@ -205,29 +211,83 @@ export default function OrderManagementPage() {
           customersData = result.data;
         } else if (result.data.data && Array.isArray(result.data.data)) {
           customersData = result.data.data;
+        } else if (result.data.customers && Array.isArray(result.data.customers)) {
+          customersData = result.data.customers;
+        }
+
+        console.log('📋 Raw customers data from API:', customersData);
+        console.log('📋 Number of customers in array:', customersData.length);
+
+        if (customersData.length === 0) {
+          console.warn('⚠️ No customers returned from API');
+          setCustomers([]);
+          return;
         }
 
         // Map API response to match expected format
-        const mappedCustomers = customersData.map(customer => ({
-          id: customer.id || customer.customer_id,
-          customer_id: customer.customer_id || customer.id,
-          customer_name: customer.name || customer.customer_name || '',
-          phone: customer.phone || customer.mobileNo || '',
-          email: customer.email || '',
-          address: customer.address || '',
-          credit_limit: parseFloat(customer.credit || customer.credit_limit || 0),
-        }));
+        // Handle multiple field name variations
+        const mappedCustomers = customersData
+          .filter(customer => {
+            // Filter out null/undefined customers
+            if (!customer) {
+              console.warn('⚠️ Found null/undefined customer, skipping');
+              return false;
+            }
+            // Include all customers (API should already filter by branch_id)
+            return true;
+          })
+          .map((customer, index) => {
+            const customerId = customer.id || customer.customer_id;
+            const customerName = customer.name || customer.customer_name || customer.customerName || '';
+            const phone = customer.phone || customer.mobileNo || customer.mobile || '';
+            // Handle null credit_limit - convert null to 0
+            const creditLimit = customer.credit_limit !== null && customer.credit_limit !== undefined 
+              ? parseFloat(customer.credit_limit) 
+              : (customer.credit !== null && customer.credit !== undefined 
+                  ? parseFloat(customer.credit) 
+                  : 0);
+            
+            const mapped = {
+              id: customerId,
+              customer_id: customer.customer_id || customer.id,
+              customer_name: customerName,
+              phone: phone,
+              email: customer.email || '',
+              address: customer.address || '',
+              credit_limit: creditLimit,
+            };
+            
+            console.log(`📝 Mapped customer ${index + 1}:`, mapped);
+            return mapped;
+          });
 
+        console.log('✅ Total mapped customers:', mappedCustomers.length);
+        console.log('✅ Mapped customers array:', mappedCustomers);
+        
+        if (mappedCustomers.length === 0) {
+          console.error('❌ No customers after mapping. Raw data:', customersData);
+        }
+        
         setCustomers(mappedCustomers);
-        console.log('✅ Fetched credit customers:', mappedCustomers.length);
+        console.log('✅ Customers state updated, count:', mappedCustomers.length);
       } else {
+        console.warn('⚠️ Customer API returned no data or error:', result);
         setCustomers([]);
       }
     } catch (error) {
-      console.error('Error fetching customers:', error);
+      console.error('❌ Error fetching customers:', error);
       setCustomers([]);
     }
   };
+
+  // Fetch customers when payment modal opens (if not already loaded)
+  useEffect(() => {
+    if (paymentModalOpen && customers.length === 0) {
+      console.log('🔄 Payment modal opened, fetching customers...');
+      fetchCustomers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentModalOpen]);
 
   /**
    * Fetch orders from API
@@ -4429,16 +4489,50 @@ export default function OrderManagementPage() {
                     required={paymentMode === 'Credit'}
                   >
                     <option value="">-- Select Customer --</option>
-                    {customers.map(customer => (
-                      <option key={customer.id} value={customer.id}>
-                        {customer.customer_name} {customer.phone ? `(${customer.phone})` : ''} - Limit: {formatPKR(customer.credit_limit)}
-                      </option>
-                    ))}
+                    {customers.length > 0 ? (
+                      customers.map((customer, index) => {
+                        const customerId = customer.id || customer.customer_id;
+                        const displayName = customer.customer_name || customer.name || 'Unknown Customer';
+                        const displayPhone = customer.phone || customer.mobileNo || '';
+                        const displayLimit = formatPKR(customer.credit_limit || 0);
+                        console.log(`🔹 Rendering customer option ${index + 1}:`, { customerId, displayName, displayPhone, displayLimit, fullCustomer: customer });
+                        return (
+                          <option key={customerId || `customer-${index}`} value={customerId}>
+                            {displayName} {displayPhone && displayPhone !== '0' ? `(${displayPhone})` : ''} - Limit: {displayLimit}
+                          </option>
+                        );
+                      })
+                    ) : (
+                      <option value="" disabled>No customers available</option>
+                    )}
                   </select>
-                  {customers.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">
-                      No credit customers found. Please add customers in the Customer Management page.
+                  {/* Debug info */}
+                  <div className="mt-1">
+                    <p className="text-xs text-gray-400">
+                      Customers loaded: {customers.length}
                     </p>
+                    {customers.length > 0 && (
+                      <p className="text-xs text-gray-400">
+                        First customer: {customers[0]?.customer_name || customers[0]?.name || 'N/A'}
+                      </p>
+                    )}
+                  </div>
+                  {customers.length === 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-xs text-amber-600">
+                        No credit customers found. 
+                        <button
+                          type="button"
+                          onClick={() => fetchCustomers()}
+                          className="ml-1 text-blue-600 hover:text-blue-800 underline font-medium"
+                        >
+                          Click to refresh
+                        </button>
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Make sure customers are created in the Customer Management page.
+                      </p>
+                    </div>
                   )}
                 </div>
               )}

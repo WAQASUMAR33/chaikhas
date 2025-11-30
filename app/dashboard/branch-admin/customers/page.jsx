@@ -16,7 +16,7 @@ import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import { apiPost, apiDelete, apiGet, getBranchId, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
-import { Users, Plus, Edit, Trash2, Search, X, Phone, Mail, MapPin } from 'lucide-react';
+import { Users, Plus, Edit, Trash2, Search, X, Phone, Mail, MapPin, FileText, Eye, RefreshCw } from 'lucide-react';
 
 export default function CustomerManagementPage() {
   const [customers, setCustomers] = useState([]);
@@ -25,6 +25,10 @@ export default function CustomerManagementPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [creditBillsModalOpen, setCreditBillsModalOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [creditBills, setCreditBills] = useState([]);
+  const [loadingCreditBills, setLoadingCreditBills] = useState(false);
   const [formData, setFormData] = useState({
     customer_name: '',
     phone: '',
@@ -60,6 +64,126 @@ export default function CustomerManagementPage() {
   }, [searchTerm, customers]);
 
   /**
+   * Fetch credit statistics for a specific customer
+   * API: api/bills_management.php or api/get_sales_report.php
+   */
+  const fetchCustomerCreditStats = async (customerId) => {
+    try {
+      const branchId = getBranchId();
+      if (!branchId || !customerId) {
+        return { count: 0, total: 0 };
+      }
+
+      // Fetch credit bills for this customer
+      const result = await apiGet('api/bills_management.php', {
+        customer_id: customerId,
+        branch_id: branchId,
+        payment_status: 'Credit',
+      });
+
+      let billsData = [];
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          billsData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          billsData = result.data.data;
+        } else if (result.data.bills && Array.isArray(result.data.bills)) {
+          billsData = result.data.bills;
+        }
+      }
+
+      // Filter to only credit bills
+      const creditBills = billsData.filter(bill => {
+        const paymentStatus = (bill.payment_status || '').toString().toLowerCase().trim();
+        const paymentMethod = (bill.payment_method || '').toString().toLowerCase().trim();
+        const isCredit = bill.is_credit === true || bill.is_credit === 1 || bill.is_credit === '1' ||
+                        paymentStatus === 'credit' || paymentMethod === 'credit' ||
+                        (paymentStatus === 'unpaid' && bill.customer_id && bill.customer_id == customerId);
+        return isCredit && (bill.customer_id == customerId || bill.customer_id === customerId);
+      });
+
+      const total = creditBills.reduce((sum, bill) => {
+        return sum + parseFloat(bill.grand_total || bill.total_amount || bill.net_total || 0);
+      }, 0);
+
+      return {
+        count: creditBills.length,
+        total: total,
+      };
+    } catch (error) {
+      console.error('Error fetching customer credit stats:', error);
+      return { count: 0, total: 0 };
+    }
+  };
+
+  /**
+   * Fetch credit bills for a specific customer
+   */
+  const fetchCustomerCreditBills = async (customerId) => {
+    setLoadingCreditBills(true);
+    try {
+      const branchId = getBranchId();
+      if (!branchId || !customerId) {
+        setCreditBills([]);
+        setLoadingCreditBills(false);
+        return;
+      }
+
+      // Fetch credit bills for this customer
+      const result = await apiGet('api/bills_management.php', {
+        customer_id: customerId,
+        branch_id: branchId,
+        payment_status: 'Credit',
+      });
+
+      let billsData = [];
+      if (result.success && result.data) {
+        if (Array.isArray(result.data)) {
+          billsData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          billsData = result.data.data;
+        } else if (result.data.bills && Array.isArray(result.data.bills)) {
+          billsData = result.data.bills;
+        }
+      }
+
+      // Filter to only credit bills for this customer
+      const creditBills = billsData.filter(bill => {
+        const paymentStatus = (bill.payment_status || '').toString().toLowerCase().trim();
+        const paymentMethod = (bill.payment_method || '').toString().toLowerCase().trim();
+        const isCredit = bill.is_credit === true || bill.is_credit === 1 || bill.is_credit === '1' ||
+                        paymentStatus === 'credit' || paymentMethod === 'credit' ||
+                        (paymentStatus === 'unpaid' && bill.customer_id && bill.customer_id == customerId);
+        return isCredit && (bill.customer_id == customerId || bill.customer_id === customerId);
+      });
+
+      // Sort by date (newest first)
+      creditBills.sort((a, b) => {
+        const dateA = new Date(a.created_at || a.date || 0);
+        const dateB = new Date(b.created_at || b.date || 0);
+        return dateB - dateA;
+      });
+
+      setCreditBills(creditBills);
+    } catch (error) {
+      console.error('Error fetching customer credit bills:', error);
+      setCreditBills([]);
+      setAlert({ type: 'error', message: 'Failed to load credit bills: ' + (error.message || 'Network error') });
+    } finally {
+      setLoadingCreditBills(false);
+    }
+  };
+
+  /**
+   * Open credit bills modal for a customer
+   */
+  const handleViewCreditBills = async (customer) => {
+    setSelectedCustomer(customer);
+    setCreditBillsModalOpen(true);
+    await fetchCustomerCreditBills(customer.customer_id || customer.id);
+  };
+
+  /**
    * Fetch all customers for current branch
    * API: api/customer_management.php (GET with branch_id for fetching)
    */
@@ -76,20 +200,206 @@ export default function CustomerManagementPage() {
       }
 
       // Use GET method to fetch customers
+      console.log('🔄 Fetching customers for branch_id:', branchId);
       const result = await apiGet('api/customer_management.php', { 
         branch_id: branchId 
       });
       
+      console.log('📥 Full Customer API response:', JSON.stringify(result, null, 2));
+      console.log('📥 result.success:', result.success);
+      console.log('📥 result.data:', result.data);
+      console.log('📥 result.data type:', typeof result.data);
+      console.log('📥 result.data is array:', Array.isArray(result.data));
+      
       // Handle different response structures
       let customersData = [];
       
-      if (result.success && result.data) {
+      // Check if result itself is an array
+      if (Array.isArray(result)) {
+        customersData = result;
+        console.log('✅ Found customers in result (direct array):', customersData.length);
+      } else if (result.success && result.data) {
         if (Array.isArray(result.data)) {
           customersData = result.data;
+          console.log('✅ Found customers in result.data (array):', customersData.length);
         } else if (result.data.data && Array.isArray(result.data.data)) {
           customersData = result.data.data;
+          console.log('✅ Found customers in result.data.data:', customersData.length);
+        } else if (result.data.customers && Array.isArray(result.data.customers)) {
+          customersData = result.data.customers;
+          console.log('✅ Found customers in result.data.customers:', customersData.length);
         } else if (result.data.success === false) {
           setAlert({ type: 'error', message: result.data.message || 'Failed to load customers' });
+          setCustomers([]);
+          setFilteredCustomers([]);
+          setLoading(false);
+          return;
+        } else if (typeof result.data === 'object') {
+          // Try to find any array in the response object
+          console.log('🔍 Searching for array in result.data object...');
+          console.log('🔍 result.data keys:', Object.keys(result.data));
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              customersData = result.data[key];
+              console.log(`✅ Found customers in result.data.${key}:`, customersData.length);
+              break;
+            }
+          }
+        }
+      } else if (!result.success) {
+        console.error('❌ API request failed:', result);
+        setAlert({ type: 'error', message: result.message || result.error || 'Failed to load customers. Please check your connection.' });
+        setCustomers([]);
+        setFilteredCustomers([]);
+        setLoading(false);
+        return;
+      }
+
+      console.log('📋 Raw customers data:', customersData);
+      console.log('📋 Number of customers received:', customersData.length);
+      
+      if (customersData.length === 0) {
+        console.warn('⚠️ No customers in response. Full result:', result);
+        console.warn('⚠️ Trying to fetch without branch_id filter as test...');
+        
+        // Try fetching without branch_id to see if API works at all
+        try {
+          const testResult = await apiGet('api/customer_management.php');
+          console.log('📥 Test API response (no branch_id):', testResult);
+          if (testResult.success && testResult.data && Array.isArray(testResult.data) && testResult.data.length > 0) {
+            console.warn('⚠️ API returns customers without branch_id filter. Backend might not be filtering correctly.');
+            setAlert({ 
+              type: 'warning', 
+              message: `API returned ${testResult.data.length} customer(s) without branch filter, but 0 with branch_id=${branchId}. Please check backend filtering.` 
+            });
+          }
+        } catch (testError) {
+          console.error('❌ Test fetch failed:', testError);
+        }
+        
+        setAlert({ 
+          type: 'warning', 
+          message: 'No customers found. Check browser console for details. If customers exist in database, the API might not be filtering correctly by branch_id.' 
+        });
+        setCustomers([]);
+        setFilteredCustomers([]);
+        setLoading(false);
+        return;
+      }
+
+      // Map API response - API returns: { id, customer_id, name, phone, email, address, credit, balance, ... }
+      const mappedCustomers = customersData
+        .filter(customer => {
+          // Filter out null/undefined customers
+          if (!customer) {
+            console.warn('⚠️ Found null/undefined customer, skipping');
+            return false;
+          }
+          return true;
+        })
+        .map(customer => {
+          const customerBranchId = customer.branch_id || customer.branchId || customer.branch_ID;
+          return {
+            id: customer.id || customer.customer_id,
+            customer_id: customer.customer_id || customer.id,
+            customer_name: customer.name || customer.customer_name || '',
+            phone: customer.phone || customer.mobileNo || '',
+            email: customer.email || '',
+            address: customer.address || '',
+            credit_limit: customer.credit_limit !== null && customer.credit_limit !== undefined 
+              ? parseFloat(customer.credit_limit) 
+              : (customer.credit !== null && customer.credit !== undefined 
+                  ? parseFloat(customer.credit) 
+                  : 0),
+            balance: parseFloat(customer.balance || 0),
+            branch_id: customerBranchId,
+            created_at: customer.created_at || '',
+            // Credit statistics (will be populated after fetching credit bills)
+            credit_orders_count: customer.credit_orders_count || customer.total_credit_orders || 0,
+            total_credit_amount: parseFloat(customer.total_credit_amount || customer.credit_amount || 0),
+          };
+        })
+        // CLIENT-SIDE BRANCH FILTERING: Only filter if customer has branch_id and it doesn't match
+        // If API already filtered by branch_id, we trust it. Only exclude if branch_id explicitly doesn't match.
+        .filter(customer => {
+          if (!customer) return false;
+          const customerBranchId = customer.branch_id;
+          
+          // If customer has no branch_id, include it (API might have already filtered)
+          if (!customerBranchId || customerBranchId === null) {
+            console.log('ℹ️ Customer has no branch_id, including (assuming API filtered):', customer.id, customer.customer_name);
+            return true;
+          }
+          
+          // If customer has branch_id, check if it matches
+          const customerBranchIdStr = String(customerBranchId).trim();
+          const currentBranchIdStr = String(branchId).trim();
+          const matches = customerBranchIdStr === currentBranchIdStr;
+          
+          if (!matches) {
+            console.warn('⚠️ Customer from different branch excluded:', {
+              customer_id: customer.id,
+              customer_name: customer.customer_name,
+              customer_branch_id: customerBranchId,
+              current_branch_id: branchId
+            });
+            return false;
+          }
+          
+          return true;
+        });
+
+      console.log('✅ Mapped and filtered customers:', mappedCustomers.length, mappedCustomers);
+      
+      if (mappedCustomers.length === 0) {
+        console.warn('⚠️ No customers to display after mapping and filtering');
+        if (customersData.length > 0) {
+          console.warn('⚠️ API returned customers but all were filtered out. Showing all as fallback.');
+          // Fallback: show all customers if filtering removed everything
+          const fallbackCustomers = customersData
+            .filter(customer => customer)
+            .map(customer => ({
+              id: customer.id || customer.customer_id,
+              customer_id: customer.customer_id || customer.id,
+              customer_name: customer.name || customer.customer_name || '',
+              phone: customer.phone || customer.mobileNo || '',
+              email: customer.email || '',
+              address: customer.address || '',
+              credit_limit: customer.credit_limit !== null && customer.credit_limit !== undefined 
+                ? parseFloat(customer.credit_limit) 
+                : (customer.credit !== null && customer.credit !== undefined 
+                    ? parseFloat(customer.credit) 
+                    : 0),
+              balance: parseFloat(customer.balance || 0),
+              branch_id: customer.branch_id || customer.branchId || customer.branch_ID,
+              created_at: customer.created_at || '',
+              credit_orders_count: customer.credit_orders_count || customer.total_credit_orders || 0,
+              total_credit_amount: parseFloat(customer.total_credit_amount || customer.credit_amount || 0),
+            }));
+          console.log('✅ Using fallback customers:', fallbackCustomers.length);
+          // Use fallback customers
+          const customersWithStats = await Promise.all(fallbackCustomers.map(async (customer) => {
+            try {
+              const creditStats = await fetchCustomerCreditStats(customer.customer_id || customer.id);
+              return {
+                ...customer,
+                credit_orders_count: creditStats.count,
+                total_credit_amount: creditStats.total,
+              };
+            } catch (error) {
+              console.error(`Error fetching credit stats for customer ${customer.id}:`, error);
+              return {
+                ...customer,
+                credit_orders_count: 0,
+                total_credit_amount: 0,
+              };
+            }
+          }));
+          setCustomers(customersWithStats);
+          setFilteredCustomers(customersWithStats);
+          setLoading(false);
+          return;
+        } else {
           setCustomers([]);
           setFilteredCustomers([]);
           setLoading(false);
@@ -97,22 +407,28 @@ export default function CustomerManagementPage() {
         }
       }
 
-      // Map API response - API returns: { id, customer_id, name, phone, email, address, credit, balance, ... }
-      const mappedCustomers = customersData.map(customer => ({
-        id: customer.id || customer.customer_id,
-        customer_id: customer.customer_id || customer.id,
-        customer_name: customer.name || customer.customer_name || '',
-        phone: customer.phone || customer.mobileNo || '',
-        email: customer.email || '',
-        address: customer.address || '',
-        credit_limit: parseFloat(customer.credit_limit || customer.credit || 0),
-        balance: parseFloat(customer.balance || 0),
-        branch_id: customer.branch_id,
-        created_at: customer.created_at || '',
+      // Fetch credit statistics for each customer in parallel
+      const customersWithStats = await Promise.all(mappedCustomers.map(async (customer) => {
+        try {
+          const creditStats = await fetchCustomerCreditStats(customer.customer_id || customer.id);
+          return {
+            ...customer,
+            credit_orders_count: creditStats.count,
+            total_credit_amount: creditStats.total,
+          };
+        } catch (error) {
+          console.error(`Error fetching credit stats for customer ${customer.id}:`, error);
+          return {
+            ...customer,
+            credit_orders_count: 0,
+            total_credit_amount: 0,
+          };
+        }
       }));
 
-      setCustomers(mappedCustomers);
-      setFilteredCustomers(mappedCustomers);
+      console.log('✅ Final customers with stats:', customersWithStats.length, customersWithStats);
+      setCustomers(customersWithStats);
+      setFilteredCustomers(customersWithStats);
     } catch (error) {
       console.error('Error fetching customers:', error);
       setAlert({ type: 'error', message: 'Failed to load customers: ' + (error.message || 'Network error') });
@@ -342,6 +658,33 @@ export default function CustomerManagementPage() {
       wrap: false,
     },
     {
+      header: 'Credit Orders',
+      accessor: (row) => (
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-amber-600">{row.credit_orders_count || 0}</span>
+          {row.credit_orders_count > 0 && (
+            <button
+              onClick={() => handleViewCreditBills(row)}
+              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
+              title="View Credit Bills"
+            >
+              <Eye className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      ),
+      className: 'w-32',
+      wrap: false,
+    },
+    {
+      header: 'Total Credit Amount',
+      accessor: (row) => (
+        <span className="font-semibold text-amber-600">{formatPKR(row.total_credit_amount || 0)}</span>
+      ),
+      className: 'w-40',
+      wrap: false,
+    },
+    {
       header: 'Actions',
       accessor: (row) => (
         <div className="flex items-center gap-2">
@@ -375,17 +718,30 @@ export default function CustomerManagementPage() {
             <h1 className="text-2xl font-bold text-gray-900">Customer Management</h1>
             <p className="text-gray-600 mt-1">Manage credit customers for your branch</p>
           </div>
-          <Button
-            onClick={() => {
-              setEditingCustomer(null);
-              setFormData({ customer_name: '', phone: '', email: '', address: '', credit_limit: '' });
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Add Customer
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={() => {
+                console.log('🔄 Manual refresh triggered');
+                fetchCustomers();
+              }}
+              variant="secondary"
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </Button>
+            <Button
+              onClick={() => {
+                setEditingCustomer(null);
+                setFormData({ customer_name: '', phone: '', email: '', address: '', credit_limit: '' });
+                setModalOpen(true);
+              }}
+              className="flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Customer
+            </Button>
+          </div>
         </div>
 
         {/* Alert Message */}
@@ -523,6 +879,84 @@ export default function CustomerManagementPage() {
               </Button>
             </div>
           </form>
+        </Modal>
+
+        {/* Credit Bills Modal */}
+        <Modal
+          isOpen={creditBillsModalOpen}
+          onClose={() => {
+            setCreditBillsModalOpen(false);
+            setSelectedCustomer(null);
+            setCreditBills([]);
+          }}
+          title={selectedCustomer ? `Credit Bills - ${selectedCustomer.customer_name}` : 'Credit Bills'}
+          size="xl"
+        >
+          {loadingCreditBills ? (
+            <div className="p-8 text-center">
+              <p className="text-gray-500">Loading credit bills...</p>
+            </div>
+          ) : creditBills.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-gray-500">No credit bills found for this customer.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-sm text-amber-800 font-medium">Total Credit Bills: {creditBills.length}</p>
+                    <p className="text-sm text-amber-700">
+                      Total Amount: <span className="font-semibold">{formatPKR(creditBills.reduce((sum, bill) => sum + parseFloat(bill.grand_total || bill.total_amount || bill.net_total || 0), 0))}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-h-96 overflow-y-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {creditBills.map((bill, index) => (
+                      <tr key={bill.bill_id || bill.id || index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {bill.bill_id || bill.id || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {bill.order_id || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {bill.created_at || bill.date ? new Date(bill.created_at || bill.date).toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          }) : 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-semibold text-amber-600">
+                          {formatPKR(bill.grand_total || bill.total_amount || bill.net_total || 0)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">
+                            Credit
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </Modal>
       </div>
     </AdminLayout>
