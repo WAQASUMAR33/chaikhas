@@ -3675,6 +3675,11 @@ export default function OrderManagementPage() {
                         };
                       });
                       
+                      // Determine payment status - if order is Complete, it's always Paid
+                      const orderStatus = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
+                      const isComplete = orderStatus === 'complete';
+                      const finalPaymentStatus = isComplete ? 'Paid' : (billForReceipt?.payment_status || 'Paid');
+                      
                       // Prepare paid bill receipt data
                       const receiptData = {
                         bill_id: billForReceipt?.bill_id || null,
@@ -3690,11 +3695,11 @@ export default function OrderManagementPage() {
                         discount_amount: parseFloat(billForReceipt?.discount || 0),
                         grand_total: parseFloat(billForReceipt?.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
                         payment_method: billForReceipt?.payment_method || orderDetails.payment_mode || 'Cash',
-                        payment_status: 'Paid',
-                        cash_received: parseFloat(billForReceipt?.cash_received || billForReceipt?.grand_total || 0),
+                        payment_status: finalPaymentStatus === 'Paid' || finalPaymentStatus === 'paid' ? 'Paid' : finalPaymentStatus,
+                        cash_received: parseFloat(billForReceipt?.cash_received || billForReceipt?.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
                         change: parseFloat(billForReceipt?.change || 0),
                         items: formattedItems,
-                        date: billForReceipt?.created_at || billForReceipt?.updated_at || new Date().toLocaleString(),
+                        date: billForReceipt?.created_at || billForReceipt?.updated_at || orderDetails.created_at || new Date().toLocaleString(),
                       };
                       
                       console.log('✅ Paid receipt data prepared with items:', formattedItems.length);
@@ -4749,7 +4754,7 @@ export default function OrderManagementPage() {
             setGeneratedBill(null);
             setPaymentData({ cash_received: 0, change: 0 });
           }}
-          title="Bill Receipt"
+          title={generatedBill?.payment_status === 'Paid' ? 'Paid Receipt' : 'Bill Receipt'}
           size="lg"
           showCloseButton={true}
         >
