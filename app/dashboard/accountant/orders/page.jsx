@@ -2999,12 +2999,17 @@ export default function OrderManagementPage() {
                   }
                 }
                 
+                // Never show Pay Bill if order status is "Complete" - order is already paid
+                if (isComplete) {
+                  return false;
+                }
+                
                 // Show Pay Bill if status is "Bill Generated" (even if bill fetch failed)
                 if (isBillGenerated) {
                   return true;
                 }
                 
-                // Show Pay Bill if bill exists and is unpaid (for Complete or other statuses)
+                // Show Pay Bill if bill exists and is unpaid (for other statuses, not Complete)
                 if (existingBill) {
                   const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
                   return paymentStatus !== 'paid' && paymentStatus !== 'credit';
@@ -3127,15 +3132,54 @@ export default function OrderManagementPage() {
                 </div>
               )}
 
-              {/* View Receipt Button - Only show if bill is paid (case-insensitive check) */}
-              {existingBill && (() => {
-                // Case-insensitive payment status check
-                const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
-                return paymentStatus === 'paid';
+              {/* View Receipt Button - Show if order status is Complete OR if bill is paid (case-insensitive check) */}
+              {(() => {
+                // Check order status (case-insensitive)
+                const orderStatus = (orderDetails.order_status || orderDetails.status || '').toLowerCase();
+                const isComplete = orderStatus === 'complete';
+                
+                // Show if order status is Complete
+                if (isComplete) {
+                  return true;
+                }
+                
+                // Also show if bill exists and is paid
+                if (existingBill) {
+                  const paymentStatus = (existingBill.payment_status || 'Unpaid').toString().toLowerCase();
+                  return paymentStatus === 'paid';
+                }
+                
+                return false;
               })() && (
                 <div className="pt-2">
                   <Button
                     onClick={async () => {
+                      // Fetch bill if not already loaded (for Complete orders)
+                      let billForReceipt = existingBill;
+                      if (!billForReceipt && (orderDetails.order_id || orderDetails.id)) {
+                        try {
+                          console.log('=== Fetching Bill for Paid Receipt ===');
+                          const billFetchResult = await apiGet('api/bills_management.php', { 
+                            order_id: orderDetails.order_id || orderDetails.id 
+                          });
+                          
+                          if (billFetchResult.success && billFetchResult.data) {
+                            if (billFetchResult.data.success === true && billFetchResult.data.data) {
+                              billForReceipt = billFetchResult.data.data.bill || billFetchResult.data.data;
+                            } else if (billFetchResult.data.bill) {
+                              billForReceipt = billFetchResult.data.bill;
+                            } else if (billFetchResult.data.bill_id || billFetchResult.data.order_id) {
+                              billForReceipt = billFetchResult.data;
+                            }
+                            if (billForReceipt) {
+                              setExistingBill(billForReceipt);
+                            }
+                          }
+                        } catch (error) {
+                          console.error('Error fetching bill for receipt:', error);
+                        }
+                      }
+                      
                       // Fetch order items if not already loaded
                       let itemsForReceipt = orderItems || [];
                       
@@ -3194,24 +3238,24 @@ export default function OrderManagementPage() {
                       
                       // Prepare paid bill receipt data
                       const receiptData = {
-                        bill_id: existingBill.bill_id,
+                        bill_id: billForReceipt?.bill_id || null,
                         order_id: orderDetails.order_id || orderDetails.id,
                         order_number: orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id),
                         order_type: orderDetails.order_type || 'Dine In',
                         table_number: orderDetails.table_number || orderDetails.table_id || '',
-                        subtotal: parseFloat(existingBill.total_amount || orderDetails.g_total_amount || orderDetails.total || 0),
-                        service_charge: parseFloat(existingBill.service_charge || 0),
-                        discount_percentage: existingBill.discount > 0 && existingBill.total_amount > 0 
-                          ? ((existingBill.discount / (existingBill.total_amount + existingBill.service_charge)) * 100).toFixed(2)
+                        subtotal: parseFloat(billForReceipt?.total_amount || orderDetails.g_total_amount || orderDetails.total || 0),
+                        service_charge: parseFloat(billForReceipt?.service_charge || 0),
+                        discount_percentage: billForReceipt?.discount > 0 && billForReceipt?.total_amount > 0 
+                          ? ((billForReceipt.discount / (billForReceipt.total_amount + (billForReceipt.service_charge || 0))) * 100).toFixed(2)
                           : 0,
-                        discount_amount: parseFloat(existingBill.discount || 0),
-                        grand_total: parseFloat(existingBill.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
-                        payment_method: existingBill.payment_method || orderDetails.payment_mode || 'Cash',
+                        discount_amount: parseFloat(billForReceipt?.discount || 0),
+                        grand_total: parseFloat(billForReceipt?.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
+                        payment_method: billForReceipt?.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: 'Paid',
-                        cash_received: parseFloat(existingBill.cash_received || existingBill.grand_total || 0),
-                        change: parseFloat(existingBill.change || 0),
+                        cash_received: parseFloat(billForReceipt?.cash_received || billForReceipt?.grand_total || 0),
+                        change: parseFloat(billForReceipt?.change || 0),
                         items: formattedItems,
-                        date: existingBill.created_at || existingBill.updated_at || new Date().toLocaleString(),
+                        date: billForReceipt?.created_at || billForReceipt?.updated_at || new Date().toLocaleString(),
                       };
                       
                       console.log('✅ Paid receipt data prepared with items:', formattedItems.length);
