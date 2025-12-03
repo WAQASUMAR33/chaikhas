@@ -11,10 +11,8 @@ import { useRouter } from 'next/navigation';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import { apiPost, apiGet, getTerminal, getToken, getRole } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
-import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock, Building2, Network, Filter, Eye } from 'lucide-react';
+import { LayoutDashboard, FileText, TrendingUp, Utensils, FolderOpen, Clock, Building2, Network, Filter } from 'lucide-react';
 import Link from 'next/link';
-import Button from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
 
 export default function SuperAdminDashboardPage() {
   const router = useRouter();
@@ -24,13 +22,13 @@ export default function SuperAdminDashboardPage() {
     totalMenuItems: 0,
     totalCategories: 0,
     totalBranches: 0,
-    recentOrders: [],
   });
+  const [branchStats, setBranchStats] = useState([]);
   const [branches, setBranches] = useState([]);
   const [selectedBranchId, setSelectedBranchId] = useState('all'); // 'all' or specific branch_id
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
-  const [orderDetailsModal, setOrderDetailsModal] = useState({ open: false, order: null });
+  const [branchStatsLoading, setBranchStatsLoading] = useState(false);
 
   // Check authentication first
   useEffect(() => {
@@ -70,9 +68,33 @@ export default function SuperAdminDashboardPage() {
   useEffect(() => {
     if (authChecked && branches.length > 0) {
       fetchDashboardStats();
-      fetchRecentOrders();
+      fetchBranchStatistics();
     }
   }, [selectedBranchId, authChecked, branches.length]);
+
+  // Auto-refresh branch statistics periodically and when page becomes visible
+  // This ensures daily sales reset is reflected when date changes (day end)
+  useEffect(() => {
+    if (!authChecked || branches.length === 0) return;
+
+    // Refresh statistics every 5 minutes to catch day end changes
+    const refreshInterval = setInterval(() => {
+      fetchBranchStatistics();
+    }, 5 * 60000); // Every 5 minutes
+
+    // Also refresh when page becomes visible (user returns to tab)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchBranchStatistics();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(refreshInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [authChecked, branches.length]);
 
   /**
    * Fetch dashboard statistics from API
@@ -135,101 +157,348 @@ export default function SuperAdminDashboardPage() {
   };
 
   /**
-   * Fetch recent orders from all branches or filtered by branch
+   * Get today's date in YYYY-MM-DD format
+   * Ensures daily sales reset at day end by always using current date
    */
-  const fetchRecentOrders = async () => {
+  const getTodayDate = () => {
+    const now = new Date();
+    // Use local date to match server timezone if needed, or UTC
+    // Format: YYYY-MM-DD
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Fetch the last dayend closing_date_time for a branch
+   * Returns the closing_date_time if dayend exists, null otherwise
+   */
+  const fetchLastDayendForBranch = async (branchId) => {
     try {
       const terminal = getTerminal();
-      const params = { terminal };
+      const result = await apiPost('/get_dayend.php', {
+        terminal,
+        branch_id: branchId,
+      });
+
+      if (result.success && result.data) {
+        let dayendData = [];
+        if (Array.isArray(result.data)) {
+          dayendData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          dayendData = result.data.data;
+        }
+
+        if (dayendData.length > 0) {
+          // Sort by closing_date_time descending and get the most recent
+          const sortedDayends = [...dayendData].sort((a, b) => {
+            const dateA = new Date(a.closing_date_time || a.created_at || 0);
+            const dateB = new Date(b.closing_date_time || b.created_at || 0);
+            return dateB - dateA;
+          });
+
+          const lastDayend = sortedDayends[0];
+          if (lastDayend && lastDayend.closing_date_time) {
+            return lastDayend.closing_date_time;
+          }
+        }
+      }
+      return null; // No dayend found
+    } catch (error) {
+      console.error(`Error fetching dayend for branch ${branchId}:`, error);
+      return null;
+    }
+  };
+
+  /**
+   * Fetch branch statistics (daily sales, running orders, complete bills) for each branch
+   * Uses the new consolidated endpoint api/get_branch_daily_stats.php if available
+   * Falls back to individual API calls if the consolidated endpoint is not available
+   * Daily sales are filtered to only show orders/sales created after the last dayend closing_date_time
+   * If no dayend exists, shows only today's sales - resets at day end
+   */
+  const fetchBranchStatistics = async () => {
+    setBranchStatsLoading(true);
+    try {
+      const terminal = getTerminal();
+      const today = getTodayDate(); // Always get current date - ensures reset at day end
       
-      // Add branch_id filter if specific branch is selected
-      if (selectedBranchId && selectedBranchId !== 'all') {
-        params.branch_id = selectedBranchId;
+      console.log('Fetching branch statistics for today:', today);
+      
+      // Try using the new consolidated endpoint first
+      const useConsolidatedEndpoint = true;
+      
+      if (useConsolidatedEndpoint) {
+        // Fetch statistics for each branch using the consolidated endpoint
+        const branchStatsPromises = branches.map(async (branch) => {
+          const branchId = branch.branch_id || branch.id;
+          const branchName = branch.branch_name || branch.name || 'Unknown Branch';
+          
+          try {
+            // Get the last dayend closing_date_time for this branch
+            const lastDayendTime = await fetchLastDayendForBranch(branchId);
+            
+            // Use the new consolidated endpoint
+            const statsParams = {
+              terminal,
+              branch_id: branchId,
+              date: today,
+              after_closing_date: lastDayendTime || null, // Pass dayend time if exists
+            };
+            
+            const statsResult = await apiPost('api/get_branch_daily_stats.php', statsParams);
+            
+            if (statsResult.success && statsResult.data) {
+              // Handle different response structures
+              let data = statsResult.data;
+              
+              // Check if data is nested
+              if (data.data) {
+                data = data.data;
+              }
+              
+              // Extract sales data (supports multiple field names and nested structures)
+              let dailySales = 0;
+              if (data.sales) {
+                // If sales is nested object
+                dailySales = parseFloat(
+                  data.sales.total || 
+                  data.sales.net_total || 
+                  data.sales.grand_total || 
+                  data.sales.amount || 
+                  data.sales.total_sales || 
+                  0
+                ) || 0;
+              } else {
+                // If sales data is at root level
+                dailySales = parseFloat(
+                  data.total || 
+                  data.net_total || 
+                  data.grand_total || 
+                  data.amount || 
+                  data.total_sales || 
+                  0
+                ) || 0;
+              }
+              
+              // Extract order statistics (supports multiple structures)
+              let orderStats = {};
+              if (data.order_statistics) {
+                orderStats = data.order_statistics;
+              } else if (data.orders) {
+                orderStats = data.orders;
+              } else if (data.order_stats) {
+                orderStats = data.order_stats;
+              } else {
+                // Check if order stats are at root level
+                orderStats = {
+                  pending: data.pending || 0,
+                  preparing: data.preparing || 0,
+                  ready: data.ready || 0,
+                  confirmed: data.confirmed || 0,
+                  completed: data.completed || 0,
+                  delivered: data.delivered || 0,
+                  paid: data.paid || 0,
+                };
+              }
+              
+              // Calculate running orders (pending, preparing, ready, confirmed)
+              const runningOrders = (
+                (parseInt(orderStats.pending) || 0) +
+                (parseInt(orderStats.preparing) || 0) +
+                (parseInt(orderStats.ready) || 0) +
+                (parseInt(orderStats.confirmed) || 0)
+              );
+              
+              // Calculate complete bills (completed, delivered, paid) - today only
+              // These are already filtered by the backend for today's date
+              const completeBills = (
+                (parseInt(orderStats.completed) || 0) +
+                (parseInt(orderStats.delivered) || 0) +
+                (parseInt(orderStats.paid) || 0)
+              );
+              
+              // Ensure daily sales is 0 if no sales data or if date doesn't match today
+              // This ensures reset at day end
+              const validatedDailySales = dailySales || 0;
+              
+              return {
+                branch_id: branchId,
+                branch_name: branchName,
+                daily_sales: validatedDailySales, // Ensures 0 if no sales today
+                running_orders: runningOrders,
+                complete_bills: completeBills,
+              };
+            } else {
+              // If consolidated endpoint fails, fall back to individual calls
+              console.warn(`Consolidated endpoint failed for branch ${branchName}, falling back to individual calls`);
+              return await fetchBranchStatsIndividual(branch, terminal, today);
+            }
+          } catch (error) {
+            // If consolidated endpoint doesn't exist or fails, fall back to individual calls
+            console.warn(`Consolidated endpoint error for branch ${branchName}, falling back:`, error);
+            return await fetchBranchStatsIndividual(branch, terminal, today);
+          }
+        });
+        
+        const stats = await Promise.all(branchStatsPromises);
+        setBranchStats(stats);
+        console.log('✅ Branch statistics loaded via consolidated endpoint:', stats.length);
+      } else {
+        // Fallback: Use individual API calls
+        const branchStatsPromises = branches.map(branch => 
+          fetchBranchStatsIndividual(branch, terminal, today)
+        );
+        const stats = await Promise.all(branchStatsPromises);
+        setBranchStats(stats);
+        console.log('✅ Branch statistics loaded via individual calls:', stats.length);
+      }
+    } catch (error) {
+      console.error('Error fetching branch statistics:', error);
+      setBranchStats([]);
+    } finally {
+      setBranchStatsLoading(false);
+    }
+  };
+
+  /**
+   * Fallback function to fetch branch statistics using individual API calls
+   * Used when the consolidated endpoint is not available
+   * Filters sales to only show orders/sales created after the last dayend closing_date_time
+   * If no dayend exists, shows only today's sales
+   */
+  const fetchBranchStatsIndividual = async (branch, terminal, today) => {
+    const branchId = branch.branch_id || branch.id;
+    const branchName = branch.branch_name || branch.name || 'Unknown Branch';
+    
+    try {
+      // Get the last dayend closing_date_time for this branch
+      const lastDayendTime = await fetchLastDayendForBranch(branchId);
+      
+      // Determine the cutoff date/time for filtering
+      // If dayend exists, use closing_date_time; otherwise, use start of today
+      let cutoffDateTime = null;
+      if (lastDayendTime) {
+        cutoffDateTime = new Date(lastDayendTime);
+      } else {
+        // No dayend exists, use start of today
+        cutoffDateTime = new Date(today + 'T00:00:00');
       }
       
-      console.log('Fetching recent orders with params:', params);
+      // Fetch daily sales for this branch
+      const salesParams = {
+        terminal,
+        branch_id: branchId,
+        period: 'daily',
+        from_date: today,
+        to_date: today,
+        after_closing_date: lastDayendTime || null, // Pass dayend time to backend
+      };
       
-      // Fetch orders from order_management.php
-      const result = await apiGet('api/order_management.php', params);
+      const salesResult = await apiPost('api/get_sales.php', salesParams);
       
-      console.log('Recent orders API response:', result);
+      // Calculate daily sales from sales data - only count sales after dayend
+      let dailySales = 0;
+      if (salesResult.success && salesResult.data) {
+        let salesData = [];
+        if (Array.isArray(salesResult.data)) {
+          salesData = salesResult.data;
+        } else if (salesResult.data.data && Array.isArray(salesResult.data.data)) {
+          salesData = salesResult.data.data;
+        } else if (salesResult.data.sales && Array.isArray(salesResult.data.sales)) {
+          salesData = salesResult.data.sales;
+        }
+        
+        // Filter sales to only include those created after the last dayend
+        const validSales = salesData.filter(sale => {
+          const saleDate = sale.date || sale.created_at || sale.order_date || sale.bill_date;
+          if (!saleDate) return false;
+          
+          const saleDateTime = new Date(saleDate);
+          
+          // Only include sales created after the last dayend closing time
+          // If no dayend, only include today's sales
+          if (lastDayendTime) {
+            return saleDateTime > cutoffDateTime;
+          } else {
+            // No dayend exists, filter by today's date only
+            const saleDateStr = saleDateTime.toISOString().split('T')[0];
+            return saleDateStr === today;
+          }
+        });
+        
+        // Sum up total sales after dayend
+        dailySales = validSales.reduce((sum, sale) => {
+          const total = sale.total || sale.net_total || sale.grand_total || sale.amount || sale.total_sales || 0;
+          return sum + (parseFloat(total) || 0);
+        }, 0);
+      }
+      
+      // Ensure daily sales is 0 if no sales after dayend (ensures reset at day end)
+      dailySales = dailySales || 0;
+      
+      // Fetch orders for this branch to get running and complete counts
+      const ordersParams = {
+        terminal,
+        branch_id: branchId,
+      };
+      
+      const ordersResult = await apiGet('api/order_management.php', ordersParams);
       
       let ordersData = [];
-      
-      // Handle multiple possible response structures
-      if (result.data && Array.isArray(result.data)) {
-        ordersData = result.data;
-      } else if (result.data && result.data.data && Array.isArray(result.data.data)) {
-        ordersData = result.data.data;
-      } else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
-        ordersData = result.data.orders;
-      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        ordersData = result.data.data;
+      if (ordersResult.data && Array.isArray(ordersResult.data)) {
+        ordersData = ordersResult.data;
+      } else if (ordersResult.data && ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
+        ordersData = ordersResult.data.data;
+      } else if (ordersResult.data && ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
+        ordersData = ordersResult.data.orders;
       }
       
-      // Sort by created_at descending and take first 10
-      ordersData = ordersData
-        .sort((a, b) => {
-          const dateA = new Date(a.created_at || a.date || 0);
-          const dateB = new Date(b.created_at || b.date || 0);
-          return dateB - dateA;
-        })
-        .slice(0, 10);
-      
-      // Enrich orders with branch information
-      // First, log what we have for debugging
-      console.log('📊 Enriching orders with branch information');
-      console.log('Orders count:', ordersData.length);
-      console.log('Branches count:', branches.length);
-      console.log('Sample order branch_id:', ordersData[0]?.branch_id || ordersData[0]?.branchId);
-      console.log('Sample branches:', branches.slice(0, 3).map(b => ({ id: b.branch_id || b.id, name: b.branch_name || b.name })));
-      
-      const enrichedOrders = ordersData.map(order => {
-        // Try multiple field names for branch_id
-        const branchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-        
-        // Try to find branch by multiple ID field names
-        let branch = null;
-        if (branchId) {
-          branch = branches.find(b => 
-            (b.branch_id && b.branch_id == branchId) ||
-            (b.id && b.id == branchId) ||
-            (b.branch_ID && b.branch_ID == branchId) ||
-            (b.ID && b.ID == branchId)
-          );
-        }
-        
-        // Get branch name from multiple possible fields
-        const branchName = branch 
-          ? (branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch')
-          : (order.branch_name || order.branchName || (branchId ? `Branch ${branchId}` : 'Unknown Branch'));
-        
-        if (!branch && branchId) {
-          console.warn(`⚠️ Branch not found for branch_id: ${branchId}`, {
-            order_id: order.order_id || order.id,
-            available_branch_ids: branches.map(b => b.branch_id || b.id)
-          });
-        }
-        
-        return {
-          ...order,
-          branch_name: branchName,
-          branch_id: branchId || order.branch_id || order.branchId,
-        };
+      // Filter running orders (all active orders regardless of date - operationally useful)
+      const runningOrders = ordersData.filter(order => {
+        const status = (order.status || order.order_status || '').toLowerCase();
+        return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
       });
       
-      setStats(prev => ({
-        ...prev,
-        recentOrders: enrichedOrders,
-      }));
+      // Filter complete bills - only those created after the last dayend
+      const validCompleteBills = ordersData.filter(order => {
+        const orderDate = order.created_at || order.date || order.order_date;
+        if (!orderDate) return false;
+        
+        const orderDateTime = new Date(orderDate);
+        
+        // Only include orders created after the last dayend closing time
+        // If no dayend, only include today's orders
+        if (lastDayendTime) {
+          if (orderDateTime <= cutoffDateTime) return false;
+        } else {
+          // No dayend exists, filter by today's date only
+          const orderDateStr = orderDateTime.toISOString().split('T')[0];
+          if (orderDateStr !== today) return false;
+        }
+        
+        const status = (order.status || order.order_status || '').toLowerCase();
+        return status === 'completed' || status === 'delivered' || status === 'paid';
+      });
       
-      console.log('✅ Recent orders loaded:', enrichedOrders.length);
+      return {
+        branch_id: branchId,
+        branch_name: branchName,
+        daily_sales: dailySales,
+        running_orders: runningOrders.length,
+        complete_bills: validCompleteBills.length,
+      };
     } catch (error) {
-      console.error('Error fetching recent orders:', error);
-      setStats(prev => ({
-        ...prev,
-        recentOrders: [],
-      }));
+      console.error(`Error fetching stats for branch ${branchName}:`, error);
+      return {
+        branch_id: branchId,
+        branch_name: branchName,
+        daily_sales: 0,
+        running_orders: 0,
+        complete_bills: 0,
+        error: true,
+      };
     }
   };
 
@@ -264,9 +533,8 @@ export default function SuperAdminDashboardPage() {
         totalBranches: branchesData.length
       }));
       
-      // Fetch stats and orders after branches are loaded
+      // Fetch stats after branches are loaded
       fetchDashboardStats();
-      fetchRecentOrders();
     } catch (error) {
       console.error('Error fetching branches:', error);
       setBranches([]);
@@ -321,16 +589,6 @@ export default function SuperAdminDashboardPage() {
     },
   ];
 
-  const getStatusColor = (status) => {
-    const colors = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      preparing: 'bg-blue-100 text-blue-800',
-      ready: 'bg-green-100 text-green-800',
-      completed: 'bg-gray-100 text-gray-800',
-      cancelled: 'bg-red-100 text-red-800',
-    };
-    return colors[status?.toLowerCase()] || colors.pending;
-  };
 
   // Show loading while checking auth
   if (!authChecked) {
@@ -408,81 +666,88 @@ export default function SuperAdminDashboardPage() {
           })}
         </div>
 
+        {/* Branch Statistics Section */}
+        <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF5F15]" />
+              Branch Daily Statistics
+            </h2>
+            <button
+              onClick={fetchBranchStatistics}
+              disabled={branchStatsLoading}
+              className="text-sm text-[#FF5F15] hover:underline disabled:opacity-50 flex items-center gap-1"
+            >
+              <Clock className="w-4 h-4" />
+              {branchStatsLoading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+          {branchStatsLoading && branchStats.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">Loading branch statistics...</p>
+          ) : branchStats.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">No branch statistics available</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Branch Name</th>
+                    <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Daily Sales</th>
+                    <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Running Orders</th>
+                    <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Complete Bills</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchStats.map((branch, index) => (
+                    <tr 
+                      key={branch.branch_id || index} 
+                      className="border-b border-gray-100 hover:bg-gray-50 transition"
+                    >
+                      <td className="py-4 px-4">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-[#FF5F15]" />
+                          <span className="font-medium text-gray-900">{branch.branch_name}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <span className="font-bold text-green-600">
+                          {formatPKR(branch.daily_sales || 0)}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <span className="font-semibold text-blue-600">
+                          {branch.running_orders || 0}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <span className="font-semibold text-purple-600">
+                          {branch.complete_bills || 0}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-50 font-semibold">
+                    <td className="py-4 px-4 text-gray-900">Total</td>
+                    <td className="py-4 px-4 text-right text-green-600">
+                      {formatPKR(branchStats.reduce((sum, b) => sum + (b.daily_sales || 0), 0))}
+                    </td>
+                    <td className="py-4 px-4 text-right text-blue-600">
+                      {branchStats.reduce((sum, b) => sum + (b.running_orders || 0), 0)}
+                    </td>
+                    <td className="py-4 px-4 text-right text-purple-600">
+                      {branchStats.reduce((sum, b) => sum + (b.complete_bills || 0), 0)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* Quick Actions */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          {/* Recent Orders */}
-          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-3 sm:mb-4">
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF5F15]" />
-                Recent Orders
-              </h2>
-              <Link 
-                href="/dashboard/super-admin/order"
-                className="text-sm text-[#FF5F15] hover:underline"
-              >
-                View All
-              </Link>
-            </div>
-            {loading ? (
-              <p className="text-gray-500 text-center py-4">Loading orders...</p>
-            ) : stats.recentOrders.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">No recent orders</p>
-            ) : (
-              <div className="space-y-3">
-                {stats.recentOrders.map((order, index) => (
-                  <div 
-                    key={order.id || order.order_id || index} 
-                    className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer"
-                    onClick={() => setOrderDetailsModal({ open: true, order })}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-medium text-gray-900">
-                            {order.order_number || `Order #${order.order_id || order.id || index + 1}`}
-                          </p>
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(order.status)}`}>
-                            {order.status || 'Pending'}
-                          </span>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs text-gray-600 flex items-center gap-1">
-                            <Building2 className="w-3 h-3" />
-                            <span className="font-medium text-[#FF5F15]">{order.branch_name || 'Unknown Branch'}</span>
-                          </p>
-                          {order.order_type && (
-                            <p className="text-xs text-gray-500">Type: {order.order_type}</p>
-                          )}
-                          {order.hall_name && (
-                            <p className="text-xs text-gray-500">Hall: {order.hall_name}</p>
-                          )}
-                          {order.table_number && (
-                            <p className="text-xs text-gray-500">Table: {order.table_number}</p>
-                          )}
-                          {order.order_taker_name && (
-                            <p className="text-xs text-gray-500">Order Taker: {order.order_taker_name}</p>
-                          )}
-                          {order.created_at && (
-                            <p className="text-xs text-gray-400">{formatDateTime(order.created_at)}</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right ml-4">
-                        <p className="text-sm font-bold text-[#FF5F15]">
-                          {formatPKR(order.total || order.net_total || order.grand_total || 0)}
-                        </p>
-                        <button className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                          <Eye className="w-3 h-3" />
-                          View Details
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Quick Links */}
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
@@ -549,94 +814,6 @@ export default function SuperAdminDashboardPage() {
           </div>
         </div>
 
-        {/* Order Details Modal */}
-        <Modal
-          isOpen={orderDetailsModal.open}
-          onClose={() => setOrderDetailsModal({ open: false, order: null })}
-          title={`Order Details - ${orderDetailsModal.order?.order_number || `#${orderDetailsModal.order?.order_id || 'N/A'}`}`}
-        >
-          {orderDetailsModal.order && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">Order ID</p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {orderDetailsModal.order.order_id || orderDetailsModal.order.id || 'N/A'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-500">Status</p>
-                  <span className={`inline-block px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(orderDetailsModal.order.status)}`}>
-                    {orderDetailsModal.order.status || 'Pending'}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-500">Branch</p>
-                  <p className="text-base font-semibold text-[#FF5F15]">
-                    {orderDetailsModal.order.branch_name || 'Unknown Branch'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-500">Order Type</p>
-                  <p className="text-base text-gray-900">
-                    {orderDetailsModal.order.order_type || 'N/A'}
-                  </p>
-                </div>
-                {orderDetailsModal.order.hall_name && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Hall</p>
-                    <p className="text-base text-gray-900">
-                      {orderDetailsModal.order.hall_name}
-                    </p>
-                  </div>
-                )}
-                {orderDetailsModal.order.table_number && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Table</p>
-                    <p className="text-base text-gray-900">
-                      {orderDetailsModal.order.table_number}
-                    </p>
-                  </div>
-                )}
-                {orderDetailsModal.order.order_taker_name && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Order Taker</p>
-                    <p className="text-base text-gray-900">
-                      {orderDetailsModal.order.order_taker_name}
-                    </p>
-                  </div>
-                )}
-                {orderDetailsModal.order.created_at && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Created At</p>
-                    <p className="text-base text-gray-900">
-                      {formatDateTime(orderDetailsModal.order.created_at)}
-                    </p>
-                  </div>
-                )}
-              </div>
-              <div className="border-t pt-4">
-                <p className="text-sm font-medium text-gray-500 mb-2">Total Amount</p>
-                <p className="text-2xl font-bold text-[#FF5F15]">
-                  {formatPKR(orderDetailsModal.order.total || orderDetailsModal.order.net_total || orderDetailsModal.order.grand_total || 0)}
-                </p>
-              </div>
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button
-                  variant="outline"
-                  onClick={() => setOrderDetailsModal({ open: false, order: null })}
-                >
-                  Close
-                </Button>
-                <Link href={`/dashboard/super-admin/order?order_id=${orderDetailsModal.order.order_id || orderDetailsModal.order.id}`}>
-                  <Button>
-                    View Full Details
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          )}
-        </Modal>
       </div>
     </SuperAdminLayout>
   );
