@@ -2519,8 +2519,103 @@ export default function OrderManagementPage() {
   };
 
   /**
-   * Handle print receipt - Print directly to network printers based on category
-   * No dialog, prints to two default printers automatically
+   * Print bill receipt directly to USB printer
+   * @param {number} orderId - Order ID to print
+   * @param {number|null} branchId - Branch ID (optional)
+   * @param {number} terminal - Terminal number (optional)
+   * @returns {Promise<boolean>} - Returns true if successful
+   */
+  const printBillDirect = async (orderId, branchId = null, terminal = null) => {
+    try {
+      // Show loading indicator (optional)
+      const loadingMsg = document.getElementById('loading-message');
+      if (loadingMsg) loadingMsg.textContent = 'Printing receipt...';
+
+      // Build request body - only include optional params if they exist
+      const requestBody = { order_id: orderId };
+      if (branchId !== null) requestBody.branch_id = branchId;
+      if (terminal !== null) requestBody.terminal = terminal;
+
+      const response = await fetch('/api/print_bill_direct.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Success - show success message
+        console.log('✅ Receipt printed successfully!');
+        console.log('Printer:', data.printer_used?.name || 'USB Printer');
+        console.log('Method:', data.printer_info?.method || 'USB');
+        
+        // Show success notification
+        setAlert({ 
+          type: 'success', 
+          message: 'Receipt printed successfully!' 
+        });
+        
+        // If bill is unpaid, update status based on payment status (Credit or Bill Generated)
+        if (generatedBill && generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+          try {
+            const orderIdValue = generatedBill.order_id;
+            const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+            
+            // Determine status: 'Credit' for credit payments, 'Bill Generated' for unpaid bills
+            const isCredit = generatedBill.payment_status === 'Credit' || 
+                             generatedBill.payment_method === 'Credit' ||
+                             generatedBill.is_credit === true;
+            const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
+            
+            const statusPayload = { 
+              status: orderStatus,
+              order_id: orderIdValue,
+              orderid: orderidValue
+            };
+            
+            await apiPost('api/chnageorder_status.php', statusPayload);
+            fetchOrders(); // Refresh orders list
+          } catch (error) {
+            console.error('Error updating order status on print:', error);
+          }
+        }
+        
+        return true;
+      } else {
+        // Error - show error message
+        console.error('❌ Print failed:', data.message);
+        
+        // Show error notification
+        setAlert({ 
+          type: 'error', 
+          message: 'Failed to print receipt: ' + data.message 
+        });
+        
+        // Show troubleshooting if available
+        if (data.troubleshooting) {
+          console.log('Troubleshooting tips:', data.troubleshooting);
+        }
+        
+        return false;
+      }
+    } catch (error) {
+      console.error('Error printing receipt:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error: ' + error.message 
+      });
+      return false;
+    } finally {
+      // Hide loading indicator
+      const loadingMsg = document.getElementById('loading-message');
+      if (loadingMsg) loadingMsg.textContent = '';
+    }
+  };
+
+  /**
+   * Handle print receipt - Print directly to USB printer
    * This function is used by the auto-print useEffect above
    */
   const handlePrintReceipt = async () => {
@@ -2542,129 +2637,15 @@ export default function OrderManagementPage() {
     }
     
     console.log('=== Printing Receipt ===');
+    console.log('Order ID:', generatedBill.order_id);
     console.log('Items count:', items.length);
-    console.log('Items:', items);
     
-    try {
-      // Get the receipt print area content
-      const printContent = document.getElementById('receipt-print-area');
-      if (!printContent) {
-        setAlert({ type: 'error', message: 'Receipt content not found' });
-        return;
-      }
-
-      // Get categories from items
-      const categoryIds = [...new Set(
-        items
-          .map(item => item.category_id || item.kitchen_id)
-          .filter(Boolean)
-      )];
-
-      // Prepare receipt content
-      const receiptHTML = printContent.innerHTML;
-      
-      console.log('Receipt HTML length:', receiptHTML.length);
-      console.log('Category IDs:', categoryIds);
-      
-      // Call backend API to print directly to network printers
-      // Backend will handle printing to two default printers based on category
-      // Use api/print.php for printing receipts (replaces print_receipt_direct.php)
-      const printResult = await apiPost('api/print.php', {
-        order_id: generatedBill.order_id,
-        bill_id: generatedBill.bill_id,
-        receipt_content: receiptHTML,
-        category_ids: categoryIds,
-        items: items.map(item => ({
-          item_id: item.dish_id || item.id,
-          category_id: item.category_id || item.kitchen_id,
-          name: item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || item.dishName || 'Item',
-          quantity: item.quantity || item.qty,
-          price: item.price || item.rate
-        })),
-        terminal: getTerminal(),
-        branch_id: getBranchId() || getTerminal()
-      });
-
-      if (printResult.success && printResult.data) {
-        const response = printResult.data;
-        
-        if (response.success === true) {
-          // Show success message with printer info
-          const printerNames = response.printers || ['Default Printers'];
-          setAlert({ 
-            type: 'success', 
-            message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
-          });
-          
-          // If bill is unpaid, update status based on payment status (Credit or Bill Generated)
-          if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
-            try {
-              const orderIdValue = generatedBill.order_id;
-              const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-              
-              // Determine status: 'Credit' for credit payments, 'Bill Generated' for unpaid bills
-              const isCredit = generatedBill.payment_status === 'Credit' || 
-                               generatedBill.payment_method === 'Credit' ||
-                               generatedBill.is_credit === true;
-              const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
-              
-              const statusPayload = { 
-                status: orderStatus,
-                order_id: orderIdValue,
-                orderid: orderidValue
-              };
-              
-              await apiPost('api/chnageorder_status.php', statusPayload);
-              fetchOrders(); // Refresh orders list
-            } catch (error) {
-              console.error('Error updating order status on print:', error);
-            }
-          }
-        } else {
-          setAlert({ 
-            type: 'warning', 
-            message: response.message || 'Print job sent, but some printers may not be available' 
-          });
-        }
-      } else {
-        // Fallback to silent print if API fails
-        console.warn('Direct print API failed, using fallback method');
-        const printWindow = window.open('', '_blank', 'width=1,height=1');
-        if (printWindow) {
-          printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>Receipt - Restaurant Khas</title>
-                <style>
-                  @media print {
-                    @page { size: 80mm auto; margin: 0; }
-                    body { margin: 0; padding: 0; }
-                  }
-                  body {
-                    font-family: system-ui, -apple-system, sans-serif;
-                    margin: 0;
-                    padding: 10px;
-                  }
-                </style>
-              </head>
-              <body>${receiptHTML}</body>
-            </html>
-          `);
-          printWindow.document.close();
-          setTimeout(() => {
-            printWindow.print();
-            setTimeout(() => printWindow.close(), 500);
-          }, 250);
-        }
-      }
-    } catch (error) {
-      console.error('Error printing receipt:', error);
-      setAlert({ 
-        type: 'error', 
-        message: 'Error printing receipt. Please try again or contact support.' 
-      });
-    }
+    // Call the direct print function
+    const orderId = generatedBill.order_id;
+    const branchId = getBranchId();
+    const terminal = getTerminal() || 1;
+    
+    await printBillDirect(orderId, branchId, terminal);
   };
 
   // Update ref with handlePrintReceipt function so it can be accessed in useEffect
