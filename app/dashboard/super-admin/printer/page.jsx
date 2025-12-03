@@ -349,6 +349,95 @@ export default function PrinterManagementPage() {
   };
 
   /**
+   * Test USB printer with direct print API
+   */
+  const testUSBPrinter = async (printerId) => {
+    try {
+      const terminal = getTerminal();
+      const branchId = getBranchId();
+      
+      // Find the printer in the printers array to get its details
+      const printer = printers.find(p => p.printer_id === printerId || p.id === printerId);
+      
+      if (!printer) {
+        setAlert({ type: 'error', message: 'Printer not found. Please refresh the page and try again.' });
+        return;
+      }
+      
+      // Validate that printer is USB type
+      const connectionType = printer.connection_type || (printer.ip_address && printer.ip_address !== 'USB' ? 'network' : 'usb');
+      if (connectionType !== 'usb') {
+        setAlert({ type: 'error', message: 'This test is only for USB printers. Use the regular test button for network printers.' });
+        return;
+      }
+      
+      if (!printer.usb_port && !printer.printer_name) {
+        setAlert({ type: 'error', message: 'USB printer must have a USB port name configured.' });
+        return;
+      }
+      
+      // Show loading message
+      setAlert({ type: 'info', message: 'Sending test print to USB printer...' });
+      
+      console.log('Testing USB printer with direct print API...');
+      console.log('Printer:', printer);
+      console.log('USB Port:', printer.usb_port || printer.printer_name);
+      
+      // Prepare test print request
+      // Note: The API should handle test_print flag to print a test receipt
+      const requestBody = {
+        test_print: true, // Indicate this is a test print
+        printer_id: printerId,
+        usb_port: printer.usb_port || printer.printer_name,
+        printer_name: printer.name,
+        branch_id: branchId,
+        terminal: terminal || 1
+      };
+      
+      // If API requires order_id, use a test value
+      // The backend should recognize test_print: true and generate a test receipt
+      requestBody.order_id = 0; // Test indicator
+      
+      console.log('Test print request:', requestBody);
+      
+      // Call the direct print API with test print flag
+      const response = await fetch('/api/print_bill_direct.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('USB Test print response:', data);
+      
+      if (data.success) {
+        setAlert({ 
+          type: 'success', 
+          message: data.message || 'Test print sent successfully to USB printer!' 
+        });
+      } else {
+        const errorMsg = data.message || data.error || 'Failed to send test print';
+        setAlert({ 
+          type: 'error', 
+          message: `Test print failed: ${errorMsg}` 
+        });
+      }
+    } catch (error) {
+      console.error('Error testing USB printer:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Failed to send USB test print: ' + (error.message || 'Network error') 
+      });
+    }
+  };
+
+  /**
    * Test printer connection
    */
   const testPrinter = async (printerId) => {
@@ -502,32 +591,49 @@ export default function PrinterManagementPage() {
   /**
    * Table actions (Edit, Delete, Test buttons)
    */
-  const actions = (row) => (
-    <div className="flex items-center justify-end gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => testPrinter(row.printer_id)}
-        title="Test Printer"
-      >
-        <TestTube className="w-4 h-4" />
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => handleEdit(row)}
-      >
-        Edit
-      </Button>
-      <Button
-        variant="danger"
-        size="sm"
-        onClick={() => handleDelete(row.printer_id)}
-      >
-        Delete
-      </Button>
-    </div>
-  );
+  const actions = (row) => {
+    const connectionType = row.connection_type || (row.ip_address && row.ip_address !== 'USB' ? 'network' : 'usb');
+    const isUSB = connectionType === 'usb';
+    
+    return (
+      <div className="flex items-center justify-end gap-2">
+        {isUSB && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => testUSBPrinter(row.printer_id)}
+            title="Test USB Printer (Direct Print)"
+            className="bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700"
+          >
+            <Printer className="w-4 h-4 mr-1" />
+            Test USB
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => testPrinter(row.printer_id)}
+          title={isUSB ? "Test Printer (General)" : "Test Printer"}
+        >
+          <TestTube className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleEdit(row)}
+        >
+          Edit
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={() => handleDelete(row.printer_id)}
+        >
+          Delete
+        </Button>
+      </div>
+    );
+  };
 
   return (
     <SuperAdminLayout>
