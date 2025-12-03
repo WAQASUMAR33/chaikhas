@@ -495,17 +495,15 @@ export default function PrinterManagementPage() {
       // Wait for content to load, then trigger print
       setTimeout(() => {
         printWindow.focus();
+        // Trigger print dialog
         printWindow.print();
-        
-        // Close window after printing (with delay to allow print dialog to show)
-        setTimeout(() => {
-          printWindow.close();
-        }, 500);
-      }, 250);
+        // Don't close the window automatically - let user close it after printing
+        // The window will stay open so user can see the preview and close manually
+      }, 300);
       
       setAlert({ 
         type: 'success', 
-        message: 'Print dialog opened. Please select your USB printer and click Print.' 
+        message: 'Print dialog opened. Please select your USB printer and click Print. The preview window will stay open until you close it.' 
       });
       
     } catch (error) {

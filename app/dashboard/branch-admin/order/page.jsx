@@ -2553,7 +2553,7 @@ export default function OrderManagementPage() {
   };
 
   /**
-   * Print bill receipt directly to USB printer
+   * Print bill receipt using browser print dialog (for USB printers)
    * @param {number} orderId - Order ID to print
    * @param {number|null} branchId - Branch ID (optional)
    * @param {number} terminal - Terminal number (optional)
@@ -2571,121 +2571,124 @@ export default function OrderManagementPage() {
         return false;
       }
 
-      // Show loading indicator (optional)
-      const loadingMsg = document.getElementById('loading-message');
-      if (loadingMsg) loadingMsg.textContent = 'Printing receipt...';
-
-      // Build request body - only include optional params if they exist
-      const requestBody = { order_id: orderId };
-      if (branchId !== null && branchId !== undefined) requestBody.branch_id = branchId;
-      if (terminal !== null && terminal !== undefined) requestBody.terminal = terminal;
-
-      console.log('📤 Sending print request:', requestBody);
-
-      const response = await fetch('/api/print_bill_direct.php', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      // Check if response is ok
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // Try to parse JSON response
-      let data;
-      try {
-        const text = await response.text();
-        if (!text) {
-          throw new Error('Empty response from server');
-        }
-        data = JSON.parse(text);
-      } catch (parseError) {
-        console.error('Failed to parse response:', parseError);
-        throw new Error('Invalid response from server. Please check if the API is working correctly.');
-      }
-
-      // Log full response for debugging
-      console.log('Print API Response:', data);
-      console.log('Response status:', response.status);
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-
-      // Check for success - handle different response formats
-      const isSuccess = data.success === true || 
-                       data.success === 'true' || 
-                       (data.message && data.message.toLowerCase().includes('success')) ||
-                       (response.status === 200 && !data.error);
-
-      if (isSuccess) {
-        // Success - show success message
-        console.log('✅ Receipt printed successfully!');
-        console.log('Printer:', data.printer_used?.name || 'USB Printer');
-        console.log('Method:', data.printer_info?.method || 'USB');
-        
-        // Show success notification
-        setAlert({ 
-          type: 'success', 
-          message: 'Receipt printed successfully!' 
-        });
-        
-        // If bill is unpaid, update status based on payment status (Credit or Bill Generated)
-        if (generatedBill && generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
-          try {
-            const orderIdValue = generatedBill.order_id;
-            const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-            
-            // Determine status: 'Credit' for credit payments, 'Bill Generated' for unpaid bills
-            const isCredit = generatedBill.payment_status === 'Credit' || 
-                             generatedBill.payment_method === 'Credit' ||
-                             generatedBill.is_credit === true;
-            const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
-            
-            const statusPayload = { 
-              status: orderStatus,
-              order_id: orderIdValue,
-              orderid: orderidValue
-            };
-            
-            await apiPost('api/chnageorder_status.php', statusPayload);
-            fetchOrders(); // Refresh orders list
-          } catch (error) {
-            console.error('Error updating order status on print:', error);
-          }
-        }
-        
-        return true;
-      } else {
-        // Error - show error message
-        const errorMessage = data.message || data.error || data.msg || data.error_message || 'Unknown error occurred';
-        console.error('❌ Print failed:', errorMessage);
-        console.error('Full error data:', data);
-        console.error('Response status:', response.status);
-        
-        // Show error notification with more details
-        let userMessage = `Failed to print receipt: ${errorMessage}`;
-        
-        // Add helpful hints based on error
-        if (errorMessage.toLowerCase().includes('printer') || errorMessage.toLowerCase().includes('usb')) {
-          userMessage += '. Please check if the USB printer is connected and configured correctly.';
-        } else if (errorMessage.toLowerCase().includes('order') || errorMessage.toLowerCase().includes('not found')) {
-          userMessage += '. The order may not be saved yet. Please try again in a moment.';
-        }
-        
+      // Get the receipt content from DOM
+      const printContent = document.getElementById('receipt-print-area');
+      if (!printContent) {
+        console.error('❌ Receipt content not found in DOM');
         setAlert({ 
           type: 'error', 
-          message: userMessage
+          message: 'Receipt content not found. Please open the receipt modal first.' 
         });
-        
-        // Show troubleshooting if available
-        if (data.troubleshooting) {
-          console.log('Troubleshooting tips:', data.troubleshooting);
-        }
-        
         return false;
       }
+
+      // Get the receipt HTML
+      const receiptHTML = printContent.innerHTML;
+      if (!receiptHTML || receiptHTML.trim().length === 0) {
+        console.error('❌ Receipt content is empty');
+        setAlert({ 
+          type: 'error', 
+          message: 'Receipt content is empty. Please regenerate the bill.' 
+        });
+        return false;
+      }
+
+      console.log('🖨️ Opening print dialog for receipt...');
+      console.log('Order ID:', orderId);
+
+      // Create print window with receipt content
+      const printWindow = window.open('', '_blank', 'width=400,height=600');
+      if (!printWindow) {
+        setAlert({ 
+          type: 'error', 
+          message: 'Please allow popups to print receipts.' 
+        });
+        return false;
+      }
+
+      // Create print-ready HTML with proper styling
+      const printHTML = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Receipt - Order ${orderId}</title>
+            <style>
+              @media print {
+                @page { 
+                  size: 80mm auto; 
+                  margin: 0; 
+                }
+                body { 
+                  margin: 0; 
+                  padding: 10px; 
+                }
+                .no-print { display: none !important; }
+                button { display: none !important; }
+              }
+              body {
+                font-family: 'Courier New', monospace;
+                margin: 0;
+                padding: 10px;
+                font-size: 12px;
+                line-height: 1.4;
+              }
+              * {
+                box-sizing: border-box;
+              }
+            </style>
+          </head>
+          <body>
+            ${receiptHTML}
+            <div class="no-print" style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px; text-align: center;">
+              <p><strong>Print Preview</strong></p>
+              <p>Click the Print button or press Ctrl+P to print this receipt.</p>
+              <p>Make sure to select your USB printer.</p>
+            </div>
+          </body>
+        </html>
+      `;
+
+      printWindow.document.write(printHTML);
+      printWindow.document.close();
+
+      // Wait for content to load, then trigger print
+      setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+      }, 250);
+
+      // Show success notification
+      setAlert({ 
+        type: 'success', 
+        message: 'Print dialog opened. Please select your printer and click Print.' 
+      });
+
+      // If bill is unpaid, update status based on payment status (Credit or Bill Generated)
+      if (generatedBill && generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+        try {
+          const orderIdValue = generatedBill.order_id;
+          const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+          
+          // Determine status: 'Credit' for credit payments, 'Bill Generated' for unpaid bills
+          const isCredit = generatedBill.payment_status === 'Credit' || 
+                           generatedBill.payment_method === 'Credit' ||
+                           generatedBill.is_credit === true;
+          const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
+          
+          const statusPayload = { 
+            status: orderStatus,
+            order_id: orderIdValue,
+            orderid: orderidValue
+          };
+          
+          await apiPost('api/chnageorder_status.php', statusPayload);
+          fetchOrders(); // Refresh orders list
+        } catch (error) {
+          console.error('Error updating order status on print:', error);
+        }
+      }
+      
+      return true;
     } catch (error) {
       console.error('Error printing receipt:', error);
       console.error('Error details:', {
@@ -2696,16 +2699,12 @@ export default function OrderManagementPage() {
         terminal: terminal
       });
       
-      const errorMessage = error.message || 'Network error or server unavailable';
+      const errorMessage = error.message || 'Unknown error';
       setAlert({ 
         type: 'error', 
-        message: `Error printing receipt: ${errorMessage}. Please check if the printer is configured and the API is accessible.` 
+        message: `Error printing receipt: ${errorMessage}` 
       });
       return false;
-    } finally {
-      // Hide loading indicator
-      const loadingMsg = document.getElementById('loading-message');
-      if (loadingMsg) loadingMsg.textContent = '';
     }
   };
 
