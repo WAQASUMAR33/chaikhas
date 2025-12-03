@@ -349,7 +349,7 @@ export default function PrinterManagementPage() {
   };
 
   /**
-   * Test USB printer with direct print API
+   * Test USB printer using browser print dialog
    */
   const testUSBPrinter = async (printerId) => {
     try {
@@ -371,68 +371,148 @@ export default function PrinterManagementPage() {
         return;
       }
       
-      if (!printer.usb_port && !printer.printer_name) {
-        setAlert({ type: 'error', message: 'USB printer must have a USB port name configured.' });
-        return;
-      }
-      
-      // Show loading message
-      setAlert({ type: 'info', message: 'Sending test print to USB printer...' });
-      
-      console.log('Testing USB printer with direct print API...');
+      console.log('Testing USB printer with browser print dialog...');
       console.log('Printer:', printer);
       console.log('USB Port:', printer.usb_port || printer.printer_name);
       
-      // Prepare test print request
-      // Note: The API should handle test_print flag to print a test receipt
-      const requestBody = {
-        test_print: true, // Indicate this is a test print
-        printer_id: printerId,
-        usb_port: printer.usb_port || printer.printer_name,
-        printer_name: printer.name,
-        branch_id: branchId,
-        terminal: terminal || 1
-      };
+      // Show info message
+      setAlert({ type: 'info', message: 'Opening print dialog. Please select your USB printer and click Print.' });
       
-      // If API requires order_id, use a test value
-      // The backend should recognize test_print: true and generate a test receipt
-      requestBody.order_id = 0; // Test indicator
+      // Create a test receipt HTML content
+      const testReceiptHTML = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Test Print - ${printer.name}</title>
+            <style>
+              @media print {
+                @page { 
+                  size: 80mm auto; 
+                  margin: 0; 
+                }
+                body { 
+                  margin: 0; 
+                  padding: 10px; 
+                  font-size: 12px;
+                }
+                .no-print { display: none; }
+              }
+              body {
+                font-family: 'Courier New', monospace;
+                margin: 0;
+                padding: 10px;
+                font-size: 12px;
+                line-height: 1.4;
+              }
+              .header {
+                text-align: center;
+                border-bottom: 2px dashed #000;
+                padding-bottom: 10px;
+                margin-bottom: 10px;
+              }
+              .title {
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 5px;
+              }
+              .subtitle {
+                font-size: 12px;
+                margin-bottom: 5px;
+              }
+              .section {
+                margin: 10px 0;
+                padding: 5px 0;
+                border-top: 1px dashed #000;
+              }
+              .line {
+                display: flex;
+                justify-content: space-between;
+                margin: 3px 0;
+              }
+              .center {
+                text-align: center;
+              }
+              .footer {
+                margin-top: 15px;
+                padding-top: 10px;
+                border-top: 2px dashed #000;
+                text-align: center;
+                font-size: 10px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <div class="title">RESTAURANT KHAS</div>
+              <div class="subtitle">Test Print Receipt</div>
+              <div class="subtitle">${new Date().toLocaleString()}</div>
+            </div>
+            
+            <div class="section">
+              <div class="line"><strong>Printer Name:</strong> <span>${printer.name}</span></div>
+              <div class="line"><strong>USB Port:</strong> <span>${printer.usb_port || printer.printer_name || 'N/A'}</span></div>
+              <div class="line"><strong>Type:</strong> <span>${printer.type || 'receipt'}</span></div>
+              <div class="line"><strong>Status:</strong> <span>${printer.status || 'active'}</span></div>
+            </div>
+            
+            <div class="section">
+              <div class="center"><strong>--- TEST PRINT ---</strong></div>
+              <div class="center">This is a test print to verify</div>
+              <div class="center">USB printer connectivity</div>
+            </div>
+            
+            <div class="section">
+              <div class="line">Date: <span>${new Date().toLocaleDateString()}</span></div>
+              <div class="line">Time: <span>${new Date().toLocaleTimeString()}</span></div>
+              <div class="line">Terminal: <span>${terminal || 'N/A'}</span></div>
+              <div class="line">Branch ID: <span>${branchId || 'N/A'}</span></div>
+            </div>
+            
+            <div class="footer">
+              <div>Thank you for testing!</div>
+              <div>If you can see this, the printer is working.</div>
+            </div>
+            
+            <div class="no-print" style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px;">
+              <p><strong>Print Preview</strong></p>
+              <p>Click the Print button above or press Ctrl+P to print this test receipt.</p>
+              <p>Make sure to select your USB printer: <strong>${printer.name}</strong></p>
+            </div>
+          </body>
+        </html>
+      `;
       
-      console.log('Test print request:', requestBody);
+      // Open print window
+      const printWindow = window.open('', '_blank', 'width=400,height=600');
+      if (!printWindow) {
+        setAlert({ type: 'error', message: 'Please allow popups to test print.' });
+        return;
+      }
       
-      // Call the direct print API with test print flag
-      const response = await fetch('/api/print_bill_direct.php', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
+      printWindow.document.write(testReceiptHTML);
+      printWindow.document.close();
+      
+      // Wait for content to load, then trigger print
+      setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+        
+        // Close window after printing (with delay to allow print dialog to show)
+        setTimeout(() => {
+          printWindow.close();
+        }, 500);
+      }, 250);
+      
+      setAlert({ 
+        type: 'success', 
+        message: 'Print dialog opened. Please select your USB printer and click Print.' 
       });
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('USB Test print response:', data);
-      
-      if (data.success) {
-        setAlert({ 
-          type: 'success', 
-          message: data.message || 'Test print sent successfully to USB printer!' 
-        });
-      } else {
-        const errorMsg = data.message || data.error || 'Failed to send test print';
-        setAlert({ 
-          type: 'error', 
-          message: `Test print failed: ${errorMsg}` 
-        });
-      }
     } catch (error) {
       console.error('Error testing USB printer:', error);
       setAlert({ 
         type: 'error', 
-        message: 'Failed to send USB test print: ' + (error.message || 'Network error') 
+        message: 'Failed to open print dialog: ' + (error.message || 'Unknown error') 
       });
     }
   };
