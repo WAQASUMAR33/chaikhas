@@ -2389,11 +2389,51 @@ export default function OrderManagementPage() {
           const branchIdForPrint = getBranchId();
           const terminalForPrint = getTerminal() || 1;
           
-          // Auto-print payment receipt after a short delay
-          setTimeout(async () => {
-            console.log('🖨️ Auto-printing payment receipt...');
-            await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
-          }, 500);
+          // Validate orderId before printing
+          if (!orderIdForPrint) {
+            console.error('❌ Cannot auto-print payment receipt: Order ID is missing');
+            setAlert({ 
+              type: 'warning', 
+              message: 'Payment successful, but could not auto-print receipt: Order ID not found. Please print manually.' 
+            });
+          } else {
+            // Auto-print payment receipt after a delay to ensure payment is saved
+            setTimeout(async () => {
+              console.log('🖨️ Auto-printing payment receipt...');
+              console.log('Order ID:', orderIdForPrint);
+              console.log('Branch ID:', branchIdForPrint);
+              console.log('Terminal:', terminalForPrint);
+              
+              // Try printing with retry logic
+              let printSuccess = false;
+              let retryCount = 0;
+              const maxRetries = 3;
+              
+              while (!printSuccess && retryCount < maxRetries) {
+                try {
+                  printSuccess = await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
+                  if (!printSuccess && retryCount < maxRetries - 1) {
+                    console.log(`Print attempt ${retryCount + 1} failed, retrying in 1 second...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                } catch (error) {
+                  console.error(`Print attempt ${retryCount + 1} error:`, error);
+                  if (retryCount < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
+                retryCount++;
+              }
+              
+              if (!printSuccess) {
+                console.error('❌ Failed to print payment receipt after all retry attempts');
+                setAlert({ 
+                  type: 'warning', 
+                  message: 'Payment successful, but auto-print failed. Please print manually using the Print Receipt button.' 
+                });
+              }
+            }, 1000); // Increased delay to 1 second to ensure payment is saved to database
+          }
           
           // Small delay to ensure state is updated before opening modal
           setTimeout(() => {
@@ -2570,8 +2610,16 @@ export default function OrderManagementPage() {
 
       // Log full response for debugging
       console.log('Print API Response:', data);
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
-      if (data.success) {
+      // Check for success - handle different response formats
+      const isSuccess = data.success === true || 
+                       data.success === 'true' || 
+                       (data.message && data.message.toLowerCase().includes('success')) ||
+                       (response.status === 200 && !data.error);
+
+      if (isSuccess) {
         // Success - show success message
         console.log('✅ Receipt printed successfully!');
         console.log('Printer:', data.printer_used?.name || 'USB Printer');
@@ -2611,14 +2659,24 @@ export default function OrderManagementPage() {
         return true;
       } else {
         // Error - show error message
-        const errorMessage = data.message || data.error || data.msg || 'Unknown error occurred';
+        const errorMessage = data.message || data.error || data.msg || data.error_message || 'Unknown error occurred';
         console.error('❌ Print failed:', errorMessage);
         console.error('Full error data:', data);
+        console.error('Response status:', response.status);
         
-        // Show error notification
+        // Show error notification with more details
+        let userMessage = `Failed to print receipt: ${errorMessage}`;
+        
+        // Add helpful hints based on error
+        if (errorMessage.toLowerCase().includes('printer') || errorMessage.toLowerCase().includes('usb')) {
+          userMessage += '. Please check if the USB printer is connected and configured correctly.';
+        } else if (errorMessage.toLowerCase().includes('order') || errorMessage.toLowerCase().includes('not found')) {
+          userMessage += '. The order may not be saved yet. Please try again in a moment.';
+        }
+        
         setAlert({ 
           type: 'error', 
-          message: `Failed to print receipt: ${errorMessage}` 
+          message: userMessage
         });
         
         // Show troubleshooting if available
@@ -4200,14 +4258,43 @@ export default function OrderManagementPage() {
                             message: 'Bill generated successfully, but could not auto-print: Order ID not found. Please print manually.' 
                           });
                         } else {
-                          // Auto-print after a short delay to ensure bill is saved
+                          // Auto-print after a delay to ensure bill is saved to database
+                          // Use longer delay to ensure database transaction is complete
                           setTimeout(async () => {
                             console.log('🖨️ Auto-printing generated bill receipt...');
                             console.log('Order ID:', orderIdForPrint);
                             console.log('Branch ID:', branchIdForPrint);
                             console.log('Terminal:', terminalForPrint);
-                            await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
-                          }, 500);
+                            
+                            // Try printing with retry logic
+                            let printSuccess = false;
+                            let retryCount = 0;
+                            const maxRetries = 3;
+                            
+                            while (!printSuccess && retryCount < maxRetries) {
+                              try {
+                                printSuccess = await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
+                                if (!printSuccess && retryCount < maxRetries - 1) {
+                                  console.log(`Print attempt ${retryCount + 1} failed, retrying in 1 second...`);
+                                  await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                              } catch (error) {
+                                console.error(`Print attempt ${retryCount + 1} error:`, error);
+                                if (retryCount < maxRetries - 1) {
+                                  await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                              }
+                              retryCount++;
+                            }
+                            
+                            if (!printSuccess) {
+                              console.error('❌ Failed to print after all retry attempts');
+                              setAlert({ 
+                                type: 'warning', 
+                                message: 'Bill generated successfully, but auto-print failed. Please print manually using the Print Receipt button.' 
+                              });
+                            }
+                          }, 1000); // Increased delay to 1 second to ensure database save is complete
                         }
                         
                         // Show receipt modal for viewing
