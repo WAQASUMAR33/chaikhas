@@ -2521,14 +2521,26 @@ export default function OrderManagementPage() {
    */
   const printBillDirect = async (orderId, branchId = null, terminal = null) => {
     try {
+      // Validate orderId
+      if (!orderId) {
+        console.error('❌ Cannot print: Order ID is missing');
+        setAlert({ 
+          type: 'error', 
+          message: 'Cannot print receipt: Order ID is missing. Please try again.' 
+        });
+        return false;
+      }
+
       // Show loading indicator (optional)
       const loadingMsg = document.getElementById('loading-message');
       if (loadingMsg) loadingMsg.textContent = 'Printing receipt...';
 
       // Build request body - only include optional params if they exist
       const requestBody = { order_id: orderId };
-      if (branchId !== null) requestBody.branch_id = branchId;
-      if (terminal !== null) requestBody.terminal = terminal;
+      if (branchId !== null && branchId !== undefined) requestBody.branch_id = branchId;
+      if (terminal !== null && terminal !== undefined) requestBody.terminal = terminal;
+
+      console.log('📤 Sending print request:', requestBody);
 
       const response = await fetch('/api/print_bill_direct.php', {
         method: 'POST',
@@ -2538,7 +2550,27 @@ export default function OrderManagementPage() {
         body: JSON.stringify(requestBody)
       });
 
-      const data = await response.json();
+      // Check if response is ok
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Try to parse JSON response
+      let data;
+      try {
+        const text = await response.text();
+        if (!text) {
+          throw new Error('Empty response from server');
+        }
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Failed to parse response:', parseError);
+        throw new Error('Invalid response from server. Please check if the API is working correctly.');
+      }
+
+      // Log full response for debugging
+      console.log('Print API Response:', data);
+
       if (data.success) {
         // Success - show success message
         console.log('✅ Receipt printed successfully!');
@@ -2579,12 +2611,14 @@ export default function OrderManagementPage() {
         return true;
       } else {
         // Error - show error message
-        console.error('❌ Print failed:', data.message);
+        const errorMessage = data.message || data.error || data.msg || 'Unknown error occurred';
+        console.error('❌ Print failed:', errorMessage);
+        console.error('Full error data:', data);
         
         // Show error notification
         setAlert({ 
           type: 'error', 
-          message: 'Failed to print receipt: ' + data.message 
+          message: `Failed to print receipt: ${errorMessage}` 
         });
         
         // Show troubleshooting if available
@@ -2596,9 +2630,18 @@ export default function OrderManagementPage() {
       }
     } catch (error) {
       console.error('Error printing receipt:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        orderId: orderId,
+        branchId: branchId,
+        terminal: terminal
+      });
+      
+      const errorMessage = error.message || 'Network error or server unavailable';
       setAlert({ 
         type: 'error', 
-        message: 'Error: ' + error.message 
+        message: `Error printing receipt: ${errorMessage}. Please check if the printer is configured and the API is accessible.` 
       });
       return false;
     } finally {
@@ -4148,11 +4191,24 @@ export default function OrderManagementPage() {
                         const branchIdForPrint = getBranchId();
                         const terminalForPrint = getTerminal() || 1;
                         
-                        // Auto-print after a short delay to ensure bill is saved
-                        setTimeout(async () => {
-                          console.log('🖨️ Auto-printing generated bill receipt...');
-                          await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
-                        }, 500);
+                        // Validate orderId before printing
+                        if (!orderIdForPrint) {
+                          console.error('❌ Cannot auto-print: Order ID is missing');
+                          console.error('Bill Order:', billOrder);
+                          setAlert({ 
+                            type: 'warning', 
+                            message: 'Bill generated successfully, but could not auto-print: Order ID not found. Please print manually.' 
+                          });
+                        } else {
+                          // Auto-print after a short delay to ensure bill is saved
+                          setTimeout(async () => {
+                            console.log('🖨️ Auto-printing generated bill receipt...');
+                            console.log('Order ID:', orderIdForPrint);
+                            console.log('Branch ID:', branchIdForPrint);
+                            console.log('Terminal:', terminalForPrint);
+                            await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
+                          }, 500);
+                        }
                         
                         // Show receipt modal for viewing
                         setReceiptModalOpen(true);
