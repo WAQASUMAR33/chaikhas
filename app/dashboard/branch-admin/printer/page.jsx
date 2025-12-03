@@ -24,8 +24,10 @@ export default function PrinterManagementPage() {
   const [formData, setFormData] = useState({
     name: '',
     type: 'receipt', // receipt or kitchen
+    connection_type: 'network', // network or usb
     ip_address: '',
     port: '9100',
+    usb_port: '', // USB port name (e.g., USB002)
     status: 'active',
   });
   const [alert, setAlert] = useState({ type: '', message: '' });
@@ -107,8 +109,10 @@ export default function PrinterManagementPage() {
         printer_id: printer.printer_id || printer.id,
         name: printer.name || printer.printer_name || '',
         type: printer.type || printer.printer_type || 'receipt',
+        connection_type: printer.connection_type || (printer.ip_address && printer.ip_address !== 'USB' ? 'network' : 'usb'),
         ip_address: printer.ip_address || printer.ip || '',
         port: printer.port || '9100',
+        usb_port: printer.usb_port || printer.printer_name || '',
         status: printer.status || 'active',
         terminal: printer.terminal || terminal,
         branch_id: printer.branch_id || branchId,
@@ -142,16 +146,25 @@ export default function PrinterManagementPage() {
       return;
     }
 
-    if (!formData.ip_address || !formData.ip_address.trim()) {
-      setAlert({ type: 'error', message: 'IP address is required' });
-      return;
-    }
+    // For USB printers, validate USB port instead of IP address
+    if (formData.connection_type === 'usb') {
+      if (!formData.usb_port || !formData.usb_port.trim()) {
+        setAlert({ type: 'error', message: 'USB port name is required for USB printers' });
+        return;
+      }
+    } else {
+      // For network printers, validate IP address and port
+      if (!formData.ip_address || !formData.ip_address.trim()) {
+        setAlert({ type: 'error', message: 'IP address is required for network printers' });
+        return;
+      }
 
-    // Validate IP address format
-    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-    if (!ipRegex.test(formData.ip_address.trim())) {
-      setAlert({ type: 'error', message: 'Please enter a valid IP address (e.g., 192.168.1.100)' });
-      return;
+      // Validate IP address format
+      const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+      if (!ipRegex.test(formData.ip_address.trim())) {
+        setAlert({ type: 'error', message: 'Please enter a valid IP address (e.g., 192.168.1.100)' });
+        return;
+      }
     }
 
     try {
@@ -169,12 +182,23 @@ export default function PrinterManagementPage() {
         printer_id: editingPrinter ? editingPrinter.printer_id : '', // Empty for create
         name: formData.name.trim(),
         type: formData.type || 'receipt',
-        ip_address: formData.ip_address.trim(),
-        port: formData.port || '9100',
+        connection_type: formData.connection_type || 'network',
         status: formData.status || 'active',
         terminal: terminal, // Always include terminal
         action: editingPrinter ? 'update' : 'create'
       };
+
+      // Add network-specific fields only for network printers
+      if (formData.connection_type === 'network') {
+        data.ip_address = formData.ip_address.trim();
+        data.port = formData.port || '9100';
+      } else if (formData.connection_type === 'usb') {
+        // For USB printers, use placeholder values for IP and port (required by database)
+        data.ip_address = formData.ip_address.trim() || 'USB';
+        data.port = formData.port || '0';
+        data.usb_port = formData.usb_port.trim();
+        data.printer_name = formData.usb_port.trim(); // Some APIs use printer_name for USB
+      }
       
       // Always include branch_id and branch_name if available
       if (branchId) {
@@ -256,8 +280,10 @@ export default function PrinterManagementPage() {
         setFormData({
           name: '',
           type: 'receipt',
+          connection_type: 'network',
           ip_address: '',
           port: '9100',
+          usb_port: '',
           status: 'active',
         });
         setEditingPrinter(null);
@@ -285,11 +311,16 @@ export default function PrinterManagementPage() {
    */
   const handleEdit = (printer) => {
     setEditingPrinter(printer);
+    // Determine connection type based on IP address or connection_type field
+    const connectionType = printer.connection_type || 
+                          (printer.ip_address && printer.ip_address !== 'USB' ? 'network' : 'usb');
     setFormData({
       name: printer.name,
       type: printer.type,
-      ip_address: printer.ip_address,
-      port: printer.port,
+      connection_type: connectionType,
+      ip_address: printer.ip_address || '',
+      port: printer.port || '9100',
+      usb_port: printer.usb_port || printer.printer_name || '',
       status: printer.status || 'active',
     });
     setModalOpen(true);
@@ -334,20 +365,41 @@ export default function PrinterManagementPage() {
       }
       
       // Validate that printer has required fields
-      if (!printer.name || !printer.ip_address || !terminal) {
+      const connectionType = printer.connection_type || (printer.ip_address && printer.ip_address !== 'USB' ? 'network' : 'usb');
+      if (!printer.name || !terminal) {
         setAlert({ type: 'error', message: 'Printer information is incomplete. Please check printer configuration.' });
+        return;
+      }
+      
+      if (connectionType === 'network' && !printer.ip_address) {
+        setAlert({ type: 'error', message: 'Network printer must have an IP address.' });
+        return;
+      }
+      
+      if (connectionType === 'usb' && !printer.usb_port && !printer.printer_name) {
+        setAlert({ type: 'error', message: 'USB printer must have a USB port name.' });
         return;
       }
       
       const params = {
         printer_id: printerId,
         name: printer.name,
-        ip_address: printer.ip_address,
-        port: printer.port || '9100',
+        connection_type: connectionType,
         type: printer.type || 'receipt',
         terminal: terminal,
         action: 'test'
       };
+      
+      if (connectionType === 'network') {
+        params.ip_address = printer.ip_address;
+        params.port = printer.port || '9100';
+      } else if (connectionType === 'usb') {
+        params.usb_port = printer.usb_port || printer.printer_name;
+        params.printer_name = printer.usb_port || printer.printer_name;
+        // USB printers may still need placeholder IP/port for API compatibility
+        params.ip_address = printer.ip_address || 'USB';
+        params.port = printer.port || '0';
+      }
       
       if (branchId) {
         params.branch_id = branchId;
@@ -402,15 +454,25 @@ export default function PrinterManagementPage() {
       className: 'w-32',
       wrap: false,
     },
+    {
+      header: 'Connection',
+      accessor: (row) => (
+        <span className="capitalize px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
+          {row.connection_type || 'network'}
+        </span>
+      ),
+      className: 'w-32',
+      wrap: false,
+    },
     { 
-      header: 'IP Address', 
-      accessor: 'ip_address',
+      header: 'IP Address / USB Port', 
+      accessor: (row) => row.connection_type === 'usb' ? (row.usb_port || row.printer_name || 'N/A') : (row.ip_address || 'N/A'),
       className: 'w-40',
       wrap: false,
     },
     { 
       header: 'Port', 
-      accessor: 'port',
+      accessor: (row) => row.connection_type === 'usb' ? '-' : (row.port || '9100'),
       className: 'w-24',
       wrap: false,
     },
@@ -577,25 +639,65 @@ export default function PrinterManagementPage() {
               </select>
             </div>
 
-            <Input
-              label="IP Address"
-              name="ip_address"
-              type="text"
-              value={formData.ip_address}
-              onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
-              placeholder="192.168.1.100"
-              required
-            />
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Connection Type <span className="text-red-500">*</span>
+              </label>
+              <select
+                name="connection_type"
+                value={formData.connection_type}
+                onChange={(e) => {
+                  const newConnectionType = e.target.value;
+                  setFormData({ 
+                    ...formData, 
+                    connection_type: newConnectionType,
+                    // Clear IP/port when switching to USB, clear USB port when switching to network
+                    ip_address: newConnectionType === 'usb' ? '' : formData.ip_address,
+                    port: newConnectionType === 'usb' ? '9100' : formData.port,
+                    usb_port: newConnectionType === 'network' ? '' : formData.usb_port
+                  });
+                }}
+                required
+                className="block w-full px-3 py-2.5 border border-[#E0E0E0] rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+              >
+                <option value="network">Network (IP Address)</option>
+                <option value="usb">USB</option>
+              </select>
+            </div>
 
-            <Input
-              label="Port"
-              name="port"
-              type="text"
-              value={formData.port}
-              onChange={(e) => setFormData({ ...formData, port: e.target.value })}
-              placeholder="9100"
-              required
-            />
+            {formData.connection_type === 'usb' ? (
+              <Input
+                label="USB Port Name"
+                name="usb_port"
+                type="text"
+                value={formData.usb_port}
+                onChange={(e) => setFormData({ ...formData, usb_port: e.target.value })}
+                placeholder="e.g., USB002"
+                required
+              />
+            ) : (
+              <>
+                <Input
+                  label="IP Address"
+                  name="ip_address"
+                  type="text"
+                  value={formData.ip_address}
+                  onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
+                  placeholder="192.168.1.100"
+                  required
+                />
+
+                <Input
+                  label="Port"
+                  name="port"
+                  type="text"
+                  value={formData.port}
+                  onChange={(e) => setFormData({ ...formData, port: e.target.value })}
+                  placeholder="9100"
+                  required
+                />
+              </>
+            )}
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
