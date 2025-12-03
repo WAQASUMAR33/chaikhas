@@ -115,30 +115,14 @@ export default function OrderManagementPage() {
     }
   }, [generatedBill]);
 
-  // Auto-print paid receipt when receipt modal opens for Complete orders
-  useEffect(() => {
-    if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
-      // Wait for DOM to render the receipt content before printing
-      const printTimer = setTimeout(() => {
-        const printContent = document.getElementById('receipt-print-area');
-        if (printContent && generatedBill.items && generatedBill.items.length > 0 && handlePrintReceiptRef.current) {
-          console.log('🖨️ Auto-printing paid receipt...');
-          handlePrintReceiptRef.current();
-        } else {
-          console.warn('⚠️ Receipt content not ready for auto-print, will retry...');
-          // Retry after a bit more time if content not ready
-          setTimeout(() => {
-            const retryContent = document.getElementById('receipt-print-area');
-            if (retryContent && generatedBill.items && generatedBill.items.length > 0 && handlePrintReceiptRef.current) {
-              handlePrintReceiptRef.current();
-            }
-          }, 500);
-        }
-      }, 300);
-      
-      return () => clearTimeout(printTimer);
-    }
-  }, [receiptModalOpen, generatedBill]);
+  // Note: Auto-print for paid receipts is now handled directly after payment processing
+  // This useEffect is kept for potential future use but is currently disabled to prevent double printing
+  // Auto-print happens in handlePayBill function after successful payment
+  // useEffect(() => {
+  //   if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
+  //     // Auto-print is now handled directly in handlePayBill function
+  //   }
+  // }, [receiptModalOpen, generatedBill]);
 
   // Debug: Log orders state changes
   useEffect(() => {
@@ -2399,9 +2383,19 @@ export default function OrderManagementPage() {
         setPaymentMode('Cash'); // Reset to default
         setPaymentCustomerId(null); // Reset customer selection
         
-        // Open receipt modal for paid receipts (not credit) - auto-print will happen via useEffect
+        // Auto-print payment receipt for paid bills (not credit)
         if (finalPaymentStatus === 'Paid' && paymentMode !== 'Credit') {
-          // Small delay to ensure state is updated
+          const orderIdForPrint = generatedBill.order_id;
+          const branchIdForPrint = getBranchId();
+          const terminalForPrint = getTerminal() || 1;
+          
+          // Auto-print payment receipt after a short delay
+          setTimeout(async () => {
+            console.log('🖨️ Auto-printing payment receipt...');
+            await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
+          }, 500);
+          
+          // Small delay to ensure state is updated before opening modal
           setTimeout(() => {
             setReceiptModalOpen(true);
           }, 100);
@@ -4149,11 +4143,22 @@ export default function OrderManagementPage() {
                         // Refresh orders list
                         fetchOrders();
                         
-                        // Show receipt modal for printing (don't auto-print, let user click print button)
+                        // Auto-print generated bill receipt
+                        const orderIdForPrint = billOrder.order_id || billOrder.id;
+                        const branchIdForPrint = getBranchId();
+                        const terminalForPrint = getTerminal() || 1;
+                        
+                        // Auto-print after a short delay to ensure bill is saved
+                        setTimeout(async () => {
+                          console.log('🖨️ Auto-printing generated bill receipt...');
+                          await printBillDirect(orderIdForPrint, branchIdForPrint, terminalForPrint);
+                        }, 500);
+                        
+                        // Show receipt modal for viewing
                         setReceiptModalOpen(true);
                         setDetailsModalOpen(false);
                         
-                        setAlert({ type: 'success', message: 'Bill generated successfully! Click "Print Receipt" to print.' });
+                        setAlert({ type: 'success', message: 'Bill generated successfully! Receipt is being printed...' });
                       } else {
                         // More detailed error message - check all possible error locations
                         let errorMsg = 'Failed to generate bill';
