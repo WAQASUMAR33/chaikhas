@@ -28,9 +28,85 @@ export default function AdminDashboardPage() {
     fetchDashboardStats();
   }, []);
 
+  // Auto-refresh dashboard stats periodically and when page becomes visible
+  // This ensures sales reset is reflected when dayend happens
+  useEffect(() => {
+    // Refresh statistics every 5 minutes to catch dayend changes
+    const refreshInterval = setInterval(() => {
+      fetchDashboardStats();
+    }, 5 * 60000); // Every 5 minutes
+
+    // Also refresh when page becomes visible (user returns to tab)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchDashboardStats();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(refreshInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  /**
+   * Get today's date in YYYY-MM-DD format
+   */
+  const getTodayDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Fetch the last dayend closing_date_time for the current branch
+   * Returns the closing_date_time if dayend exists, null otherwise
+   */
+  const fetchLastDayend = async (branchId) => {
+    try {
+      const terminal = getTerminal();
+      const result = await apiPost('/get_dayend.php', {
+        terminal,
+        branch_id: branchId,
+      });
+
+      if (result.success && result.data) {
+        let dayendData = [];
+        if (Array.isArray(result.data)) {
+          dayendData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          dayendData = result.data.data;
+        }
+
+        if (dayendData.length > 0) {
+          // Sort by closing_date_time descending and get the most recent
+          const sortedDayends = [...dayendData].sort((a, b) => {
+            const dateA = new Date(a.closing_date_time || a.created_at || 0);
+            const dateB = new Date(b.closing_date_time || b.created_at || 0);
+            return dateB - dateA;
+          });
+
+          const lastDayend = sortedDayends[0];
+          if (lastDayend && lastDayend.closing_date_time) {
+            return lastDayend.closing_date_time;
+          }
+        }
+      }
+      return null; // No dayend found
+    } catch (error) {
+      console.error(`Error fetching dayend for branch ${branchId}:`, error);
+      return null;
+    }
+  };
+
   /**
    * Fetch dashboard statistics from API
    * API: get_dashboard_stats.php (POST with terminal and branch_id parameter)
+   * Sales are filtered to only show sales created after the last dayend closing_date_time
+   * If no dayend exists, shows only today's sales
    */
   const fetchDashboardStats = async () => {
     setLoading(true);
@@ -54,10 +130,17 @@ export default function AdminDashboardPage() {
       
       logger.info('Fetching Dashboard Stats', { terminal, branch_id: branchId });
       
+      // Get the last dayend closing_date_time for this branch
+      const lastDayendTime = await fetchLastDayend(branchId);
+      const today = getTodayDate();
+      
       // Use POST instead of GET for better compatibility
+      // Pass after_closing_date to filter sales after dayend
       const result = await apiPost('/get_dashboard_stats.php', { 
         terminal,
-        branch_id: branchId 
+        branch_id: branchId,
+        after_closing_date: lastDayendTime || null, // Pass dayend time if exists
+        date: today, // Pass today's date for filtering
       });
       
       console.log('Dashboard stats API response:', result);
@@ -87,30 +170,67 @@ export default function AdminDashboardPage() {
         }
         
         // STRICT BRANCH FILTERING: Filter recent orders to only show orders from this branch
-        // This is a safety measure in case the API returns data from other branches
+        // Also filter orders to only show those created after the last dayend
         if (statsData.recentOrders && Array.isArray(statsData.recentOrders)) {
+          const cutoffDateTime = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
+          
           const filteredRecentOrders = statsData.recentOrders.filter(order => {
             if (!order) return false;
+            
+            // 1. Branch ID must match
             const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-            // STRICT: Order MUST have branch_id AND it MUST match the current branch
             if (!orderBranchId) {
               console.warn('⚠️ Recent order missing branch_id, excluding:', order.order_id || order.id);
               return false;
             }
             const orderBranchIdStr = String(orderBranchId).trim();
             const currentBranchIdStr = String(branchId).trim();
-            return orderBranchIdStr === currentBranchIdStr;
+            if (orderBranchIdStr !== currentBranchIdStr) {
+              return false; // Not from this branch
+            }
+            
+            // 2. Order must be created after the last dayend (if dayend exists)
+            if (lastDayendTime) {
+              const orderDate = order.created_at || order.date || order.order_date;
+              if (!orderDate) {
+                return false; // Can't verify date, exclude
+              }
+              const orderDateTime = new Date(orderDate);
+              if (orderDateTime <= cutoffDateTime) {
+                return false; // Order is before dayend, exclude
+              }
+            } else {
+              // No dayend exists, only show today's orders
+              const orderDate = order.created_at || order.date || order.order_date;
+              if (!orderDate) {
+                return false;
+              }
+              const orderDateStr = new Date(orderDate).toISOString().split('T')[0];
+              if (orderDateStr !== today) {
+                return false; // Not from today
+              }
+            }
+            
+            return true;
           });
           
-          // Recalculate totals based on filtered orders
+          // Recalculate totals based on filtered orders (only after dayend)
           statsData.recentOrders = filteredRecentOrders;
           statsData.totalOrders = filteredRecentOrders.length;
           
-          // Recalculate total sales from filtered orders only
+          // Recalculate total sales from filtered orders only (only after dayend)
           const filteredSales = filteredRecentOrders.reduce((sum, order) => {
             return sum + (parseFloat(order.total || order.g_total_amount || order.net_total_amount || 0));
           }, 0);
           statsData.totalSales = filteredSales;
+        } else {
+          // If no recent orders or API didn't filter properly, ensure sales are 0 after dayend
+          if (lastDayendTime) {
+            // Sales should only include orders after dayend
+            // If API didn't filter, set to 0
+            statsData.totalSales = 0;
+            statsData.totalOrders = 0;
+          }
         }
         
         logger.logDataFetch('Dashboard Stats', statsData, statsData.totalOrders);

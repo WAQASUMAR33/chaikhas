@@ -87,6 +87,18 @@ export default function SalesListPage() {
     fetchBranches();
   }, []);
 
+  // Trigger fetchSales when branches finish loading and "all" is selected
+  useEffect(() => {
+    // Only trigger if "all branches" is selected and we have branches now
+    if (selectedBranchId === 'all' && branches.length > 0) {
+      // Only auto-fetch if not custom period or if dates are set
+      if (period !== 'custom' || (dateRange.fromDate && dateRange.toDate)) {
+        fetchSales();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches.length, selectedBranchId]);
+
 
   /**
    * Fetch sales data from API
@@ -107,22 +119,113 @@ export default function SalesListPage() {
       // Prepare API parameters
       // For custom date range, use 'custom' period and include dates
       const apiPeriod = period === 'custom' ? 'custom' : period;
-      const apiParams = { terminal, period: apiPeriod };
+      
+      // Base API parameters
+      const baseParams = { terminal, period: apiPeriod };
       
       // Add date range if custom period is selected
       if (period === 'custom' && dateRange.fromDate && dateRange.toDate) {
-        apiParams.from_date = dateRange.fromDate;
-        apiParams.to_date = dateRange.toDate;
+        baseParams.from_date = dateRange.fromDate;
+        baseParams.to_date = dateRange.toDate;
       }
       
-      // For super admin, include branch_id filter if selected (null means all branches)
+      let result;
+      
+      // For super admin: if "all" branches selected, fetch for each branch and combine
       if (selectedBranchId && selectedBranchId !== 'all') {
-        apiParams.branch_id = selectedBranchId;
+        // Single branch selected
+        const apiParams = { ...baseParams, branch_id: selectedBranchId };
+        console.log('Fetching sales data with params:', apiParams);
+        result = await apiPost('api/get_sales.php', apiParams);
+      } else {
+        // "All branches" selected - fetch for each branch and combine results
+        console.log('Fetching sales data for all branches...');
+        
+        if (branches.length === 0) {
+          // Don't show error, just wait - branches might still be loading
+          console.log('Branches not loaded yet, skipping fetch for now');
+          if (showRefreshing) {
+            setRefreshing(false);
+          } else {
+            setLoading(false);
+          }
+          return;
+        }
+        
+        // Fetch sales for each branch in parallel
+        const branchSalesPromises = branches.map(async (branch) => {
+          const branchId = branch.branch_id || branch.id;
+          if (!branchId) return null;
+          
+          try {
+            const apiParams = { ...baseParams, branch_id: branchId };
+            const branchResult = await apiPost('api/get_sales.php', apiParams);
+            return branchResult;
+          } catch (error) {
+            console.error(`Error fetching sales for branch ${branchId}:`, error);
+            return null;
+          }
+        });
+        
+        const branchResults = await Promise.all(branchSalesPromises);
+        
+        // Combine all branch results
+        let combinedData = [];
+        let hasSuccess = false;
+        let errorMessage = null;
+        
+        branchResults.forEach((branchResult, index) => {
+          if (!branchResult) return;
+          
+          // Get the branch ID for this result
+          const branch = branches[index];
+          const branchId = branch ? (branch.branch_id || branch.id) : null;
+          const branchName = branch ? (branch.branch_name || branch.name) : null;
+          
+          if (branchResult.success && branchResult.data) {
+            hasSuccess = true;
+            let salesData = [];
+            
+            // Extract sales data from response (handle different structures)
+            if (Array.isArray(branchResult.data)) {
+              salesData = branchResult.data;
+            } else if (branchResult.data.data && Array.isArray(branchResult.data.data)) {
+              salesData = branchResult.data.data;
+            } else if (branchResult.data.sales && Array.isArray(branchResult.data.sales)) {
+              salesData = branchResult.data.sales;
+            } else if (branchResult.data.orders && Array.isArray(branchResult.data.orders)) {
+              salesData = branchResult.data.orders;
+            }
+            
+            // Enrich each sale record with branch_id and branch_name if not present
+            const enrichedSales = salesData.map(sale => ({
+              ...sale,
+              branch_id: sale.branch_id || sale.branchId || sale.branch_ID || branchId,
+              branch_name: sale.branch_name || sale.branchName || sale.BranchName || branchName,
+            }));
+            
+            combinedData = combinedData.concat(enrichedSales);
+          } else if (branchResult.data && branchResult.data.message) {
+            errorMessage = branchResult.data.message;
+          }
+        });
+        
+        // Create combined result structure
+        result = {
+          success: hasSuccess,
+          data: combinedData,
+          status: hasSuccess ? 200 : 400,
+        };
+        
+        if (!hasSuccess && errorMessage) {
+          result.data = {
+            success: false,
+            message: errorMessage,
+          };
+        }
       }
       
-      console.log('Fetching sales data with params:', apiParams);
-      // Sales endpoints are in pos/ folder
-      const result = await apiPost('api/get_sales.php', apiParams);
+      console.log('=== Sales API Response ===');
       
       console.log('=== Sales API Response ===');
       console.log('Full result:', JSON.stringify(result, null, 2));
@@ -346,18 +449,31 @@ export default function SalesListPage() {
         // Try to find branch by multiple ID field names
         let branch = null;
         if (branchId && branches.length > 0) {
-          branch = branches.find(b => 
-            (b.branch_id && b.branch_id == branchId) ||
-            (b.id && b.id == branchId) ||
-            (b.branch_ID && b.branch_ID == branchId) ||
-            (b.ID && b.ID == branchId)
-          );
+          branch = branches.find(b => {
+            const bId = b.branch_id || b.id || b.branch_ID || b.ID;
+            // Use loose equality to handle string/number mismatches
+            return bId != null && String(bId) === String(branchId);
+          });
         }
         
         // Get branch name from multiple possible sources
-        const branchName = branch 
-          ? (branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch')
-          : (sale.branch_name || sale.branchName || (branchId ? `Branch ${branchId}` : 'Unknown Branch'));
+        // Priority: 1) Found branch object, 2) Sale's branch_name, 3) Branch ID fallback, 4) Unknown
+        let branchName = 'Unknown Branch';
+        if (branch) {
+          branchName = branch.branch_name || branch.name || branch.branchName || branch.BranchName || 'Unknown Branch';
+        } else if (sale.branch_name || sale.branchName || sale.BranchName) {
+          branchName = sale.branch_name || sale.branchName || sale.BranchName;
+        } else if (branchId) {
+          branchName = `Branch ${branchId}`;
+        }
+        
+        // Log if we couldn't find the branch (for debugging)
+        if (branchId && !branch && branches.length > 0) {
+          console.warn(`Branch not found for branch_id: ${branchId}`, {
+            available_branch_ids: branches.map(b => b.branch_id || b.id),
+            sale_branch_id: branchId
+          });
+        }
 
         return {
           id: sale.id || index,
@@ -419,13 +535,19 @@ export default function SalesListPage() {
   }, [period, dateRange, selectedBranchId, branches]);
 
   // Initial fetch and period change
+  // Wait for branches to load if "all" is selected
   useEffect(() => {
+    // If "all branches" is selected, wait for branches to load
+    if (selectedBranchId === 'all' && branches.length === 0) {
+      return; // Don't fetch yet, wait for branches
+    }
+    
     // Only auto-fetch if not custom period or if dates are set
     if (period !== 'custom' || (dateRange.fromDate && dateRange.toDate)) {
       fetchSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+  }, [period, selectedBranchId, branches.length]);
   
   // Handle date range changes
   const handleDateRangeChange = (field, value) => {
