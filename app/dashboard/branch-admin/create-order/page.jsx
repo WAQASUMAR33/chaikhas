@@ -1430,14 +1430,47 @@ export default function CreateOrderPage() {
                               @page {
                                 size: 80mm auto;
                                 margin: 0;
-                              }
-                              body {
-                                margin: 0;
                                 padding: 0;
                               }
+                              html, body {
+                                margin: 0 !important;
+                                padding: 5px !important;
+                                width: 80mm;
+                                max-width: 80mm;
+                                overflow: hidden;
+                              }
+                              * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                              }
+                              .no-print {
+                                display: none !important;
+                              }
+                              button, .no-print {
+                                display: none !important;
+                              }
+                              * {
+                                page-break-inside: avoid;
+                                break-inside: avoid;
+                              }
+                              body {
+                                height: auto !important;
+                                min-height: auto !important;
+                                max-height: none !important;
+                              }
                             }
-                            body {
+                            html, body {
                               font-family: 'Courier New', monospace;
+                              margin: 0;
+                              padding: 5px;
+                              font-size: 11px;
+                              line-height: 1.3;
+                              width: 80mm;
+                              max-width: 80mm;
+                            }
+                            * {
+                              box-sizing: border-box;
                               margin: 0;
                               padding: 0;
                             }

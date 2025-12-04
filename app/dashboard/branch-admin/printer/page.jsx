@@ -388,56 +388,87 @@ export default function PrinterManagementPage() {
               @media print {
                 @page { 
                   size: 80mm auto; 
-                  margin: 0; 
+                  margin: 0;
+                  padding: 0;
                 }
-                body { 
-                  margin: 0; 
-                  padding: 10px; 
-                  font-size: 12px;
+                html, body {
+                  margin: 0 !important;
+                  padding: 5px !important;
+                  width: 80mm;
+                  max-width: 80mm;
+                  overflow: hidden;
                 }
-                .no-print { display: none; }
+                * {
+                  margin: 0;
+                  padding: 0;
+                  box-sizing: border-box;
+                }
+                .no-print { 
+                  display: none !important; 
+                }
+                button, .no-print { 
+                  display: none !important; 
+                }
+                /* Prevent page breaks */
+                * {
+                  page-break-inside: avoid;
+                  break-inside: avoid;
+                }
+                /* Prevent extra pages */
+                body {
+                  height: auto !important;
+                  min-height: auto !important;
+                  max-height: none !important;
+                }
               }
-              body {
+              html, body {
                 font-family: 'Courier New', monospace;
                 margin: 0;
-                padding: 10px;
-                font-size: 12px;
-                line-height: 1.4;
+                padding: 5px;
+                font-size: 11px;
+                line-height: 1.3;
+                width: 80mm;
+                max-width: 80mm;
+              }
+              * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
               }
               .header {
                 text-align: center;
                 border-bottom: 2px dashed #000;
-                padding-bottom: 10px;
-                margin-bottom: 10px;
+                padding-bottom: 8px;
+                margin-bottom: 8px;
               }
               .title {
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: bold;
-                margin-bottom: 5px;
+                margin-bottom: 3px;
               }
               .subtitle {
-                font-size: 12px;
-                margin-bottom: 5px;
+                font-size: 10px;
+                margin-bottom: 2px;
               }
               .section {
-                margin: 10px 0;
-                padding: 5px 0;
+                margin: 6px 0;
+                padding: 4px 0;
                 border-top: 1px dashed #000;
               }
               .line {
                 display: flex;
                 justify-content: space-between;
-                margin: 3px 0;
+                margin: 2px 0;
               }
               .center {
                 text-align: center;
               }
               .footer {
-                margin-top: 15px;
-                padding-top: 10px;
+                margin-top: 10px;
+                padding-top: 8px;
                 border-top: 2px dashed #000;
                 text-align: center;
-                font-size: 10px;
+                font-size: 9px;
               }
             </style>
           </head>

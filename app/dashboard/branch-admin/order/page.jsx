@@ -2616,24 +2616,57 @@ export default function OrderManagementPage() {
               @media print {
                 @page { 
                   size: 80mm auto; 
-                  margin: 0; 
+                  margin: 0;
+                  padding: 0;
                 }
-                body { 
-                  margin: 0; 
-                  padding: 10px; 
+                html, body {
+                  margin: 0 !important;
+                  padding: 5px !important;
+                  width: 80mm;
+                  max-width: 80mm;
+                  overflow: hidden;
                 }
-                .no-print { display: none !important; }
-                button { display: none !important; }
+                * {
+                  margin: 0;
+                  padding: 0;
+                  box-sizing: border-box;
+                }
+                .no-print { 
+                  display: none !important; 
+                }
+                button, .no-print { 
+                  display: none !important; 
+                }
+                /* Prevent page breaks */
+                * {
+                  page-break-inside: avoid;
+                  break-inside: avoid;
+                }
+                /* Prevent extra pages */
+                body {
+                  height: auto !important;
+                  min-height: auto !important;
+                  max-height: none !important;
+                }
               }
-              body {
+              html, body {
                 font-family: 'Courier New', monospace;
                 margin: 0;
-                padding: 10px;
-                font-size: 12px;
-                line-height: 1.4;
+                padding: 5px;
+                font-size: 11px;
+                line-height: 1.3;
+                width: 80mm;
+                max-width: 80mm;
               }
               * {
                 box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+              }
+              /* Remove any extra spacing */
+              div, p, span {
+                margin: 0;
+                padding: 0;
               }
             </style>
           </head>
