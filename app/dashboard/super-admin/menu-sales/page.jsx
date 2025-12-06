@@ -21,44 +21,199 @@ export default function MenuSalesListPage() {
   const [period, setPeriod] = useState('daily'); // daily, weekly, monthly
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [reportNumber, setReportNumber] = useState('');
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
   const printRef = useRef(null);
 
   useEffect(() => {
+    fetchBranches();
     fetchMenuSales();
     
     // Generate report number
     const now = new Date();
     const reportNum = `MSR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
-  }, [period]);
+  }, [period, selectedBranchFilter]);
+
+  /**
+   * Fetch branches for super admin
+   */
+  const fetchBranches = async () => {
+    try {
+      console.log('=== Fetching Branches (Super Admin - Menu Sales) ===');
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      console.log('Branches API response:', result);
+      
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      
+      console.log(`Total branches found: ${branchesData.length}`);
+      setBranches(branchesData);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+    }
+  };
 
   /**
    * Fetch menu sales data from API
-   * API: api/get_menu_sales.php (POST with terminal and period)
+   * API: api/get_menu_sales.php (POST with terminal, period, and optional branch_id)
    */
   const fetchMenuSales = async () => {
     setLoading(true);
     setAlert({ type: '', message: '' });
     try {
       const terminal = getTerminal();
-      const result = await apiPost('api/get_menu_sales.php', { terminal, period });
       
-      if (result.success && result.data && Array.isArray(result.data)) {
-        // Map API response
-        const mappedSales = result.data.map((item) => ({
-          id: item.dish_id,
-          dish_id: item.dish_id,
-          name: item.name || '-',
-          category: item.category || '-',
-          quantity_sold: item.quantity_sold || 0,
-          total_revenue: item.total_revenue || 0,
-        }));
-        setMenuSales(mappedSales);
-      } else if (result.data && result.data.success === false) {
+      // Build params - include branch_id only if filtering by branch
+      const params = { terminal, period };
+      if (selectedBranchFilter) {
+        params.branch_id = selectedBranchFilter;
+      }
+      // If selectedBranchFilter is empty, don't include branch_id - API will return all branches
+      
+      // For daily period, fetch last dayend to filter sales after dayend
+      if (period === 'daily') {
+        try {
+          const branchIdToCheck = selectedBranchFilter || null;
+          
+          if (branchIdToCheck) {
+            // Single branch selected - fetch dayend for that branch
+            const dayendResult = await apiPost('/get_dayend.php', {
+              branch_id: branchIdToCheck,
+            });
+            
+            if (dayendResult.success && dayendResult.data) {
+              let dayendData = [];
+              if (Array.isArray(dayendResult.data)) {
+                dayendData = dayendResult.data;
+              } else if (dayendResult.data.data && Array.isArray(dayendResult.data.data)) {
+                dayendData = dayendResult.data.data;
+              }
+              
+              if (dayendData.length > 0) {
+                const sortedDayends = [...dayendData].sort((a, b) => {
+                  const dateA = new Date(a.closing_date_time || 0);
+                  const dateB = new Date(b.closing_date_time || 0);
+                  return dateB - dateA;
+                });
+                const lastDayend = sortedDayends[0];
+                if (lastDayend && lastDayend.closing_date_time) {
+                  params.after_closing_date = lastDayend.closing_date_time;
+                  console.log('📅 Filtering daily menu sales after dayend for branch:', branchIdToCheck, lastDayend.closing_date_time);
+                }
+              }
+            }
+          }
+          // For "all branches", the API should handle dayend filtering per branch
+          // If the API doesn't support it, we'd need to fetch per branch, but for now
+          // we'll let the API handle it if it supports after_closing_date without branch_id
+        } catch (error) {
+          console.error('Error fetching dayend for menu sales:', error);
+        }
+      }
+      
+      console.log('Fetching menu sales with:', params);
+      
+      const result = await apiPost('api/get_menu_sales.php', params);
+      
+      console.log('Menu sales API result:', result);
+      console.log('Full API response structure:', JSON.stringify(result, null, 2));
+      
+      // Handle different response structures
+      let menuSalesData = [];
+      
+      // Check if result is directly an array
+      if (Array.isArray(result)) {
+        menuSalesData = result;
+        console.log('✅ Found menu sales in result (direct array), count:', menuSalesData.length);
+      }
+      // Check if result.success and result.data is an array
+      else if (result.success && result.data && Array.isArray(result.data)) {
+        menuSalesData = result.data;
+        console.log('✅ Found menu sales in result.success.data (array), count:', menuSalesData.length);
+      }
+      // Check if result.data is an array directly
+      else if (result.data && Array.isArray(result.data)) {
+        menuSalesData = result.data;
+        console.log('✅ Found menu sales in result.data (array), count:', menuSalesData.length);
+      }
+      // Check if data is nested (result.data.data)
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data (nested array), count:', menuSalesData.length);
+      }
+      // Check if result.data.menu_sales or result.data.sales is an array
+      else if (result.data && result.data.menu_sales && Array.isArray(result.data.menu_sales)) {
+        menuSalesData = result.data.menu_sales;
+        console.log('✅ Found menu sales in result.data.menu_sales, count:', menuSalesData.length);
+      }
+      else if (result.data && result.data.sales && Array.isArray(result.data.sales)) {
+        menuSalesData = result.data.sales;
+        console.log('✅ Found menu sales in result.data.sales, count:', menuSalesData.length);
+      }
+      // Check for error in response
+      else if (result.data && result.data.success === false) {
         setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
         setMenuSales([]);
+        setLoading(false);
+        return;
+      }
+      // Try to find any array in result.data object
+      else if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            menuSalesData = result.data[key];
+            console.log(`✅ Found menu sales in result.data.${key}, count:`, menuSalesData.length);
+            break;
+          }
+        }
+      }
+      
+      // Debug: Log sample menu sale from API
+      if (menuSalesData.length > 0) {
+        console.log('Sample menu sale from API:', JSON.stringify(menuSalesData[0], null, 2));
+      } else {
+        console.warn('⚠️ No menu sales found in API response. Response structure:', Object.keys(result));
+        if (result.data) {
+          console.warn('result.data keys:', Object.keys(result.data));
+        }
+      }
+      
+      // Map API response to consistent format
+      if (menuSalesData.length > 0) {
+        const mappedSales = menuSalesData.map((item) => ({
+          id: item.dish_id || item.id || item.menu_id,
+          dish_id: item.dish_id || item.id || item.menu_id,
+          name: item.name || item.dish_name || item.menu_name || item.title || '-',
+          category: item.category || item.category_name || item.category_title || '-',
+          quantity_sold: parseInt(item.quantity_sold || item.quantity || item.qty || item.sold_quantity || 0),
+          total_revenue: parseFloat(item.total_revenue || item.revenue || item.amount || item.total_amount || item.sales_amount || 0),
+        }));
+        setMenuSales(mappedSales);
+        console.log('Mapped menu sales:', mappedSales);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
       } else {
         setMenuSales([]);
+        // Check if there's an explicit error message
+        if (result.data && result.data.message) {
+          setAlert({ type: 'error', message: result.data.message });
+        } else if (result.data && result.data.success === false) {
+          setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
+        } else if (!result.success) {
+          setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
+        } else {
+          // No error message, just no data - this is normal if there are no sales
+          console.log('No menu sales data found for the selected period');
+          const branchText = selectedBranchFilter ? ' for selected branch' : '';
+          setAlert({ type: 'info', message: `No menu sales data found for ${period} period${branchText}. Try selecting a different period or check if there are any completed orders.` });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -181,6 +336,28 @@ export default function MenuSalesListPage() {
           />
         )}
 
+        {/* Branch Filter */}
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Branch
+          </label>
+          <select
+            value={selectedBranchFilter}
+            onChange={(e) => setSelectedBranchFilter(e.target.value)}
+            className="block w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+          >
+            <option value="">All Branches</option>
+            {branches.map((branch) => (
+              <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
+                {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
+              </option>
+            ))}
+          </select>
+          {selectedBranchFilter && (
+            <p className="text-xs text-gray-500 mt-2">Showing menu sales for selected branch only</p>
+          )}
+        </div>
+
         {/* Period Selector and Print Button */}
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex gap-2">
@@ -223,7 +400,22 @@ export default function MenuSalesListPage() {
         {/* Menu Sales Table */}
         {loading ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Loading menu sales data...</p>
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#FF5F15] mb-4"></div>
+            <p className="text-gray-500 font-medium">Loading menu sales data...</p>
+          </div>
+        ) : menuSales.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-12 text-center">
+            <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-600 font-medium text-lg mb-2">No menu sales data found</p>
+            <p className="text-gray-500 text-sm">
+              {selectedBranchFilter 
+                ? `There are no menu sales for the selected branch in the ${period} period. Try selecting a different period or branch.`
+                : period === 'daily' 
+                ? 'There are no menu sales for today across all branches. Sales data will appear here once orders are completed.' 
+                : period === 'weekly'
+                ? 'There are no menu sales for this week across all branches. Try selecting a different period.'
+                : 'There are no menu sales for this month across all branches. Try selecting a different period.'}
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden no-print">

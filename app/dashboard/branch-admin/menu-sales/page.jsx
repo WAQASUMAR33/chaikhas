@@ -72,70 +72,145 @@ export default function MenuSalesListPage() {
         return;
       }
       
-      console.log('Fetching menu sales with:', { terminal, period, branch_id: branchId });
+      // For daily period, fetch last dayend to filter sales after dayend
+      let afterClosingDate = null;
+      if (period === 'daily') {
+        try {
+          const dayendResult = await apiPost('/get_dayend.php', {
+            branch_id: branchId,
+          });
+          
+          if (dayendResult.success && dayendResult.data) {
+            let dayendData = [];
+            if (Array.isArray(dayendResult.data)) {
+              dayendData = dayendResult.data;
+            } else if (dayendResult.data.data && Array.isArray(dayendResult.data.data)) {
+              dayendData = dayendResult.data.data;
+            }
+            
+            if (dayendData.length > 0) {
+              const sortedDayends = [...dayendData].sort((a, b) => {
+                const dateA = new Date(a.closing_date_time || 0);
+                const dateB = new Date(b.closing_date_time || 0);
+                return dateB - dateA;
+              });
+              const lastDayend = sortedDayends[0];
+              if (lastDayend && lastDayend.closing_date_time) {
+                afterClosingDate = lastDayend.closing_date_time;
+                console.log('📅 Filtering daily menu sales after dayend:', afterClosingDate);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching dayend for menu sales:', error);
+        }
+      }
       
-      const result = await apiPost('api/get_menu_sales.php', { 
+      const apiParams = { 
         terminal, 
         period,
         branch_id: branchId 
-      });
+      };
+      
+      // Add dayend filtering for daily period
+      if (period === 'daily' && afterClosingDate) {
+        apiParams.after_closing_date = afterClosingDate;
+      }
+      
+      console.log('Fetching menu sales with:', apiParams);
+      
+      const result = await apiPost('api/get_menu_sales.php', apiParams);
       
       console.log('Menu sales API result:', result);
+      console.log('Full API response structure:', JSON.stringify(result, null, 2));
       
       // Handle different response structures
       let menuSalesData = [];
       
-      if (result.success) {
-        if (result.data) {
-          // Check if data is directly an array
-          if (Array.isArray(result.data)) {
-            menuSalesData = result.data;
-          } 
-          // Check if data is nested (result.data.data)
-          else if (result.data.data && Array.isArray(result.data.data)) {
-            menuSalesData = result.data.data;
-          }
-          // Check for error in response
-          else if (result.data.success === false) {
-            setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
-            setMenuSales([]);
-            setLoading(false);
-            return;
-          }
-          // Check if result.data is an empty object (might indicate no data)
-          else if (typeof result.data === 'object' && Object.keys(result.data).length === 0) {
-            menuSalesData = [];
-          }
-        }
-        
-        // Map API response to consistent format
-        if (menuSalesData.length > 0) {
-          const mappedSales = menuSalesData.map((item) => ({
-            id: item.dish_id || item.id,
-            dish_id: item.dish_id || item.id,
-            name: item.name || item.dish_name || item.menu_name || '-',
-            category: item.category || item.category_name || '-',
-            quantity_sold: parseInt(item.quantity_sold || item.quantity || 0),
-            total_revenue: parseFloat(item.total_revenue || item.revenue || item.amount || 0),
-          }));
-          setMenuSales(mappedSales);
-          console.log('Mapped menu sales:', mappedSales);
-        } else {
-          setMenuSales([]);
-          // Check if there's an explicit error message
-          if (result.data && result.data.message) {
-            setAlert({ type: 'error', message: result.data.message });
-          } else if (result.data && result.data.success === false) {
-            setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
-          } else {
-            // No error message, just no data - this is normal if there are no sales
-            console.log('No menu sales data found for the selected period');
-          }
-        }
-      } else {
-        // API request failed
-        setAlert({ type: 'error', message: result.data?.message || 'Failed to load menu sales data' });
+      // Check if result is directly an array
+      if (Array.isArray(result)) {
+        menuSalesData = result;
+        console.log('✅ Found menu sales in result (direct array), count:', menuSalesData.length);
+      }
+      // Check if result.success and result.data is an array
+      else if (result.success && result.data && Array.isArray(result.data)) {
+        menuSalesData = result.data;
+        console.log('✅ Found menu sales in result.success.data (array), count:', menuSalesData.length);
+      }
+      // Check if result.data is an array directly
+      else if (result.data && Array.isArray(result.data)) {
+        menuSalesData = result.data;
+        console.log('✅ Found menu sales in result.data (array), count:', menuSalesData.length);
+      }
+      // Check if data is nested (result.data.data)
+      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data (nested array), count:', menuSalesData.length);
+      }
+      // Check if result.data.menu_sales or result.data.sales is an array
+      else if (result.data && result.data.menu_sales && Array.isArray(result.data.menu_sales)) {
+        menuSalesData = result.data.menu_sales;
+        console.log('✅ Found menu sales in result.data.menu_sales, count:', menuSalesData.length);
+      }
+      else if (result.data && result.data.sales && Array.isArray(result.data.sales)) {
+        menuSalesData = result.data.sales;
+        console.log('✅ Found menu sales in result.data.sales, count:', menuSalesData.length);
+      }
+      // Check for error in response
+      else if (result.data && result.data.success === false) {
+        setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
         setMenuSales([]);
+        setLoading(false);
+        return;
+      }
+      // Try to find any array in result.data object
+      else if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+        for (const key in result.data) {
+          if (Array.isArray(result.data[key])) {
+            menuSalesData = result.data[key];
+            console.log(`✅ Found menu sales in result.data.${key}, count:`, menuSalesData.length);
+            break;
+          }
+        }
+      }
+      
+      // Debug: Log sample menu sale from API
+      if (menuSalesData.length > 0) {
+        console.log('Sample menu sale from API:', JSON.stringify(menuSalesData[0], null, 2));
+      } else {
+        console.warn('⚠️ No menu sales found in API response. Response structure:', Object.keys(result));
+        if (result.data) {
+          console.warn('result.data keys:', Object.keys(result.data));
+        }
+      }
+      
+      // Map API response to consistent format
+      if (menuSalesData.length > 0) {
+        const mappedSales = menuSalesData.map((item) => ({
+          id: item.dish_id || item.id || item.menu_id,
+          dish_id: item.dish_id || item.id || item.menu_id,
+          name: item.name || item.dish_name || item.menu_name || item.title || '-',
+          category: item.category || item.category_name || item.category_title || '-',
+          quantity_sold: parseInt(item.quantity_sold || item.quantity || item.qty || item.sold_quantity || 0),
+          total_revenue: parseFloat(item.total_revenue || item.revenue || item.amount || item.total_amount || item.sales_amount || 0),
+        }));
+        setMenuSales(mappedSales);
+        console.log('Mapped menu sales:', mappedSales);
+        setAlert({ type: '', message: '' }); // Clear any previous errors
+      } else {
+        setMenuSales([]);
+        // Check if there's an explicit error message
+        if (result.data && result.data.message) {
+          setAlert({ type: 'error', message: result.data.message });
+        } else if (result.data && result.data.success === false) {
+          setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
+        } else if (!result.success) {
+          setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
+        } else {
+          // No error message, just no data - this is normal if there are no sales
+          console.log('No menu sales data found for the selected period');
+          setAlert({ type: 'info', message: `No menu sales data found for ${period} period. Try selecting a different period or check if there are any completed orders.` });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -300,7 +375,20 @@ export default function MenuSalesListPage() {
         {/* Menu Sales Table */}
         {loading ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Loading menu sales data...</p>
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#FF5F15] mb-4"></div>
+            <p className="text-gray-500 font-medium">Loading menu sales data...</p>
+          </div>
+        ) : menuSales.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-12 text-center">
+            <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-600 font-medium text-lg mb-2">No menu sales data found</p>
+            <p className="text-gray-500 text-sm">
+              {period === 'daily' 
+                ? 'There are no menu sales for today. Sales data will appear here once orders are completed.' 
+                : period === 'weekly'
+                ? 'There are no menu sales for this week. Try selecting a different period.'
+                : 'There are no menu sales for this month. Try selecting a different period.'}
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden no-print">

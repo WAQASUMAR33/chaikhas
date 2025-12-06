@@ -117,6 +117,93 @@ export default function OrderManagementPage() {
     }
   };
 
+  /**
+   * Fetch credit customers for super admin
+   * API: api/customer_management.php (GET - no branch_id needed for super admin)
+   */
+  const fetchCustomers = async () => {
+    try {
+      console.log('🔄 Fetching customers (Super Admin - Orders)');
+
+      const result = await apiGet('api/customer_management.php');
+
+      console.log('📥 Customer API response:', result);
+
+      if (result.success && result.data) {
+        let customersData = [];
+        
+        if (Array.isArray(result.data)) {
+          customersData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          customersData = result.data.data;
+        } else if (result.data.customers && Array.isArray(result.data.customers)) {
+          customersData = result.data.customers;
+        }
+
+        console.log('📋 Raw customers data from API:', customersData);
+        console.log('📋 Number of customers in array:', customersData.length);
+
+        if (customersData.length === 0) {
+          console.warn('⚠️ No customers returned from API');
+          setCustomers([]);
+          return;
+        }
+
+        // Map API response to match expected format
+        // Handle multiple field name variations
+        const mappedCustomers = customersData
+          .filter(customer => {
+            // Filter out null/undefined customers
+            if (!customer) {
+              console.warn('⚠️ Found null/undefined customer, skipping');
+              return false;
+            }
+            return true;
+          })
+          .map((customer, index) => {
+            const customerId = customer.id || customer.customer_id;
+            const customerName = customer.name || customer.customer_name || customer.customerName || '';
+            const phone = customer.phone || customer.mobileNo || customer.mobile || '';
+            // Handle null credit_limit - convert null to 0
+            const creditLimit = customer.credit_limit !== null && customer.credit_limit !== undefined 
+              ? parseFloat(customer.credit_limit) 
+              : (customer.credit !== null && customer.credit !== undefined 
+                  ? parseFloat(customer.credit) 
+                  : 0);
+            
+            const mapped = {
+              id: customerId,
+              customer_id: customer.customer_id || customer.id,
+              customer_name: customerName,
+              phone: phone,
+              email: customer.email || '',
+              address: customer.address || '',
+              credit_limit: creditLimit,
+            };
+            
+            console.log(`📝 Mapped customer ${index + 1}:`, mapped);
+            return mapped;
+          });
+
+        console.log('✅ Total mapped customers:', mappedCustomers.length);
+        console.log('✅ Mapped customers array:', mappedCustomers);
+        
+        if (mappedCustomers.length === 0) {
+          console.error('❌ No customers after mapping. Raw data:', customersData);
+        }
+
+        setCustomers(mappedCustomers);
+        console.log('✅ Customers state updated, count:', mappedCustomers.length);
+      } else {
+        console.warn('⚠️ Customer API returned no data or error:', result);
+        setCustomers([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching customers:', error);
+      setCustomers([]);
+    }
+  };
+
   // Initialize bill data when bill modal opens (no auto-calculation)
   useEffect(() => {
     if (billModalOpen && billOrder) {
@@ -312,6 +399,8 @@ export default function OrderManagementPage() {
             hall_name: order.hall_name || '-',
             shop_name: order.shopname || '-',
             customer_name: order.customer_name || order.customer || '-',
+            branch_id: order.branch_id || order.branchId || null, // Include branch_id for filtering
+            branch_name: order.branch_name || order.branchName || null, // Include branch_name for display
             total: gTotalAmount,
             discount: parseFloat(order.discount_amount || order.discount || 0),
             service_charge: parseFloat(order.service_charge || 0),

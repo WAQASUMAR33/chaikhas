@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AccountantLayout from '@/components/accountant/AccountantLayout';
 import Button from '@/components/ui/Button';
-import { getToken, getRole } from '@/utils/api';
+import { getToken, getRole, getBranchId } from '@/utils/api';
 import { apiPost, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { 
@@ -24,6 +24,49 @@ import {
   CheckCircle
 } from 'lucide-react';
 import Link from 'next/link';
+
+/**
+ * Fetch the last dayend closing_date_time for the current branch
+ * Returns the closing_date_time if dayend exists, null otherwise
+ */
+const fetchLastDayend = async (branchId) => {
+  try {
+    if (!branchId) {
+      return null; // No branch ID, cannot fetch dayend
+    }
+    
+    const result = await apiPost('/get_dayend.php', {
+      branch_id: branchId,
+    });
+
+    if (result.success && result.data) {
+      let dayendData = [];
+      if (Array.isArray(result.data)) {
+        dayendData = result.data;
+      } else if (result.data.data && Array.isArray(result.data.data)) {
+        dayendData = result.data.data;
+      }
+
+      if (dayendData.length > 0) {
+        // Sort by closing_date_time descending and get the most recent
+        const sortedDayends = [...dayendData].sort((a, b) => {
+          const dateA = new Date(a.closing_date_time || a.created_at || 0);
+          const dateB = new Date(b.closing_date_time || b.created_at || 0);
+          return dateB - dateA;
+        });
+
+        const lastDayend = sortedDayends[0];
+        if (lastDayend && lastDayend.closing_date_time) {
+          return lastDayend.closing_date_time;
+        }
+      }
+    }
+    return null; // No dayend found
+  } catch (error) {
+    console.error(`Error fetching dayend for branch ${branchId}:`, error);
+    return null;
+  }
+};
 
 export default function AccountantDashboardPage() {
   const router = useRouter();
@@ -56,13 +99,35 @@ export default function AccountantDashboardPage() {
 
   /**
    * Fetch dashboard statistics
+   * Sales are filtered to only show sales created after the last dayend closing_date_time
+   * If no dayend exists, shows only today's sales - resets at day end
    */
   const fetchDashboardStats = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
-      console.log('Fetching dashboard stats with terminal:', terminal);
-      const result = await apiPost('/get_dashboard_stats.php', { terminal });
+      const branchId = getBranchId(); // Get branch ID if accountant has one
+      
+      // Get the last dayend closing_date_time for this branch (if branch_id exists)
+      let lastDayendTime = null;
+      if (branchId) {
+        lastDayendTime = await fetchLastDayend(branchId);
+        if (lastDayendTime) {
+          console.log('📅 Found dayend, filtering sales after:', lastDayendTime);
+        }
+      }
+      
+      // Prepare API parameters with dayend filtering
+      const apiParams = { terminal };
+      if (branchId) {
+        apiParams.branch_id = branchId;
+      }
+      if (lastDayendTime) {
+        apiParams.after_closing_date = lastDayendTime;
+      }
+      
+      console.log('Fetching dashboard stats with params:', apiParams);
+      const result = await apiPost('/get_dashboard_stats.php', apiParams);
       console.log('Dashboard stats API response:', result);
       
       let statsData = {};

@@ -21,6 +21,44 @@ import { apiPost, apiGet, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X, Building2, Filter } from 'lucide-react';
 
+/**
+ * Fetch the last dayend closing_date_time for a branch
+ * Returns the closing_date_time if dayend exists, null otherwise
+ */
+const fetchLastDayendForBranch = async (branchId) => {
+  try {
+    const result = await apiPost('/get_dayend.php', {
+      branch_id: branchId,
+    });
+    
+    if (result.success && result.data) {
+      let dayendData = [];
+      if (Array.isArray(result.data)) {
+        dayendData = result.data;
+      } else if (result.data.data && Array.isArray(result.data.data)) {
+        dayendData = result.data.data;
+      }
+      
+      if (dayendData.length > 0) {
+        // Sort by closing_date_time descending to get the most recent
+        const sortedDayends = [...dayendData].sort((a, b) => {
+          const dateA = new Date(a.closing_date_time || 0);
+          const dateB = new Date(b.closing_date_time || 0);
+          return dateB - dateA; // Descending order
+        });
+        const lastDayend = sortedDayends[0];
+        if (lastDayend && lastDayend.closing_date_time) {
+          return lastDayend.closing_date_time;
+        }
+      }
+    }
+    return null; // No dayend found
+  } catch (error) {
+    console.error(`Error fetching dayend for branch ${branchId}:`, error);
+    return null;
+  }
+};
+
 export default function SalesListPage() {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -135,6 +173,16 @@ export default function SalesListPage() {
       if (selectedBranchId && selectedBranchId !== 'all') {
         // Single branch selected
         const apiParams = { ...baseParams, branch_id: selectedBranchId };
+        
+        // For daily period, add dayend filtering to ensure sales reset to zero after dayend
+        if (period === 'daily') {
+          const lastDayendTime = await fetchLastDayendForBranch(selectedBranchId);
+          if (lastDayendTime) {
+            apiParams.after_closing_date = lastDayendTime;
+            console.log('📅 Filtering daily sales after dayend for branch:', selectedBranchId, lastDayendTime);
+          }
+        }
+        
         console.log('Fetching sales data with params:', apiParams);
         result = await apiPost('api/get_sales.php', apiParams);
       } else {
@@ -159,6 +207,16 @@ export default function SalesListPage() {
           
           try {
             const apiParams = { ...baseParams, branch_id: branchId };
+            
+            // For daily period, add dayend filtering to ensure sales reset to zero after dayend
+            if (period === 'daily') {
+              const lastDayendTime = await fetchLastDayendForBranch(branchId);
+              if (lastDayendTime) {
+                apiParams.after_closing_date = lastDayendTime;
+                console.log('📅 Filtering daily sales after dayend for branch:', branchId, lastDayendTime);
+              }
+            }
+            
             const branchResult = await apiPost('api/get_sales.php', apiParams);
             return branchResult;
           } catch (error) {
