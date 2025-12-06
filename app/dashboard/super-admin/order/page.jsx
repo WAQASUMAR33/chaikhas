@@ -6,7 +6,7 @@
  * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -63,34 +63,6 @@ export default function OrderManagementPage() {
   const [tables, setTables] = useState([]); // Tables for transfer functionality
   const [originalTableId, setOriginalTableId] = useState(null); // Store original table ID for transfer
 
-  useEffect(() => {
-    fetchBranches();
-    fetchCustomers(); // Fetch credit customers
-    fetchOrders();
-    // Auto-refresh every 30 seconds to show new orders
-    const interval = setInterval(fetchOrders, 30000);
-    
-    // Listen for updates from other dashboard instances
-    const cleanup = listenForUpdates((event) => {
-      console.log('📥 Received dashboard update:', event);
-      if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
-          event.type === UPDATE_EVENTS.ORDER_UPDATED || 
-          event.type === UPDATE_EVENTS.ORDER_DELETED ||
-          event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
-          event.type === UPDATE_EVENTS.BILL_CREATED ||
-          event.type === UPDATE_EVENTS.BILL_UPDATED ||
-          event.type === UPDATE_EVENTS.BILL_PAID) {
-        // Refresh orders when any order/bill is updated
-        fetchOrders();
-      }
-    });
-    
-    return () => {
-      clearInterval(interval);
-      cleanup();
-    };
-  }, [filter, selectedBranchFilter]);
-
   /**
    * Fetch branches for super admin
    */
@@ -120,154 +92,117 @@ export default function OrderManagementPage() {
   /**
    * Fetch credit customers for super admin
    * API: api/customer_management.php (GET - no branch_id needed for super admin)
+   * Wrapped in try-catch with defensive checks to prevent production crashes
    */
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     try {
+      // Check if we're in a browser environment
+      if (typeof window === 'undefined') {
+        console.warn('⚠️ fetchCustomers called on server side, skipping');
+        return;
+      }
+
       console.log('🔄 Fetching customers (Super Admin - Orders)');
 
       const result = await apiGet('api/customer_management.php');
+
+      // Defensive check for result
+      if (!result) {
+        console.warn('⚠️ Customer API returned null/undefined result');
+        setCustomers([]);
+        return;
+      }
 
       console.log('📥 Customer API response:', result);
 
       if (result.success && result.data) {
         let customersData = [];
         
-        if (Array.isArray(result.data)) {
-          customersData = result.data;
-        } else if (result.data.data && Array.isArray(result.data.data)) {
-          customersData = result.data.data;
-        } else if (result.data.customers && Array.isArray(result.data.customers)) {
-          customersData = result.data.customers;
-        }
+        try {
+          if (Array.isArray(result.data)) {
+            customersData = result.data;
+          } else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+            customersData = result.data.data;
+          } else if (result.data && result.data.customers && Array.isArray(result.data.customers)) {
+            customersData = result.data.customers;
+          }
 
-        console.log('📋 Raw customers data from API:', customersData);
-        console.log('📋 Number of customers in array:', customersData.length);
+          console.log('📋 Raw customers data from API:', customersData);
+          console.log('📋 Number of customers in array:', customersData.length);
 
-        if (customersData.length === 0) {
-          console.warn('⚠️ No customers returned from API');
+          if (customersData.length === 0) {
+            console.warn('⚠️ No customers returned from API');
+            setCustomers([]);
+            return;
+          }
+
+          // Map API response to match expected format
+          // Handle multiple field name variations with defensive checks
+          const mappedCustomers = customersData
+            .filter(customer => {
+              // Filter out null/undefined customers
+              if (!customer || typeof customer !== 'object') {
+                console.warn('⚠️ Found invalid customer, skipping');
+                return false;
+              }
+              return true;
+            })
+            .map((customer, index) => {
+              try {
+                const customerId = customer.id || customer.customer_id;
+                const customerName = customer.name || customer.customer_name || customer.customerName || '';
+                const phone = customer.phone || customer.mobileNo || customer.mobile || '';
+                // Handle null credit_limit - convert null to 0
+                const creditLimit = customer.credit_limit !== null && customer.credit_limit !== undefined 
+                  ? parseFloat(customer.credit_limit) || 0
+                  : (customer.credit !== null && customer.credit !== undefined 
+                      ? parseFloat(customer.credit) || 0
+                      : 0);
+                
+                const mapped = {
+                  id: customerId,
+                  customer_id: customer.customer_id || customer.id,
+                  customer_name: customerName,
+                  phone: phone,
+                  email: customer.email || '',
+                  address: customer.address || '',
+                  credit_limit: creditLimit,
+                };
+                
+                console.log(`📝 Mapped customer ${index + 1}:`, mapped);
+                return mapped;
+              } catch (mapError) {
+                console.error(`❌ Error mapping customer ${index}:`, mapError);
+                return null;
+              }
+            })
+            .filter(customer => customer !== null); // Remove any null entries from mapping errors
+
+          console.log('✅ Total mapped customers:', mappedCustomers.length);
+          console.log('✅ Mapped customers array:', mappedCustomers);
+          
+          if (mappedCustomers.length === 0) {
+            console.warn('⚠️ No customers after mapping. Raw data:', customersData);
+          }
+
+          setCustomers(mappedCustomers);
+          console.log('✅ Customers state updated, count:', mappedCustomers.length);
+        } catch (dataError) {
+          console.error('❌ Error processing customer data:', dataError);
           setCustomers([]);
-          return;
         }
-
-        // Map API response to match expected format
-        // Handle multiple field name variations
-        const mappedCustomers = customersData
-          .filter(customer => {
-            // Filter out null/undefined customers
-            if (!customer) {
-              console.warn('⚠️ Found null/undefined customer, skipping');
-              return false;
-            }
-            return true;
-          })
-          .map((customer, index) => {
-            const customerId = customer.id || customer.customer_id;
-            const customerName = customer.name || customer.customer_name || customer.customerName || '';
-            const phone = customer.phone || customer.mobileNo || customer.mobile || '';
-            // Handle null credit_limit - convert null to 0
-            const creditLimit = customer.credit_limit !== null && customer.credit_limit !== undefined 
-              ? parseFloat(customer.credit_limit) 
-              : (customer.credit !== null && customer.credit !== undefined 
-                  ? parseFloat(customer.credit) 
-                  : 0);
-            
-            const mapped = {
-              id: customerId,
-              customer_id: customer.customer_id || customer.id,
-              customer_name: customerName,
-              phone: phone,
-              email: customer.email || '',
-              address: customer.address || '',
-              credit_limit: creditLimit,
-            };
-            
-            console.log(`📝 Mapped customer ${index + 1}:`, mapped);
-            return mapped;
-          });
-
-        console.log('✅ Total mapped customers:', mappedCustomers.length);
-        console.log('✅ Mapped customers array:', mappedCustomers);
-        
-        if (mappedCustomers.length === 0) {
-          console.error('❌ No customers after mapping. Raw data:', customersData);
-        }
-
-        setCustomers(mappedCustomers);
-        console.log('✅ Customers state updated, count:', mappedCustomers.length);
       } else {
         console.warn('⚠️ Customer API returned no data or error:', result);
         setCustomers([]);
       }
     } catch (error) {
+      // Catch all errors to prevent page crash
       console.error('❌ Error fetching customers:', error);
+      // Set empty array to prevent undefined state
       setCustomers([]);
+      // Don't throw - silently fail to prevent page crash
     }
-  };
-
-  // Initialize bill data when bill modal opens (no auto-calculation)
-  useEffect(() => {
-    if (billModalOpen && billOrder) {
-      // Preserve existing service charge if already set, otherwise default to 0
-      setBillData(prev => ({
-        ...prev,
-        service_charge: prev.service_charge || 0,
-        discount_percentage: prev.discount_percentage || 0,
-      }));
-    }
-  }, [billModalOpen, billOrder]);
-
-  // Auto-calculate change when cash received changes (only for Cash payments)
-  useEffect(() => {
-    if (paymentModalOpen && generatedBill && generatedBill.payment_method === 'Cash') {
-      const grandTotal = parseFloat(generatedBill.grand_total || 0);
-      const cashReceived = parseFloat(paymentData.cash_received || 0);
-      const change = Math.max(0, cashReceived - grandTotal);
-      setPaymentData(prev => ({
-        ...prev,
-        change: change,
-      }));
-    } else if (paymentModalOpen && generatedBill && generatedBill.payment_method !== 'Cash') {
-      // For non-cash payments, set cash received to grand total
-      const grandTotal = parseFloat(generatedBill.grand_total || 0);
-      setPaymentData(prev => ({
-        ...prev,
-        cash_received: grandTotal,
-        change: 0,
-      }));
-    }
-  }, [paymentModalOpen, paymentData.cash_received, generatedBill]);
-
-  // Auto-print paid receipt when receipt modal opens for Complete orders
-  // Note: handlePrintReceipt is defined later in the component, so we access it via closure
-  useEffect(() => {
-    if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
-      // Wait for DOM to render the receipt content before printing
-      const printTimer = setTimeout(() => {
-        const printContent = document.getElementById('receipt-print-area');
-        if (printContent && generatedBill.items && generatedBill.items.length > 0) {
-          console.log('🖨️ Auto-printing paid receipt...');
-          // Access handlePrintReceipt via closure - it will be available when this runs
-          if (typeof handlePrintReceipt === 'function') {
-            handlePrintReceipt();
-          }
-        } else {
-          console.warn('⚠️ Receipt content not ready for auto-print, will retry...');
-          // Retry after a bit more time if content not ready
-          setTimeout(() => {
-            const retryContent = document.getElementById('receipt-print-area');
-            if (retryContent && generatedBill.items && generatedBill.items.length > 0) {
-              if (typeof handlePrintReceipt === 'function') {
-                handlePrintReceipt();
-              }
-            }
-          }, 500);
-        }
-      }, 300);
-      
-      return () => clearTimeout(printTimer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receiptModalOpen, generatedBill]);
+  }, []); // Empty dependency array since this function doesn't depend on any state
 
   /**
    * Fetch orders from API
@@ -428,6 +363,134 @@ export default function OrderManagementPage() {
       setOrders([]);
     }
   };
+
+  useEffect(() => {
+    // Wrap in try-catch to prevent production crashes
+    try {
+      fetchBranches();
+      // Safely call fetchCustomers - it has its own error handling
+      if (typeof fetchCustomers === 'function') {
+        fetchCustomers().catch(err => {
+          console.error('Error in fetchCustomers (caught in useEffect):', err);
+          // Silently fail - don't crash the page
+        });
+      }
+      fetchOrders();
+    } catch (error) {
+      console.error('Error in useEffect initialization:', error);
+      // Continue execution - don't crash
+    }
+    
+    // Auto-refresh every 30 seconds to show new orders
+    const interval = setInterval(() => {
+      try {
+        fetchOrders();
+      } catch (error) {
+        console.error('Error in fetchOrders interval:', error);
+      }
+    }, 30000);
+    
+    // Listen for updates from other dashboard instances
+    let cleanup;
+    try {
+      cleanup = listenForUpdates((event) => {
+        try {
+          console.log('📥 Received dashboard update:', event);
+          if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
+              event.type === UPDATE_EVENTS.ORDER_UPDATED || 
+              event.type === UPDATE_EVENTS.ORDER_DELETED ||
+              event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
+              event.type === UPDATE_EVENTS.BILL_CREATED ||
+              event.type === UPDATE_EVENTS.BILL_UPDATED ||
+              event.type === UPDATE_EVENTS.BILL_PAID) {
+            // Refresh orders when any order/bill is updated
+            fetchOrders();
+          }
+        } catch (error) {
+          console.error('Error in dashboard update handler:', error);
+        }
+      });
+    } catch (error) {
+      console.error('Error setting up dashboard sync:', error);
+      cleanup = () => {}; // Provide empty cleanup function
+    }
+    
+    return () => {
+      try {
+        clearInterval(interval);
+        if (cleanup && typeof cleanup === 'function') {
+          cleanup();
+        }
+      } catch (error) {
+        console.error('Error in useEffect cleanup:', error);
+      }
+    };
+  }, [filter, selectedBranchFilter, fetchCustomers]);
+
+  // Initialize bill data when bill modal opens (no auto-calculation)
+  useEffect(() => {
+    if (billModalOpen && billOrder) {
+      // Preserve existing service charge if already set, otherwise default to 0
+      setBillData(prev => ({
+        ...prev,
+        service_charge: prev.service_charge || 0,
+        discount_percentage: prev.discount_percentage || 0,
+      }));
+    }
+  }, [billModalOpen, billOrder]);
+
+  // Auto-calculate change when cash received changes (only for Cash payments)
+  useEffect(() => {
+    if (paymentModalOpen && generatedBill && generatedBill.payment_method === 'Cash') {
+      const grandTotal = parseFloat(generatedBill.grand_total || 0);
+      const cashReceived = parseFloat(paymentData.cash_received || 0);
+      const change = Math.max(0, cashReceived - grandTotal);
+      setPaymentData(prev => ({
+        ...prev,
+        change: change,
+      }));
+    } else if (paymentModalOpen && generatedBill && generatedBill.payment_method !== 'Cash') {
+      // For non-cash payments, set cash received to grand total
+      const grandTotal = parseFloat(generatedBill.grand_total || 0);
+      setPaymentData(prev => ({
+        ...prev,
+        cash_received: grandTotal,
+        change: 0,
+      }));
+    }
+  }, [paymentModalOpen, paymentData.cash_received, generatedBill]);
+
+  // Auto-print paid receipt when receipt modal opens for Complete orders
+  // Note: handlePrintReceipt is defined later in the component, so we access it via closure
+  useEffect(() => {
+    if (receiptModalOpen && generatedBill && generatedBill.payment_status === 'Paid') {
+      // Wait for DOM to render the receipt content before printing
+      const printTimer = setTimeout(() => {
+        const printContent = document.getElementById('receipt-print-area');
+        if (printContent && generatedBill.items && generatedBill.items.length > 0) {
+          console.log('🖨️ Auto-printing paid receipt...');
+          // Access handlePrintReceipt via closure - it will be available when this runs
+          if (typeof handlePrintReceipt === 'function') {
+            handlePrintReceipt();
+          }
+        } else {
+          console.warn('⚠️ Receipt content not ready for auto-print, will retry...');
+          // Retry after a bit more time if content not ready
+          setTimeout(() => {
+            const retryContent = document.getElementById('receipt-print-area');
+            if (retryContent && generatedBill.items && generatedBill.items.length > 0) {
+              if (typeof handlePrintReceipt === 'function') {
+                handlePrintReceipt();
+              }
+            }
+          }, 500);
+        }
+      }, 300);
+      
+      return () => clearTimeout(printTimer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptModalOpen, generatedBill]);
 
   /**
    * Fetch order details and items
