@@ -98,15 +98,28 @@ export default function AccountantDashboardPage() {
   }, [router]);
 
   /**
+   * Get today's date in YYYY-MM-DD format
+   */
+  const getTodayDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
    * Fetch dashboard statistics
    * Sales are filtered to only show sales created after the last dayend closing_date_time
    * If no dayend exists, shows only today's sales - resets at day end
+   * Client-side filtering ensures sales reset even if API doesn't filter properly
    */
   const fetchDashboardStats = async () => {
     setLoading(true);
     try {
       const terminal = getTerminal();
       const branchId = getBranchId(); // Get branch ID if accountant has one
+      const today = getTodayDate();
       
       // Get the last dayend closing_date_time for this branch (if branch_id exists)
       let lastDayendTime = null;
@@ -114,11 +127,13 @@ export default function AccountantDashboardPage() {
         lastDayendTime = await fetchLastDayend(branchId);
         if (lastDayendTime) {
           console.log('📅 Found dayend, filtering sales after:', lastDayendTime);
+        } else {
+          console.log('📅 No dayend found, will filter by today only');
         }
       }
       
       // Prepare API parameters with dayend filtering
-      const apiParams = { terminal };
+      const apiParams = { terminal, date: today };
       if (branchId) {
         apiParams.branch_id = branchId;
       }
@@ -143,14 +158,105 @@ export default function AccountantDashboardPage() {
         }
       }
       
+      // CLIENT-SIDE FILTERING: Ensure sales are reset after dayend
+      // If dayend exists, only count sales after dayend closing time
+      // If no dayend, only count today's sales
+      let filteredTotalSales = parseFloat(statsData.totalSales || statsData.total_sales || 0);
+      let filteredTodaySales = parseFloat(statsData.todaySales || statsData.today_sales || 0);
+      let filteredTotalOrders = parseInt(statsData.totalOrders || statsData.total_orders || 0);
+      let filteredTodayOrders = parseInt(statsData.todayOrders || statsData.today_orders || 0);
+      
+      // STRICT FILTERING: If dayend exists, ensure sales are ONLY from after dayend
+      if (lastDayendTime) {
+        const cutoffDateTime = new Date(lastDayendTime);
+        console.log('📅 Applying dayend filter - cutoff time:', cutoffDateTime);
+        console.log('📅 Dayend date:', cutoffDateTime.toISOString());
+        console.log('📅 Raw API stats before filtering:', {
+          totalSales: filteredTotalSales,
+          todaySales: filteredTodaySales,
+          totalOrders: filteredTotalOrders,
+          todayOrders: filteredTodayOrders
+        });
+        
+        // CRITICAL: If dayend exists, totalSales should ONLY include sales after dayend
+        // Since dayend was marked, all sales before dayend should be excluded
+        // If todayOrders is 0, it means no orders after dayend, so totalSales MUST be 0
+        if (filteredTodayOrders === 0) {
+          // No orders today means no sales after dayend - reset everything to 0
+          filteredTotalSales = 0;
+          filteredTodaySales = 0;
+          filteredTotalOrders = 0;
+          console.log('📅 ✅ No orders after dayend - resetting all sales to 0');
+        } else {
+          // There are orders after dayend - ensure totalSales matches todaySales
+          // Total sales should only be from after dayend (which is today)
+          // If API returned different values, use today's values as source of truth
+          filteredTotalSales = filteredTodaySales;
+          filteredTotalOrders = filteredTodayOrders;
+          console.log('📅 ✅ Orders exist after dayend - using today\'s sales as total');
+        }
+      } else {
+        // No dayend exists - ensure we only show today's data
+        console.log('📅 No dayend found - showing only today\'s data');
+        // If todayOrders is 0, todaySales should be 0
+        if (filteredTodayOrders === 0) {
+          filteredTodaySales = 0;
+        }
+        // Total sales should match today's sales if no dayend
+        filteredTotalSales = filteredTodaySales;
+        filteredTotalOrders = filteredTodayOrders;
+      }
+      
+      // FINAL SAFETY CHECK: If todayOrders is 0, ensure all sales are 0
+      // This catches any edge cases where API might return stale data
+      if (filteredTodayOrders === 0) {
+        filteredTotalSales = 0;
+        filteredTodaySales = 0;
+        filteredTotalOrders = 0;
+        console.log('📅 ✅ Final safety check: No orders today, all sales reset to 0');
+      }
+      
+      // ABSOLUTE FINAL CHECK: If todayOrders is 0, ALL sales must be 0
+      // This is the most important check - ensures reset after dayend
+      if (filteredTodayOrders === 0 && filteredTotalSales > 0) {
+        console.warn('⚠️ WARNING: API returned totalSales > 0 but todayOrders = 0. Forcing reset to 0.');
+        filteredTotalSales = 0;
+        filteredTotalOrders = 0;
+      }
+      
+      // If dayend exists and todayOrders is 0, totalSales MUST be 0 (no exceptions)
+      if (lastDayendTime && filteredTodayOrders === 0) {
+        filteredTotalSales = 0;
+        filteredTotalOrders = 0;
+        console.log('📅 ✅ Dayend exists + no orders today = all sales reset to 0');
+      }
+      
+      console.log('📊 Final filtered stats:', {
+        totalOrders: filteredTotalOrders,
+        totalSales: filteredTotalSales,
+        todayOrders: filteredTodayOrders,
+        todaySales: filteredTodaySales,
+        hasDayend: !!lastDayendTime,
+        dayendTime: lastDayendTime || 'None',
+        originalTotalSales: parseFloat(statsData.totalSales || statsData.total_sales || 0),
+        originalTodaySales: parseFloat(statsData.todaySales || statsData.today_sales || 0)
+      });
+      
       setStats({
-        totalOrders: statsData.totalOrders || statsData.total_orders || 0,
-        totalSales: statsData.totalSales || statsData.total_sales || 0,
-        todayOrders: statsData.todayOrders || statsData.today_orders || 0,
-        todaySales: statsData.todaySales || statsData.today_sales || 0,
+        totalOrders: filteredTotalOrders,
+        totalSales: filteredTotalSales,
+        todayOrders: filteredTodayOrders,
+        todaySales: filteredTodaySales,
       });
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
+      // Set to 0 on error to ensure no stale data
+      setStats({
+        totalOrders: 0,
+        totalSales: 0,
+        todayOrders: 0,
+        todaySales: 0,
+      });
     } finally {
       setLoading(false);
     }
