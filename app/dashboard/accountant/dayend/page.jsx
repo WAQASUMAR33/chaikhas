@@ -22,6 +22,7 @@ export default function DayEndPage() {
   const [dayends, setDayends] = useState([]);
   const [filteredDayends, setFilteredDayends] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [dateFilter, setDateFilter] = useState({
@@ -352,7 +353,7 @@ export default function DayEndPage() {
     }
 
     // Auto-populate form with calculated totals
-    setFormData({
+    const newFormData = {
       opening_balance: openingBalance,
       expences: calculatedTotals.total_expenses.toFixed(2),
       total_cash: calculatedTotals.total_cash.toFixed(2),
@@ -364,7 +365,20 @@ export default function DayEndPage() {
       drawings: '',
       closing_balance: '',
       note: '',
-    });
+    };
+    
+    // Calculate closing balance immediately
+    const opening = parseFloat(newFormData.opening_balance || 0);
+    const expenses = parseFloat(newFormData.expences || 0);
+    const cash = parseFloat(newFormData.total_cash || 0);
+    const easypaisa = parseFloat(newFormData.total_easypaisa || 0);
+    const bank = parseFloat(newFormData.total_bank || 0);
+    const receivings = parseFloat(newFormData.total_receivings || 0);
+    const drawings = parseFloat(newFormData.drawings || 0);
+    const closing = opening + cash + easypaisa + bank + receivings - expenses - drawings;
+    newFormData.closing_balance = closing.toFixed(2);
+    
+    setFormData(newFormData);
     setModalOpen(true);
   };
 
@@ -375,12 +389,25 @@ export default function DayEndPage() {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
+    // Prevent double submission
+    if (submitting) {
+      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+      return;
+    }
+
     // Validate required fields
     if (!formData.opening_balance || parseFloat(formData.opening_balance) < 0) {
       setAlert({ type: 'error', message: 'Opening balance is required' });
       return;
     }
 
+    // Validate closing balance is provided
+    if (!formData.closing_balance || formData.closing_balance.trim() === '') {
+      setAlert({ type: 'error', message: 'Closing balance is required' });
+      return;
+    }
+
+    setSubmitting(true);
     try {
       const branchId = getBranchId();
       if (!branchId) {
@@ -405,14 +432,41 @@ export default function DayEndPage() {
         closing_balance: parseFloat(formData.closing_balance || 0),
         closing_date_time: new Date().toISOString().slice(0, 19).replace('T', ' '),
         closing_by: 1, // You may need to get actual user ID
+        closing_by_name: closingBy, // Add closing_by_name for display
         note: formData.note.trim(),
         branch_id: branchId,
       };
 
+      console.log('📤 Submitting dayend data:', JSON.stringify(data, null, 2));
       const result = await apiPost('/dayend_management.php', data);
+      console.log('📥 Dayend API response:', JSON.stringify(result, null, 2));
 
-      if (result.status === 'success' || result.success) {
-        setAlert({ type: 'success', message: result.message || 'Day-end marked successfully!' });
+      // Handle multiple possible response structures
+      let isSuccess = false;
+      let successMessage = 'Day-end marked successfully!';
+      let errorMessage = 'Failed to mark day-end';
+
+      // Check various success indicators
+      if (result.status === 'success' || result.success === true) {
+        isSuccess = true;
+        successMessage = result.message || result.data?.message || successMessage;
+      } else if (result.data) {
+        // Check nested success indicators
+        if (result.data.status === 'success' || result.data.success === true) {
+          isSuccess = true;
+          successMessage = result.data.message || result.message || successMessage;
+        } else if (result.data.success === false) {
+          errorMessage = result.data.message || result.message || errorMessage;
+        } else if (result.data.error) {
+          errorMessage = result.data.error || errorMessage;
+        }
+      } else if (result.message && result.message.toLowerCase().includes('success')) {
+        isSuccess = true;
+        successMessage = result.message;
+      }
+
+      if (isSuccess) {
+        setAlert({ type: 'success', message: successMessage });
         setModalOpen(false);
         setFormData({
           opening_balance: '',
@@ -429,11 +483,29 @@ export default function DayEndPage() {
         });
         fetchDayends();
       } else {
-        setAlert({ type: 'error', message: result.message || 'Failed to mark day-end' });
+        // Extract error message from various possible locations
+        const finalErrorMessage = result.message || 
+                                 result.data?.message || 
+                                 result.data?.error || 
+                                 result.error ||
+                                 errorMessage;
+        console.error('❌ Dayend submission failed:', {
+          result,
+          errorMessage: finalErrorMessage
+        });
+        setAlert({ type: 'error', message: finalErrorMessage });
       }
     } catch (error) {
-      console.error('Error marking day-end:', error);
-      setAlert({ type: 'error', message: 'Failed to mark day-end: ' + (error.message || 'Network error') });
+      console.error('❌ Error marking day-end:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        response: error.response
+      });
+      const errorMsg = error.message || error.response?.data?.message || 'Network error';
+      setAlert({ type: 'error', message: 'Failed to mark day-end: ' + errorMsg });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -840,11 +912,12 @@ export default function DayEndPage() {
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 type="submit"
                 className="w-full sm:w-auto"
+                disabled={submitting}
               >
-                Mark as Day End
+                {submitting ? 'Submitting...' : 'Mark as Day End'}
               </Button>
             </div>
           </form>

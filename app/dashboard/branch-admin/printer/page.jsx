@@ -349,7 +349,7 @@ export default function PrinterManagementPage() {
   };
 
   /**
-   * Test USB printer using browser print dialog
+git    * Test USB printer using browser print dialog
    */
   const testUSBPrinter = async (printerId) => {
     try {
