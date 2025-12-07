@@ -17,7 +17,11 @@ import { isCreditPayment, getPaymentMethodDisplay } from '@/utils/payment';
 import { FileText, Printer, Download, Calendar, Building2 } from 'lucide-react';
 
 export default function SalesReportPage() {
+  const [periodFilter, setPeriodFilter] = useState('daily'); // daily, weekly, monthly, all, custom
   const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('all');
   const [branches, setBranches] = useState([]);
   const [reportData, setReportData] = useState([]);
@@ -28,18 +32,62 @@ export default function SalesReportPage() {
   const [reportNumber, setReportNumber] = useState('');
   const printRef = useRef(null);
 
-  useEffect(() => {
-    // Set current month as default
+  /**
+   * Get today's date in YYYY-MM-DD format
+   */
+  const getTodayDate = () => {
     const now = new Date();
-    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    setSelectedMonth(currentMonth);
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Get start of week (Monday) date in YYYY-MM-DD format
+   */
+  const getWeekStartDate = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.setDate(diff));
+    const year = monday.getFullYear();
+    const month = String(monday.getMonth() + 1).padStart(2, '0');
+    const dayStr = String(monday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${dayStr}`;
+  };
+
+  /**
+   * Get end of week (Sunday) date in YYYY-MM-DD format
+   */
+  const getWeekEndDate = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? 0 : 7);
+    const sunday = new Date(now.setDate(diff));
+    const year = sunday.getFullYear();
+    const month = String(sunday.getMonth() + 1).padStart(2, '0');
+    const dayStr = String(sunday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${dayStr}`;
+  };
+
+  useEffect(() => {
+    // Set defaults based on period filter
+    const now = new Date();
+    
+    if (periodFilter === 'daily') {
+      setSelectedDate(getTodayDate());
+    } else if (periodFilter === 'monthly') {
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      setSelectedMonth(currentMonth);
+    }
     
     // Generate report number
     const reportNum = `SR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
     
     fetchBranches();
-  }, []);
+  }, [periodFilter]);
 
   /**
    * Fetch all branches
@@ -85,25 +133,59 @@ export default function SalesReportPage() {
    * Generate sales report
    */
   const generateReport = async () => {
-    if (!selectedMonth) {
-      setAlert({ type: 'error', message: 'Please select a month' });
-      return;
-    }
-
     setLoading(true);
     setAlert({ type: '', message: '' });
 
     try {
-      // Parse month to get start and end dates
-      const [year, month] = selectedMonth.split('-');
-      const startDate = `${year}-${month}-01`;
-      const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-      const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+      let startDate = '';
+      let endDate = '';
 
-      const params = {
-        start_date: startDate,
-        end_date: endDate,
-      };
+      // Determine date range based on period filter
+      if (periodFilter === 'daily') {
+        if (!selectedDate) {
+          setAlert({ type: 'error', message: 'Please select a date' });
+          setLoading(false);
+          return;
+        }
+        startDate = selectedDate;
+        endDate = selectedDate;
+        console.log('📅 Generating daily report for:', selectedDate);
+      } else if (periodFilter === 'weekly') {
+        startDate = getWeekStartDate();
+        endDate = getWeekEndDate();
+        console.log('📅 Generating weekly report from:', startDate, 'to', endDate);
+      } else if (periodFilter === 'monthly') {
+        if (!selectedMonth) {
+          setAlert({ type: 'error', message: 'Please select a month' });
+          setLoading(false);
+          return;
+        }
+        const [year, month] = selectedMonth.split('-');
+        startDate = `${year}-${month}-01`;
+        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+        endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        console.log('📅 Generating monthly report for:', selectedMonth);
+      } else if (periodFilter === 'custom') {
+        if (!customDateFrom || !customDateTo) {
+          setAlert({ type: 'error', message: 'Please select both start and end dates' });
+          setLoading(false);
+          return;
+        }
+        startDate = customDateFrom;
+        endDate = customDateTo;
+        console.log('📅 Generating custom report from:', startDate, 'to', endDate);
+      } else {
+        // 'all' - no date filtering
+        console.log('📅 Generating report for all time (no date filter)');
+      }
+
+      const params = {};
+      
+      // Only add date params if not 'all'
+      if (periodFilter !== 'all') {
+        params.start_date = startDate;
+        params.end_date = endDate;
+      }
 
       // Add branch_id only if not 'all'
       if (selectedBranchId !== 'all') {
@@ -616,15 +698,54 @@ export default function SalesReportPage() {
           />
         )}
 
-        {/* Report Controls */}
-        <div className="bg-white rounded-lg shadow p-4 sm:p-6">
-          <div className="flex flex-col sm:flex-row gap-4 items-end">
-            <div className="flex-1">
+        {/* Filter Section */}
+        <div className="bg-white rounded-lg shadow p-4 sm:p-6 border border-gray-200">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Period Filter */}
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Month
+                <Calendar className="w-4 h-4 inline mr-1" />
+                Report Period
               </label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <select
+                value={periodFilter}
+                onChange={(e) => {
+                  setPeriodFilter(e.target.value);
+                  setReportGenerated(false);
+                }}
+                className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+              >
+                <option value="daily">Daily (Today)</option>
+                <option value="weekly">Weekly (This Week)</option>
+                <option value="monthly">Monthly</option>
+                <option value="custom">Custom Date Range</option>
+                <option value="all">All Time</option>
+              </select>
+            </div>
+
+            {/* Date/Month Selection based on Period */}
+            {periodFilter === 'daily' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Date
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setReportGenerated(false);
+                  }}
+                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                />
+              </div>
+            )}
+
+            {periodFilter === 'monthly' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Month
+                </label>
                 <input
                   type="month"
                   value={selectedMonth}
@@ -632,13 +753,49 @@ export default function SalesReportPage() {
                     setSelectedMonth(e.target.value);
                     setReportGenerated(false);
                   }}
-                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
                 />
               </div>
-            </div>
-            <div className="flex-1">
+            )}
+
+            {periodFilter === 'custom' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    From Date
+                  </label>
+                  <input
+                    type="date"
+                    value={customDateFrom}
+                    onChange={(e) => {
+                      setCustomDateFrom(e.target.value);
+                      setReportGenerated(false);
+                    }}
+                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    To Date
+                  </label>
+                  <input
+                    type="date"
+                    value={customDateTo}
+                    onChange={(e) => {
+                      setCustomDateTo(e.target.value);
+                      setReportGenerated(false);
+                    }}
+                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Branch Filter */}
+            <div className={periodFilter === 'custom' ? 'md:col-span-2' : ''}>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Filter by Branch
+                <Building2 className="w-4 h-4 inline mr-1" />
+                Branch
               </label>
               <select
                 value={selectedBranchId}
@@ -646,45 +803,40 @@ export default function SalesReportPage() {
                   setSelectedBranchId(e.target.value);
                   setReportGenerated(false);
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
               >
                 <option value="all">All Branches</option>
                 {branches.map((branch) => (
-                  <option key={branch.branch_id} value={branch.branch_id}>
-                    {branch.branch_name}
+                  <option key={branch.branch_id || branch.id} value={branch.branch_id || branch.id}>
+                    {branch.branch_name || branch.name}
                   </option>
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Generate Report Button */}
+          <div className="mt-4 flex gap-3">
             <Button
               onClick={generateReport}
-              disabled={loading || !selectedMonth}
-              className="flex items-center gap-2"
+              disabled={loading}
+              className="flex-1 sm:flex-none"
             >
-              {loading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <FileText className="w-4 h-4" />
-                  <span>Generate Report</span>
-                </>
-              )}
+              {loading ? 'Generating...' : 'Generate Report'}
             </Button>
-            {reportGenerated && reportData.length > 0 && (
+            {reportGenerated && (
               <Button
-                onClick={handlePrint}
                 variant="outline"
+                onClick={handlePrint}
                 className="flex items-center gap-2"
               >
                 <Printer className="w-4 h-4" />
-                <span>Print Report</span>
+                Print Report
               </Button>
             )}
           </div>
         </div>
+
 
         {/* Report Summary */}
         {reportGenerated && reportData.length > 0 && (
@@ -855,6 +1007,23 @@ export default function SalesReportPage() {
         {/* Print View */}
         {reportGenerated && reportData.length > 0 && (
         <div ref={printRef} className="print-only">
+          {(() => {
+            let periodText = '';
+            if (periodFilter === 'daily') {
+              periodText = `Daily Report - ${selectedDate || getTodayDate()}`;
+            } else if (periodFilter === 'weekly') {
+              periodText = `Weekly Report - ${getWeekStartDate()} to ${getWeekEndDate()}`;
+            } else if (periodFilter === 'monthly') {
+              const [year, month] = selectedMonth.split('-');
+              const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('default', { month: 'long' });
+              periodText = `Monthly Report - ${monthName} ${year}`;
+            } else if (periodFilter === 'custom') {
+              periodText = `Custom Report - ${customDateFrom} to ${customDateTo}`;
+            } else {
+              periodText = 'All Time Report';
+            }
+            return periodText;
+          })()}
           <style jsx global>{`
             @media print {
               @page {
@@ -1055,7 +1224,21 @@ export default function SalesReportPage() {
                     {branchInfo?.address || 'Sales Report'}
                   </p>
                   <p style={{ margin: '5px 0', fontSize: '14px', fontWeight: 'bold' }}>
-                    Monthly Sales Report - {new Date(selectedMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    {(() => {
+                      if (periodFilter === 'daily') {
+                        return `Daily Sales Report - ${selectedDate || getTodayDate()}`;
+                      } else if (periodFilter === 'weekly') {
+                        return `Weekly Sales Report - ${getWeekStartDate()} to ${getWeekEndDate()}`;
+                      } else if (periodFilter === 'monthly') {
+                        const [year, month] = selectedMonth.split('-');
+                        const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('default', { month: 'long' });
+                        return `Monthly Sales Report - ${monthName} ${year}`;
+                      } else if (periodFilter === 'custom') {
+                        return `Custom Sales Report - ${customDateFrom} to ${customDateTo}`;
+                      } else {
+                        return 'All Time Sales Report';
+                      }
+                    })()}
                   </p>
                 </div>
                 <div style={{ width: '20%', textAlign: 'right' }}>

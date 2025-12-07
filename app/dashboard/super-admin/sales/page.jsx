@@ -455,13 +455,28 @@ export default function SalesListPage() {
         return;
       }
       
-      if (salesData.length === 0) {
-        console.warn('No sales data found in response. Full response:', result);
-      }
-
       // Log sales data structure for debugging
       console.log('📊 Processing sales data');
       console.log('Sales count:', salesData.length);
+      console.log('Raw sales data sample:', salesData.length > 0 ? salesData[0] : 'No data');
+      
+      if (salesData.length === 0) {
+        console.warn('⚠️ No sales data found in response. Full response:', result);
+        // Check if this is a valid "no data" response or an error
+        if (result.success && result.data && typeof result.data === 'object') {
+          // API returned success but no data - this is valid (no sales for period)
+          setAlert({ 
+            type: 'info', 
+            message: 'No sales data available for the selected period. Try selecting a different date range or period.' 
+          });
+        } else {
+          // This might be an error - show warning
+          setAlert({ 
+            type: 'warning', 
+            message: 'No sales data found. The API may not have returned data in the expected format. Check console for details.' 
+          });
+        }
+      }
       console.log('Branches count:', branches.length);
       if (salesData.length > 0) {
         console.log('Sample sale:', {
@@ -545,7 +560,9 @@ export default function SalesListPage() {
         };
       });
 
+      // Always set sales data, even if empty (so UI can show "no data" message)
       setSales(processedSales);
+      console.log('✅ Sales data set:', processedSales.length, 'records');
 
       // Calculate summary
       const total = processedSales.reduce((sum, sale) => sum + (sale.total_sales || 0), 0);
@@ -557,6 +574,8 @@ export default function SalesListPage() {
         totalOrders: orders,
         averageOrder: average,
       });
+
+      console.log('✅ Summary calculated:', { total, orders, average });
 
       setLastUpdated(new Date());
     } catch (error) {

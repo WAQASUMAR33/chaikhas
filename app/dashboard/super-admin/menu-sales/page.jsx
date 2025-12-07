@@ -78,8 +78,20 @@ export default function MenuSalesListPage() {
       }
       // If selectedBranchFilter is empty, don't include branch_id - API will return all branches
       
-      // For daily period, fetch last dayend to filter sales after dayend
+      // For daily period, add today's date and optionally dayend filtering
       if (period === 'daily') {
+        // Get today's date
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
+        
+        // Add date parameters for daily period
+        params.date = todayStr;
+        params.from_date = todayStr;
+        params.to_date = todayStr;
+        
         try {
           const branchIdToCheck = selectedBranchFilter || null;
           
@@ -116,7 +128,33 @@ export default function MenuSalesListPage() {
           // we'll let the API handle it if it supports after_closing_date without branch_id
         } catch (error) {
           console.error('Error fetching dayend for menu sales:', error);
+          // Don't fail the request if dayend fetch fails - continue without dayend filter
         }
+      } else if (period === 'weekly') {
+        // Add date range for weekly period
+        const now = new Date();
+        const day = now.getDay();
+        const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+        const monday = new Date(now.setDate(diff));
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        
+        const weekStart = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+        const weekEnd = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, '0')}-${String(sunday.getDate()).padStart(2, '0')}`;
+        
+        params.from_date = weekStart;
+        params.to_date = weekEnd;
+      } else if (period === 'monthly') {
+        // Add date range for monthly period
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const firstDay = `${year}-${month}-01`;
+        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+        const lastDayStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        
+        params.from_date = firstDay;
+        params.to_date = lastDayStr;
       }
       
       console.log('Fetching menu sales with:', params);
@@ -126,51 +164,89 @@ export default function MenuSalesListPage() {
       console.log('Menu sales API result:', result);
       console.log('Full API response structure:', JSON.stringify(result, null, 2));
       
-      // Handle different response structures
+      // Handle different response structures - be very thorough
       let menuSalesData = [];
       
-      // Check if result is directly an array
+      // First, check if result itself is an array
       if (Array.isArray(result)) {
         menuSalesData = result;
         console.log('✅ Found menu sales in result (direct array), count:', menuSalesData.length);
       }
       // Check if result.success and result.data is an array
-      else if (result.success && result.data && Array.isArray(result.data)) {
+      else if (result && result.success && result.data && Array.isArray(result.data)) {
         menuSalesData = result.data;
         console.log('✅ Found menu sales in result.success.data (array), count:', menuSalesData.length);
       }
-      // Check if result.data is an array directly
-      else if (result.data && Array.isArray(result.data)) {
+      // Check if result.data is an array directly (without success field)
+      else if (result && result.data && Array.isArray(result.data)) {
         menuSalesData = result.data;
         console.log('✅ Found menu sales in result.data (array), count:', menuSalesData.length);
       }
       // Check if data is nested (result.data.data)
-      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+      else if (result && result.data && result.data.data && Array.isArray(result.data.data)) {
         menuSalesData = result.data.data;
         console.log('✅ Found menu sales in result.data.data (nested array), count:', menuSalesData.length);
       }
-      // Check if result.data.menu_sales or result.data.sales is an array
-      else if (result.data && result.data.menu_sales && Array.isArray(result.data.menu_sales)) {
+      // Check if result.data.menu_sales is an array
+      else if (result && result.data && result.data.menu_sales && Array.isArray(result.data.menu_sales)) {
         menuSalesData = result.data.menu_sales;
         console.log('✅ Found menu sales in result.data.menu_sales, count:', menuSalesData.length);
       }
-      else if (result.data && result.data.sales && Array.isArray(result.data.sales)) {
+      // Check if result.data.sales is an array
+      else if (result && result.data && result.data.sales && Array.isArray(result.data.sales)) {
         menuSalesData = result.data.sales;
         console.log('✅ Found menu sales in result.data.sales, count:', menuSalesData.length);
       }
+      // Check if result.data.items is an array (common pattern)
+      else if (result && result.data && result.data.items && Array.isArray(result.data.items)) {
+        menuSalesData = result.data.items;
+        console.log('✅ Found menu sales in result.data.items, count:', menuSalesData.length);
+      }
+      // Check if result.data.result is an array
+      else if (result && result.data && result.data.result && Array.isArray(result.data.result)) {
+        menuSalesData = result.data.result;
+        console.log('✅ Found menu sales in result.data.result, count:', menuSalesData.length);
+      }
       // Check for error in response
-      else if (result.data && result.data.success === false) {
+      else if (result && result.data && result.data.success === false) {
         setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
         setMenuSales([]);
         setLoading(false);
         return;
       }
-      // Try to find any array in result.data object
-      else if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+      // Try to find any array in result.data object (deep search)
+      else if (result && result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+        // First level search
         for (const key in result.data) {
-          if (Array.isArray(result.data[key])) {
+          if (Array.isArray(result.data[key]) && result.data[key].length > 0) {
             menuSalesData = result.data[key];
             console.log(`✅ Found menu sales in result.data.${key}, count:`, menuSalesData.length);
+            break;
+          }
+        }
+        // If still no data, try nested objects
+        if (menuSalesData.length === 0) {
+          for (const key in result.data) {
+            if (result.data[key] && typeof result.data[key] === 'object' && !Array.isArray(result.data[key])) {
+              for (const nestedKey in result.data[key]) {
+                if (Array.isArray(result.data[key][nestedKey]) && result.data[key][nestedKey].length > 0) {
+                  menuSalesData = result.data[key][nestedKey];
+                  console.log(`✅ Found menu sales in result.data.${key}.${nestedKey}, count:`, menuSalesData.length);
+                  break;
+                }
+              }
+              if (menuSalesData.length > 0) break;
+            }
+          }
+        }
+      }
+      
+      // If still no data found, check if result itself has any arrays
+      if (menuSalesData.length === 0 && result && typeof result === 'object' && !Array.isArray(result)) {
+        for (const key in result) {
+          if (Array.isArray(result[key]) && result[key].length > 0) {
+            menuSalesData = result[key];
+            console.log(`✅ Found menu sales in result.${key}, count:`, menuSalesData.length);
             break;
           }
         }
@@ -178,11 +254,23 @@ export default function MenuSalesListPage() {
       
       // Debug: Log sample menu sale from API
       if (menuSalesData.length > 0) {
-        console.log('Sample menu sale from API:', JSON.stringify(menuSalesData[0], null, 2));
+        console.log('✅ Sample menu sale from API:', JSON.stringify(menuSalesData[0], null, 2));
       } else {
-        console.warn('⚠️ No menu sales found in API response. Response structure:', Object.keys(result));
-        if (result.data) {
-          console.warn('result.data keys:', Object.keys(result.data));
+        console.warn('⚠️ No menu sales found in API response');
+        console.warn('Response structure:', {
+          success: result.success,
+          hasData: !!result.data,
+          dataType: typeof result.data,
+          dataKeys: result.data ? Object.keys(result.data) : [],
+          fullResponse: result
+        });
+        
+        // Check if API returned an error message
+        if (result.data && result.data.message) {
+          console.warn('API error message:', result.data.message);
+        }
+        if (result.data && result.data.error) {
+          console.warn('API error:', result.data.error);
         }
       }
       
@@ -197,22 +285,93 @@ export default function MenuSalesListPage() {
           total_revenue: parseFloat(item.total_revenue || item.revenue || item.amount || item.total_amount || item.sales_amount || 0),
         }));
         setMenuSales(mappedSales);
-        console.log('Mapped menu sales:', mappedSales);
+        console.log('✅ Mapped menu sales:', mappedSales.length, 'items');
         setAlert({ type: '', message: '' }); // Clear any previous errors
       } else {
         setMenuSales([]);
+        
+        // Before showing error, try to check if there are any orders/bills for today (diagnostic)
+        let hasOrdersToday = false;
+        if (period === 'daily') {
+          try {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+            
+            // Quick check: try to fetch orders for today
+            const checkParams = { date: todayStr };
+            if (selectedBranchFilter) {
+              checkParams.branch_id = selectedBranchFilter;
+            }
+            
+            const ordersCheck = await apiPost('api/order_management.php', { ...checkParams, action: 'get' });
+            if (ordersCheck && ordersCheck.data) {
+              let orders = [];
+              if (Array.isArray(ordersCheck.data)) {
+                orders = ordersCheck.data;
+              } else if (ordersCheck.data.data && Array.isArray(ordersCheck.data.data)) {
+                orders = ordersCheck.data.data;
+              } else if (ordersCheck.data.orders && Array.isArray(ordersCheck.data.orders)) {
+                orders = ordersCheck.data.orders;
+              }
+              
+              // Filter orders that are completed/have bills
+              const completedOrders = orders.filter(order => {
+                const status = order.order_status || order.status || order.sts;
+                return status === 'completed' || status === 'Completed' || status === 'paid' || status === 'Paid' || order.bill_id || order.bill_generated;
+              });
+              
+              hasOrdersToday = completedOrders.length > 0;
+              console.log(`🔍 Diagnostic: Found ${completedOrders.length} completed orders for today`);
+            }
+          } catch (error) {
+            console.warn('Could not check for orders (diagnostic):', error);
+          }
+        }
+        
         // Check if there's an explicit error message
-        if (result.data && result.data.message) {
-          setAlert({ type: 'error', message: result.data.message });
-        } else if (result.data && result.data.success === false) {
-          setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
-        } else if (!result.success) {
+        if (result && result.data && result.data.message) {
+          const errorMsg = result.data.message;
+          // Check for database column errors
+          if (errorMsg.toLowerCase().includes("unknown column") || 
+              errorMsg.toLowerCase().includes("orders.sts") ||
+              errorMsg.toLowerCase().includes("column 'sts'")) {
+            setAlert({ 
+              type: 'error', 
+              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update api/get_menu_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMsg}` 
+            });
+          } else {
+            setAlert({ type: 'error', message: errorMsg });
+          }
+        } else if (result && result.data && result.data.success === false) {
+          setAlert({ type: 'error', message: result.data.message || result.data.error || 'Failed to load menu sales data' });
+        } else if (result && !result.success) {
           setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
+        } else if (result && result.success && result.data) {
+          // API returned success but no data
+          const branchText = selectedBranchFilter ? ` for branch ${selectedBranchFilter}` : '';
+          const periodText = period === 'daily' ? 'today' : period === 'weekly' ? 'this week' : period === 'monthly' ? 'this month' : period;
+          
+          let message = `No menu sales data found for ${periodText}${branchText}.`;
+          
+          if (period === 'daily' && hasOrdersToday) {
+            message += ` However, there are completed orders for today. This suggests the API (api/get_menu_sales.php) may need to be updated to properly aggregate menu sales from order items. Please check the backend API.`;
+          } else if (period === 'daily' && !hasOrdersToday) {
+            message += ` There are no completed orders for today. Menu sales will appear once orders are completed and bills are generated.`;
+          } else {
+            message += ` Try selecting a different period or check if there are any completed orders with bills generated.`;
+          }
+          
+          setAlert({ type: 'info', message });
         } else {
-          // No error message, just no data - this is normal if there are no sales
-          console.log('No menu sales data found for the selected period');
-          const branchText = selectedBranchFilter ? ' for selected branch' : '';
-          setAlert({ type: 'info', message: `No menu sales data found for ${period} period${branchText}. Try selecting a different period or check if there are any completed orders.` });
+          // Unknown response structure - log full response for debugging
+          console.error('❌ Unknown API response structure:', result);
+          setAlert({ 
+            type: 'warning', 
+            message: 'API returned an unexpected response format. Check browser console (F12) for details. The API might need to be updated to return data in the expected format: { success: true, data: [...] }' 
+          });
         }
       }
       setLoading(false);
@@ -483,8 +642,13 @@ export default function MenuSalesListPage() {
                       Resturant Khas
                     </h1>
                     <p style={{ margin: '8px 0 0 0', fontSize: '16px', fontWeight: 'bold' }}>
-                      Menu Sales Report - {getPeriodDisplayName()}
+                      {period.charAt(0).toUpperCase() + period.slice(1)} Menu Sales Report - {getPeriodDisplayName()}
                     </p>
+                    {selectedBranchFilter && (
+                      <p style={{ margin: '5px 0 0 0', fontSize: '12px' }}>
+                        Branch: {branches.find(b => (b.branch_id || b.id) == selectedBranchFilter)?.branch_name || branches.find(b => (b.branch_id || b.id) == selectedBranchFilter)?.name || 'Selected Branch'}
+                      </p>
+                    )}
                   </div>
                   <div style={{ width: '15%', textAlign: 'right', fontSize: '11px' }}>
                     <p style={{ margin: '0 0 5px 0', fontWeight: 'bold' }}>

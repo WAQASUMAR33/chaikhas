@@ -384,9 +384,25 @@ export default function SalesListPage() {
         return matches;
       });
       
-      console.log(`Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);
+      console.log(`📊 Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);
       
-      // Process and format sales data
+      // Log if no sales data found
+      if (salesData.length === 0) {
+        console.warn('⚠️ No sales data found in API response');
+        console.warn('Full API response:', JSON.stringify(result, null, 2));
+        setAlert({ 
+          type: 'info', 
+          message: 'No sales data available for the selected period. Try selecting a different date range or period.' 
+        });
+      } else if (filteredSalesData.length === 0 && salesData.length > 0) {
+        console.warn('⚠️ All sales filtered out due to branch mismatch');
+        setAlert({ 
+          type: 'warning', 
+          message: `Found ${salesData.length} sales records, but none match your branch (${branchId}). This might indicate a data issue.` 
+        });
+      }
+      
+      // Process and format sales data (even if empty, so UI can show "no data" message)
       const processedSales = filteredSalesData.map((sale, index) => {
         // Format date based on period
         let formattedDate = sale.date || sale.date_period || sale.period || '';
@@ -426,7 +442,9 @@ export default function SalesListPage() {
         };
       });
 
+      // Always set sales data, even if empty (so UI can show "no data" message)
       setSales(processedSales);
+      console.log('✅ Sales data set:', processedSales.length, 'records');
 
       // Calculate summary
       const total = processedSales.reduce((sum, sale) => sum + (sale.total_sales || 0), 0);
@@ -438,6 +456,8 @@ export default function SalesListPage() {
         totalOrders: orders,
         averageOrder: average,
       });
+
+      console.log('✅ Summary calculated:', { total, orders, average });
 
       setLastUpdated(new Date());
     } catch (error) {
