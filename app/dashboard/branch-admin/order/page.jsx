@@ -2638,117 +2638,140 @@ export default function OrderManagementPage() {
       itemsHTML = '<tr><td colspan="4" style="text-align: center; padding: 10px; font-size: 11px; color: #666;">No items found</td></tr>';
     }
     
+    // Use formatDateTime for consistent date formatting
+    const formatDateTime = (dateStr) => {
+      try {
+        const date = new Date(dateStr);
+        return date.toLocaleString('en-PK', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } catch {
+        return dateStr;
+      }
+    };
+    const formattedDateFormatted = formatDateTime(orderDate);
+    
     return `
-      <!-- Logo -->
-      <div style="text-align: center; margin-bottom: 10px; padding-top: 5px;">
-        <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
-          RESTAURANT
-        </div>
-        <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
-          KHAS
+      <div class="receipt-logo" style="text-align: center; margin-bottom: 10px;">
+        <img src="/assets/CHAIKHAS.PNG" alt="Restaurant Khas Logo" style="max-width: 60mm; max-height: 30mm; height: auto; width: auto; object-fit: contain; display: block; margin: 0 auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <div style="display: none; font-family: 'Courier New', monospace; color: #000; text-align: center; padding: 5px 0;">
+          <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase;">RESTAURANT</div>
+          <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;">KHAS</div>
         </div>
       </div>
-        
-      <!-- Header -->
-      <div style="text-align: center; margin-bottom: 12px; border-bottom: 2px solid #FF5F15; padding-bottom: 10px;">
-        ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #333;">${branchName}</div>` : ''}
+
+      <div class="receipt-header" style="text-align: center; margin-bottom: 15px; border-bottom: 2px solid #FF5F15; padding-bottom: 12px;">
+        ${branchName ? `<div class="branch-name" style="font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #333;">${branchName}</div>` : ''}
       </div>
-      
-      <!-- Order Information -->
-      <div style="text-align: center; margin-bottom: 10px; font-size: 10px; line-height: 1.5;">
-        <div style="margin: 2px 0;">Date: ${formattedDate}</div>
-        <div style="margin: 2px 0;">Order #: ${orderNumber}</div>
-        <div style="margin: 3px 0;">
-          <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 3px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+
+      <div class="receipt-info" style="text-align: center; margin-bottom: 12px; font-size: 10px; line-height: 1.6;">
+        <div class="info-row" style="margin: 3px 0; word-wrap: break-word;">
+          <span class="info-label" style="font-weight: bold;">Date:</span> ${formattedDateFormatted}
         </div>
-        ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 2px 0;">Table: ${bill.table_number}</div>` : ''}
+        <div class="info-row" style="margin: 3px 0; word-wrap: break-word;">
+          <span class="info-label" style="font-weight: bold;">Order #:</span> ${orderNumber}
+        </div>
+        <div class="info-row" style="margin: 3px 0; word-wrap: break-word;">
+          <span class="order-type" style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 4px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+        </div>
+        ${bill.table_number && orderType === 'Dine In' ? `
+          <div class="info-row" style="margin: 3px 0; word-wrap: break-word;">
+            <span class="info-label" style="font-weight: bold;">Table:</span> ${bill.table_number}
+          </div>
+        ` : ''}
         ${isCredit && customerName ? `
-          <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc;">
-            <div style="font-weight: bold; color: #FF5F15; font-size: 10px;">Credit Customer:</div>
-            <div style="margin-top: 3px; font-weight: bold; font-size: 11px;">${customerName}</div>
-            ${customerPhone ? `<div style="font-size: 9px; color: #666; margin-top: 2px;">${customerPhone}</div>` : ''}
+          <div class="info-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
+            <span class="info-label" style="font-weight: bold; color: #FF5F15;">Credit Customer:</span>
+            <div style="margin-top: 4px;">
+              <div style="font-weight: bold;">${customerName}</div>
+              ${customerPhone ? `<div style="font-size: 10px; color: #666;">${customerPhone}</div>` : ''}
+            </div>
           </div>
         ` : ''}
       </div>
-      
-      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-      
-      <!-- Items Table -->
-      <table style="width: 100%; margin: 10px 0; border-collapse: collapse; table-layout: fixed; font-size: 10px;">
-        <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
-          <tr>
-            <th style="width: 42%; text-align: left; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
-            <th style="width: 20%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
-            <th style="width: 10%; text-align: center; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
-            <th style="width: 28%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${itemsHTML}
-        </tbody>
-      </table>
-      
-      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-      
-      <!-- Totals Section -->
-      <div style="margin-top: 12px; border-top: 1px solid #000; padding-top: 8px;">
-        <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
-          <span>Subtotal:</span>
-          <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+
+      <div class="divider" style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+
+      ${items.length > 0 ? `
+        <table class="items-table" style="width: 100%; margin: 12px 0; border-collapse: collapse; table-layout: fixed;">
+          <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
+            <tr>
+              <th class="item-name" style="width: 42%; text-align: left; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Item</th>
+              <th class="item-price" style="width: 20%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Price</th>
+              <th class="item-qty" style="width: 10%; text-align: center; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Qty</th>
+              <th class="item-total" style="width: 28%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Total</th>
+            </tr>
+          </thead>
+          <tbody style="border-bottom: 1px dotted #ddd;">
+            ${itemsHTML}
+          </tbody>
+        </table>
+      ` : `
+        <div style="text-align: center; padding: 10px; font-size: 11px; color: #666;">No items found</div>
+      `}
+
+      <div class="divider" style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+
+      <div class="totals-section" style="margin-top: 15px; border-top: 1px solid #000; padding-top: 10px;">
+        <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+          <span class="total-label" style="text-align: left; flex: 1;">Subtotal:</span>
+          <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal)}</span>
         </div>
         ${serviceCharge > 0 ? `
-          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
-            <span>Service Charge:</span>
-            <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Service Charge:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(serviceCharge)}</span>
           </div>
         ` : ''}
         ${discount > 0 ? `
-          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
-            <span>Discount:</span>
-            <span style="font-weight: bold;">-${formatPKR(discount)}</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Discount:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">-${formatPKR(discount)}</span>
           </div>
         ` : ''}
-        <div style="display: flex; justify-content: space-between; margin: 8px 0; padding: 6px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 12px; font-weight: bold; color: #FF5F15;">
-          <span>Net Total:</span>
-          <span>${formatPKR(grandTotal)}</span>
+        <div class="total-row net-total" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
+          <span class="total-label" style="text-align: left; flex: 1;">Net Total:</span>
+          <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(grandTotal)}</span>
         </div>
         ${paymentMethod ? `
-          <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; border-top: 1px solid #ddd; padding-top: 6px;">
-            <span>Payment Method:</span>
-            <span style="font-weight: bold;">${paymentMethod}</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; line-height: 1.5; border-top: 1px solid #ddd; padding-top: 8px;">
+            <span class="total-label" style="text-align: left; flex: 1;">Payment Method:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${paymentMethod}</span>
           </div>
         ` : ''}
         ${paymentStatus === 'Paid' && cashReceived > 0 ? `
-          <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px;">
-            <span>Amount Paid:</span>
-            <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 11px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Amount Paid:</span>
+            <span class="total-value" style="text-align: right; color: #059669; font-weight: bold; min-width: 60px;">${formatPKR(cashReceived)}</span>
           </div>
           ${change > 0 ? `
-            <div style="display: flex; justify-content: space-between; font-size: 10px;">
-              <span>Change Returned:</span>
-              <span style="color: #059669;">${formatPKR(change)}</span>
+            <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; line-height: 1.5;">
+              <span class="total-label" style="text-align: left; flex: 1;">Change Returned:</span>
+              <span class="total-value" style="text-align: right; color: #059669; min-width: 60px;">${formatPKR(change)}</span>
             </div>
           ` : ''}
-          <div style="display: flex; justify-content: space-between; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #ccc; font-size: 10px;">
-            <span>Payment Status:</span>
-            <span style="color: #059669; font-weight: bold;">✓ PAID</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #ccc; font-size: 11px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Payment Status:</span>
+            <span class="total-value" style="text-align: right; color: #059669; font-weight: bold; min-width: 60px;">✓ PAID</span>
           </div>
         ` : ''}
         ${billId ? `
-          <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc; font-size: 9px; color: #666;">
-            <span>Bill ID:</span>
-            <span>#${billId}</span>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; font-size: 10px; line-height: 1.5; color: #666;">
+            <span class="total-label" style="text-align: left; flex: 1;">Bill ID:</span>
+            <span class="total-value" style="text-align: right; min-width: 60px;">#${billId}</span>
           </div>
         ` : ''}
       </div>
-      
-      <!-- Thank You -->
-      <div style="text-align: center; margin-top: 15px; padding-top: 12px; border-top: 2px dashed #FF5F15; font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #FF5F15;">
+
+      <div class="thank-you" style="text-align: center; margin-top: 20px; padding-top: 15px; border-top: 2px dashed #FF5F15; font-size: 15px; font-weight: bold; letter-spacing: 3px; color: #FF5F15;">
         THANK YOU
       </div>
-      <div style="text-align: center; margin-top: 10px; font-size: 9px; color: #666;">
-        Visit us again!
-      </div>
+      
+      <div class="divider" style="text-align: center; margin-top: 15px; font-size: 9px;">Visit us again!</div>
     `;
   };
 
@@ -2810,7 +2833,7 @@ export default function OrderManagementPage() {
         return false;
       }
 
-      // Create print-ready HTML - FIXED to render receipt properly
+        // Create print-ready HTML - MATCHES ThermalReceipt component design
       const printHTML = `<!DOCTYPE html>
 <html>
 <head>
@@ -2827,119 +2850,86 @@ html, body {
   padding: 0; 
   width: 80mm; 
   height: auto;
-  min-height: auto;
-  font-family: 'Courier New', monospace; 
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 11px; 
   line-height: 1.4; 
   background: white; 
   color: #000;
-  overflow: visible;
 }
-@media print {
-  @page { 
-    size: 80mm auto; 
-    margin: 0; 
-    padding: 0;
-  }
-  html, body { 
-    width: 80mm !important; 
-    max-width: 80mm !important;
-    margin: 0 !important; 
-    padding: 0 !important; 
-    height: auto !important;
-    min-height: auto !important;
-    overflow: visible !important;
-  }
-  .no-print { 
-    display: none !important; 
-  }
-  .receipt-wrapper {
-    width: 80mm !important;
-    max-width: 80mm !important;
-    margin: 0 auto !important;
-    padding: 5mm 4mm !important;
-    background: white !important;
-    page-break-after: avoid !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-    position: relative !important;
-  }
-  .receipt-wrapper * {
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-  /* Ensure all content is visible */
-  .receipt-wrapper,
-  .receipt-wrapper * {
-    visibility: visible !important;
-    display: block !important;
-  }
-  table {
-    display: table !important;
-  }
-  tr {
-    display: table-row !important;
-  }
-  td, th {
-    display: table-cell !important;
-  }
-}
-.receipt-wrapper {
+.receipt-container {
   width: 80mm;
   max-width: 80mm;
+  min-width: 80mm;
   margin: 0 auto;
-  padding: 5mm 4mm;
+  padding: 8mm 5mm;
   background: white;
-  position: relative;
+  box-sizing: border-box;
+}
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .receipt-container,
+  .receipt-container * {
+    visibility: visible !important;
+  }
+  .receipt-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    min-width: 80mm !important;
+    margin: 0 !important;
+    padding: 5mm 4mm !important;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+  }
+  .no-print {
+    display: none !important;
+  }
 }
 .no-print {
   display: none;
 }
 @media screen {
-  body { 
-    padding: 20px; 
-    background: #f5f5f5; 
+  body {
+    padding: 20px;
+    background: #f5f5f5;
   }
-  .no-print { 
-    display: block; 
-    margin-top: 20px; 
-    padding: 15px; 
-    background: #f0f0f0; 
-    border-radius: 5px; 
-    text-align: center; 
+  .no-print {
+    display: block;
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f0f0;
+    border-radius: 5px;
+    text-align: center;
     font-size: 12px;
   }
-  .receipt-wrapper {
+  .receipt-container {
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
 }
 </style>
 </head>
 <body>
-<div class="receipt-wrapper">${receiptHTML}</div>
+<div class="receipt-container">${receiptHTML}</div>
 <div class="no-print">
 <p><strong>Print Preview</strong></p>
-<p>Press Ctrl+P to print or click the Print button.</p>
-<p style="font-size: 10px; color: #666; margin-top: 10px;">Make sure to select your 80mm thermal printer.</p>
+<p>Print dialog will open automatically...</p>
 </div>
-<script>
-(function() {
-  // Wait for content to load
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      setTimeout(function() {
-        window.focus();
-        window.print();
-      }, 300);
-    });
-  } else {
-    setTimeout(function() {
-      window.focus();
-      window.print();
-    }, 300);
-  }
-})();
-</script>
 </body>
 </html>`;
 
@@ -2948,16 +2938,19 @@ html, body {
       printWindow.document.write(printHTML);
       printWindow.document.close();
 
-      // Trigger print after content loads
-      setTimeout(() => {
+      // Wait for window to fully load, then trigger print automatically
+      const triggerPrint = () => {
         try {
           if (printWindow && !printWindow.closed) {
             printWindow.focus();
+            // Small delay to ensure content is rendered
             setTimeout(() => {
               if (printWindow && !printWindow.closed) {
                 printWindow.print();
+                // Close window after print dialog is shown (user can cancel)
+                // Don't close immediately - let user interact with print dialog
               }
-            }, 300);
+            }, 100);
           }
         } catch (error) {
           console.error('Error triggering print:', error);
@@ -2966,7 +2959,16 @@ html, body {
             message: 'Print window opened. Please press Ctrl+P to print manually.' 
           });
         }
-      }, 200);
+      };
+
+      // Use onload event if available
+      if (printWindow.document.readyState === 'complete') {
+        triggerPrint();
+      } else {
+        printWindow.onload = triggerPrint;
+        // Fallback timeout in case onload doesn't fire
+        setTimeout(triggerPrint, 500);
+      }
 
       // Show success notification
       setAlert({ 
