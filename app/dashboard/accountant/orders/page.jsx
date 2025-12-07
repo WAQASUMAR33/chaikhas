@@ -2375,11 +2375,13 @@ export default function OrderManagementPage() {
         // Fallback to window.print() if API fails or times out
         const printWindow = window.open('', '_blank');
         if (printWindow) {
+          printWindow.document.open();
           printWindow.document.write(`
             <!DOCTYPE html>
             <html>
               <head>
                 <title>Receipt - Restaurant Khas</title>
+                <meta charset="UTF-8">
                 <style>
                   @media print {
                     @page {
@@ -2392,7 +2394,7 @@ export default function OrderManagementPage() {
                       padding: 5px !important;
                       width: 80mm;
                       max-width: 80mm;
-                      overflow: hidden;
+                      overflow: visible !important;
                     }
                     * {
                       margin: 0;
@@ -2413,6 +2415,18 @@ export default function OrderManagementPage() {
                       height: auto !important;
                       min-height: auto !important;
                       max-height: none !important;
+                      overflow: visible !important;
+                    }
+                    html {
+                      height: auto !important;
+                    }
+                  }
+                  @media screen {
+                    html, body {
+                      margin: 0;
+                      padding: 5px;
+                      width: 80mm;
+                      max-width: 80mm;
                     }
                   }
                   html, body {
@@ -2423,11 +2437,15 @@ export default function OrderManagementPage() {
                     line-height: 1.3;
                     width: 80mm;
                     max-width: 80mm;
+                    background: white;
                   }
                   * {
                     box-sizing: border-box;
                     margin: 0;
                     padding: 0;
+                  }
+                  body > * {
+                    visibility: visible;
                   }
                 </style>
               </head>
@@ -2435,10 +2453,30 @@ export default function OrderManagementPage() {
             </html>
           `);
           printWindow.document.close();
+          
+          // Wait for content to fully load before printing
+          printWindow.onload = function() {
+            setTimeout(() => {
+              try {
+                printWindow.focus();
+                printWindow.print();
+              } catch (error) {
+                console.error('Error triggering print:', error);
+              }
+            }, 500);
+          };
+          
+          // Fallback: if onload doesn't fire, try after a delay
           setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-          }, 250);
+            if (printWindow && !printWindow.closed) {
+              try {
+                printWindow.focus();
+                printWindow.print();
+              } catch (error) {
+                console.error('Error triggering print (fallback):', error);
+              }
+            }
+          }, 1000);
         } else {
           // If popup blocked, use direct window.print
           window.print();
@@ -2493,24 +2531,56 @@ export default function OrderManagementPage() {
           console.warn('Print API returned error, using fallback');
           const printWindow = window.open('', '_blank');
           if (printWindow) {
+            printWindow.document.open();
             printWindow.document.write(`
               <!DOCTYPE html>
               <html>
                 <head>
                   <title>Receipt - Restaurant Khas</title>
+                  <meta charset="UTF-8">
                   <style>
                     @media print {
                       @page {
                         size: 80mm auto;
                         margin: 0;
-                      }
-                      body {
-                        margin: 0;
                         padding: 0;
                       }
+                      html, body {
+                        margin: 0 !important;
+                        padding: 5px !important;
+                        width: 80mm;
+                        max-width: 80mm;
+                        overflow: visible !important;
+                      }
+                      body {
+                        height: auto !important;
+                        min-height: auto !important;
+                        max-height: none !important;
+                      }
+                      html {
+                        height: auto !important;
+                      }
                     }
-                    body {
-                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    @media screen {
+                      html, body {
+                        margin: 0;
+                        padding: 5px;
+                        width: 80mm;
+                        max-width: 80mm;
+                      }
+                    }
+                    html, body {
+                      font-family: 'Courier New', monospace;
+                      margin: 0;
+                      padding: 5px;
+                      font-size: 11px;
+                      line-height: 1.3;
+                      width: 80mm;
+                      max-width: 80mm;
+                      background: white;
+                    }
+                    * {
+                      box-sizing: border-box;
                       margin: 0;
                       padding: 0;
                     }
@@ -2520,10 +2590,30 @@ export default function OrderManagementPage() {
               </html>
             `);
             printWindow.document.close();
+            
+            // Wait for content to fully load before printing
+            printWindow.onload = function() {
+              setTimeout(() => {
+                try {
+                  printWindow.focus();
+                  printWindow.print();
+                } catch (error) {
+                  console.error('Error triggering print:', error);
+                }
+              }, 500);
+            };
+            
+            // Fallback: if onload doesn't fire, try after a delay
             setTimeout(() => {
-              printWindow.print();
-              printWindow.close();
-            }, 250);
+              if (printWindow && !printWindow.closed) {
+                try {
+                  printWindow.focus();
+                  printWindow.print();
+                } catch (error) {
+                  console.error('Error triggering print (fallback):', error);
+                }
+              }
+            }, 1000);
           } else {
             window.print();
           }
@@ -2538,11 +2628,13 @@ export default function OrderManagementPage() {
         console.warn('Print API failed, using fallback');
         const printWindow = window.open('', '_blank');
         if (printWindow) {
+          printWindow.document.open();
           printWindow.document.write(`
             <!DOCTYPE html>
             <html>
               <head>
                 <title>Receipt - Restaurant Khas</title>
+                <meta charset="UTF-8">
                 <style>
                   @media print {
                     @page {
@@ -2555,7 +2647,7 @@ export default function OrderManagementPage() {
                       padding: 5px !important;
                       width: 80mm;
                       max-width: 80mm;
-                      overflow: hidden;
+                      overflow: visible !important;
                     }
                     * {
                       margin: 0;
@@ -2576,6 +2668,18 @@ export default function OrderManagementPage() {
                       height: auto !important;
                       min-height: auto !important;
                       max-height: none !important;
+                      overflow: visible !important;
+                    }
+                    html {
+                      height: auto !important;
+                    }
+                  }
+                  @media screen {
+                    html, body {
+                      margin: 0;
+                      padding: 5px;
+                      width: 80mm;
+                      max-width: 80mm;
                     }
                   }
                   html, body {
@@ -2586,11 +2690,15 @@ export default function OrderManagementPage() {
                     line-height: 1.3;
                     width: 80mm;
                     max-width: 80mm;
+                    background: white;
                   }
                   * {
                     box-sizing: border-box;
                     margin: 0;
                     padding: 0;
+                  }
+                  body > * {
+                    visibility: visible;
                   }
                 </style>
               </head>
@@ -2598,10 +2706,30 @@ export default function OrderManagementPage() {
             </html>
           `);
           printWindow.document.close();
+          
+          // Wait for content to fully load before printing
+          printWindow.onload = function() {
+            setTimeout(() => {
+              try {
+                printWindow.focus();
+                printWindow.print();
+              } catch (error) {
+                console.error('Error triggering print:', error);
+              }
+            }, 500);
+          };
+          
+          // Fallback: if onload doesn't fire, try after a delay
           setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-          }, 250);
+            if (printWindow && !printWindow.closed) {
+              try {
+                printWindow.focus();
+                printWindow.print();
+              } catch (error) {
+                console.error('Error triggering print (fallback):', error);
+              }
+            }
+          }, 1000);
         } else {
           window.print();
         }
@@ -2620,24 +2748,56 @@ export default function OrderManagementPage() {
         if (printContent) {
           const printWindow = window.open('', '_blank');
           if (printWindow) {
+            printWindow.document.open();
             printWindow.document.write(`
               <!DOCTYPE html>
               <html>
                 <head>
                   <title>Receipt - Restaurant Khas</title>
+                  <meta charset="UTF-8">
                   <style>
                     @media print {
                       @page {
                         size: 80mm auto;
                         margin: 0;
-                      }
-                      body {
-                        margin: 0;
                         padding: 0;
                       }
+                      html, body {
+                        margin: 0 !important;
+                        padding: 5px !important;
+                        width: 80mm;
+                        max-width: 80mm;
+                        overflow: visible !important;
+                      }
+                      body {
+                        height: auto !important;
+                        min-height: auto !important;
+                        max-height: none !important;
+                      }
+                      html {
+                        height: auto !important;
+                      }
                     }
-                    body {
-                      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    @media screen {
+                      html, body {
+                        margin: 0;
+                        padding: 5px;
+                        width: 80mm;
+                        max-width: 80mm;
+                      }
+                    }
+                    html, body {
+                      font-family: 'Courier New', monospace;
+                      margin: 0;
+                      padding: 5px;
+                      font-size: 11px;
+                      line-height: 1.3;
+                      width: 80mm;
+                      max-width: 80mm;
+                      background: white;
+                    }
+                    * {
+                      box-sizing: border-box;
                       margin: 0;
                       padding: 0;
                     }
@@ -2647,10 +2807,30 @@ export default function OrderManagementPage() {
               </html>
             `);
             printWindow.document.close();
+            
+            // Wait for content to fully load before printing
+            printWindow.onload = function() {
+              setTimeout(() => {
+                try {
+                  printWindow.focus();
+                  printWindow.print();
+                } catch (error) {
+                  console.error('Error triggering print:', error);
+                }
+              }, 500);
+            };
+            
+            // Fallback: if onload doesn't fire, try after a delay
             setTimeout(() => {
-              printWindow.print();
-              printWindow.close();
-            }, 250);
+              if (printWindow && !printWindow.closed) {
+                try {
+                  printWindow.focus();
+                  printWindow.print();
+                } catch (error) {
+                  console.error('Error triggering print (fallback):', error);
+                }
+              }
+            }, 1000);
         } else {
           window.print();
         }
@@ -4846,3 +5026,5 @@ export default function OrderManagementPage() {
     </AccountantLayout>
   );
 }
+
+

@@ -2601,7 +2601,7 @@ export default function OrderManagementPage() {
       if (!printWindow) {
         setAlert({ 
           type: 'error', 
-          message: 'Please allow popups to print receipts.' 
+          message: 'Please allow popups to print receipts. Check your browser popup blocker settings.' 
         });
         return false;
       }
@@ -2612,6 +2612,7 @@ export default function OrderManagementPage() {
         <html>
           <head>
             <title>Receipt - Order ${orderId}</title>
+            <meta charset="UTF-8">
             <style>
               @media print {
                 @page { 
@@ -2624,12 +2625,7 @@ export default function OrderManagementPage() {
                   padding: 5px !important;
                   width: 80mm;
                   max-width: 80mm;
-                  overflow: hidden;
-                }
-                * {
-                  margin: 0;
-                  padding: 0;
-                  box-sizing: border-box;
+                  overflow: visible !important;
                 }
                 .no-print { 
                   display: none !important; 
@@ -2637,16 +2633,29 @@ export default function OrderManagementPage() {
                 button, .no-print { 
                   display: none !important; 
                 }
-                /* Prevent page breaks */
+                /* Prevent page breaks inside content */
                 * {
                   page-break-inside: avoid;
                   break-inside: avoid;
                 }
-                /* Prevent extra pages */
+                /* Prevent extra blank pages */
                 body {
                   height: auto !important;
                   min-height: auto !important;
                   max-height: none !important;
+                  overflow: visible !important;
+                }
+                /* Remove any empty space */
+                html {
+                  height: auto !important;
+                }
+              }
+              @media screen {
+                html, body {
+                  margin: 0;
+                  padding: 5px;
+                  width: 80mm;
+                  max-width: 80mm;
                 }
               }
               html, body {
@@ -2657,6 +2666,7 @@ export default function OrderManagementPage() {
                 line-height: 1.3;
                 width: 80mm;
                 max-width: 80mm;
+                background: white;
               }
               * {
                 box-sizing: border-box;
@@ -2668,6 +2678,10 @@ export default function OrderManagementPage() {
                 margin: 0;
                 padding: 0;
               }
+              /* Ensure content is visible */
+              body > * {
+                visibility: visible;
+              }
             </style>
           </head>
           <body>
@@ -2677,18 +2691,51 @@ export default function OrderManagementPage() {
               <p>Click the Print button or press Ctrl+P to print this receipt.</p>
               <p>Make sure to select your USB printer.</p>
             </div>
+            <script>
+              // Ensure content is loaded before printing
+              window.onload = function() {
+                // Small delay to ensure all content is rendered
+                setTimeout(function() {
+                  window.focus();
+                  // Don't auto-print, let user click print button
+                }, 100);
+              };
+            </script>
           </body>
         </html>
       `;
 
+      printWindow.document.open();
       printWindow.document.write(printHTML);
       printWindow.document.close();
 
-      // Wait for content to load, then trigger print
+      // Wait for content to fully load, then trigger print dialog
+      printWindow.onload = function() {
+        setTimeout(() => {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch (error) {
+            console.error('Error triggering print:', error);
+            setAlert({ 
+              type: 'error', 
+              message: 'Error opening print dialog. Please try printing manually (Ctrl+P).' 
+            });
+          }
+        }, 500);
+      };
+
+      // Fallback: if onload doesn't fire, try after a delay
       setTimeout(() => {
-        printWindow.focus();
-        printWindow.print();
-      }, 250);
+        if (printWindow && !printWindow.closed) {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch (error) {
+            console.error('Error triggering print (fallback):', error);
+          }
+        }
+      }, 1000);
 
       // Show success notification
       setAlert({ 
