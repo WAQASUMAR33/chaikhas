@@ -139,144 +139,265 @@ export default function AccountantDashboardPage() {
         apiParams.after_closing_date = lastDayendTime;
       }
       
-      console.log('Fetching dashboard stats with params:', apiParams);
-      const result = await apiPost('/get_dashboard_stats.php', apiParams);
-      console.log('Dashboard stats API response:', result);
+      // PRIMARY METHOD: Fetch sales from bills directly (more accurate than orders)
+      // Sales should come from bills, not orders
+      let totalSales = 0;
+      let totalOrders = 0;
+      let todaySales = 0;
+      let todayOrders = 0;
       
-      let statsData = {};
-      
-      if (result.success && result.data) {
-        // Handle multiple response structures
-        if (result.data.success && result.data.data) {
-          statsData = result.data.data;
-        } else if (result.data.data && typeof result.data.data === 'object') {
-          statsData = result.data.data;
-        } else if (typeof result.data === 'object' && !Array.isArray(result.data)) {
-          statsData = result.data;
+      try {
+        const billsParams = {
+          terminal,
+          date: today,
+        };
+        if (branchId) {
+          billsParams.branch_id = branchId;
         }
+        if (lastDayendTime) {
+          billsParams.after_closing_date = lastDayendTime;
+        }
+        
+        console.log('📊 Fetching bills for accurate sales calculation:', billsParams);
+        const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+        
+        if (billsResult.success && billsResult.data) {
+          let billsList = [];
+          if (Array.isArray(billsResult.data)) {
+            billsList = billsResult.data;
+          } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
+            billsList = billsResult.data.data;
+          } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
+            billsList = billsResult.data.bills;
+          }
+          
+          if (billsList.length > 0) {
+            // Filter bills to only include today's bills (after dayend if dayend exists)
+            const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
+            const todayEnd = new Date();
+            
+            const todayBillsList = billsList.filter(bill => {
+              if (!bill) return false;
+              
+              const billDate = bill.created_at || bill.bill_date || bill.date || bill.created_date || bill.bill_created_at;
+              if (!billDate) return false;
+              
+              const billDateTime = new Date(billDate);
+              if (isNaN(billDateTime.getTime())) return false;
+              
+              return billDateTime >= todayStart && billDateTime <= todayEnd;
+            });
+            
+            if (todayBillsList.length > 0) {
+              // Count unique orders from bills
+              const uniqueOrderIds = new Set(todayBillsList.map(bill => bill.order_id || bill.order_ID || bill.orderId).filter(Boolean));
+              todayOrders = uniqueOrderIds.size || todayBillsList.length;
+              
+              // Calculate sales from bills - use grand_total, net_total, or total
+              todaySales = todayBillsList.reduce((sum, bill) => {
+                const billTotal = parseFloat(
+                  bill.grand_total || 
+                  bill.net_total || 
+                  bill.total || 
+                  bill.amount || 
+                  bill.total_amount ||
+                  bill.bill_amount ||
+                  bill.paid_amount ||
+                  0
+                );
+                return sum + billTotal;
+              }, 0);
+              
+              // Update totals to match today's values
+              totalOrders = todayOrders;
+              totalSales = todaySales;
+              
+              console.log('📊 ✅ Successfully calculated sales from bills:', {
+                todayOrders,
+                todaySales,
+                billsCount: todayBillsList.length
+              });
+            }
+          }
+        }
+      } catch (billsError) {
+        console.error('📊 Error fetching bills for sales:', billsError);
+        // Continue to fallback method
       }
       
-      console.log('📊 Raw statsData from API:', statsData);
-      
-      // Extract values from API response - handle various field name formats
-      let totalSales = parseFloat(statsData.totalSales || statsData.total_sales || statsData.sales || 0);
-      let totalOrders = parseInt(statsData.totalOrders || statsData.total_orders || statsData.orders || 0);
-      
-      // Try to get today-specific values, or calculate from recent orders
-      let todaySales = parseFloat(statsData.todaySales || statsData.today_sales || statsData.daily_sales || 0);
-      let todayOrders = parseInt(statsData.todayOrders || statsData.today_orders || statsData.daily_orders || 0);
-      
-      // If todayOrders/todaySales are not provided, try to calculate from recent orders
-      // Check if there's a recentOrders array we can use
-      const recentOrders = statsData.recentOrders || statsData.recent_orders || statsData.orders || [];
-      
-      if (Array.isArray(recentOrders) && recentOrders.length > 0) {
-        console.log('📊 Found recentOrders array, calculating today\'s stats from orders');
+      // FALLBACK: If bills method didn't work, try dashboard stats API
+      if (todaySales === 0 && todayOrders === 0) {
+        console.log('📊 Bills method returned no data, trying dashboard stats API...');
+        console.log('Fetching dashboard stats with params:', apiParams);
+        const result = await apiPost('/get_dashboard_stats.php', apiParams);
+        console.log('Dashboard stats API response:', result);
         
-        // Filter orders to only include today's orders (after dayend if dayend exists)
-        const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
-        const todayEnd = new Date();
+        let statsData = {};
         
-        const todayOrdersList = recentOrders.filter(order => {
-          if (!order) return false;
-          
-          const orderDate = order.created_at || order.date || order.order_date || order.created_date;
-          if (!orderDate) return false;
-          
-          const orderDateTime = new Date(orderDate);
-          return orderDateTime >= todayStart && orderDateTime <= todayEnd;
-        });
+        if (result.success && result.data) {
+          // Handle multiple response structures
+          if (result.data.success && result.data.data) {
+            statsData = result.data.data;
+          } else if (result.data.data && typeof result.data.data === 'object') {
+            statsData = result.data.data;
+          } else if (typeof result.data === 'object' && !Array.isArray(result.data)) {
+            statsData = result.data;
+          }
+        }
         
-        // Calculate today's orders and sales from filtered orders
-        if (todayOrdersList.length > 0) {
-          todayOrders = todayOrdersList.length;
-          todaySales = todayOrdersList.reduce((sum, order) => {
-            const orderTotal = parseFloat(order.total || order.g_total_amount || order.net_total_amount || order.amount || 0);
-            return sum + orderTotal;
-          }, 0);
+        console.log('📊 Raw statsData from API:', statsData);
+        
+        // Extract values from API response - handle various field name formats
+        totalSales = parseFloat(statsData.totalSales || statsData.total_sales || statsData.sales || 0);
+        totalOrders = parseInt(statsData.totalOrders || statsData.total_orders || statsData.orders || 0);
+        
+        // Try to get today-specific values, or calculate from recent orders
+        todaySales = parseFloat(statsData.todaySales || statsData.today_sales || statsData.daily_sales || 0);
+        todayOrders = parseInt(statsData.todayOrders || statsData.today_orders || statsData.daily_orders || 0);
+        
+        // If todayOrders/todaySales are not provided, try to calculate from recent orders
+        // Check if there's a recentOrders array we can use
+        const recentOrders = statsData.recentOrders || statsData.recent_orders || statsData.orders || [];
+        
+        if (Array.isArray(recentOrders) && recentOrders.length > 0) {
+          console.log('📊 Found recentOrders array, calculating today\'s stats from orders');
           
-          console.log('📊 Calculated from recentOrders:', {
-            todayOrders,
-            todaySales,
-            ordersCount: todayOrdersList.length
+          // Filter orders to only include today's orders (after dayend if dayend exists)
+          const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
+          const todayEnd = new Date();
+          
+          const todayOrdersList = recentOrders.filter(order => {
+            if (!order) return false;
+            
+            const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+            if (!orderDate) return false;
+            
+            const orderDateTime = new Date(orderDate);
+            return orderDateTime >= todayStart && orderDateTime <= todayEnd;
           });
+          
+          // Calculate today's orders and sales from filtered orders
+          // Note: Sales should ideally come from bills, but we'll use orders as fallback
+          if (todayOrdersList.length > 0) {
+            todayOrders = todayOrdersList.length;
+            // Try to get sales from bills if available, otherwise use order totals
+            todaySales = todayOrdersList.reduce((sum, order) => {
+              // Prefer bill amount if available, otherwise use order total
+              const orderTotal = parseFloat(
+                order.bill_amount ||
+                order.grand_total ||
+                order.net_total ||
+                order.total || 
+                order.g_total_amount || 
+                order.net_total_amount || 
+                order.amount || 
+                0
+              );
+              return sum + orderTotal;
+            }, 0);
+            
+            console.log('📊 Calculated from recentOrders:', {
+              todayOrders,
+              todaySales,
+              ordersCount: todayOrdersList.length
+            });
+          }
+        }
+        
+        // FALLBACK: If todayOrders/todaySales are still 0 but we have totalOrders/totalSales,
+        // and the API was called with after_closing_date, assume totals are today's values
+        if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && lastDayendTime) {
+          // API filtered by after_closing_date, so totals should be today's values
+          todayOrders = totalOrders;
+          todaySales = totalSales;
+          console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (API filtered by dayend)');
+        } else if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && !lastDayendTime) {
+          // No dayend, so if totals exist and today's values are 0, use totals as today's values
+          todayOrders = totalOrders;
+          todaySales = totalSales;
+          console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (no dayend)');
         }
       }
       
-      // FALLBACK: If todayOrders/todaySales are still 0 but we have totalOrders/totalSales,
-      // and the API was called with after_closing_date, assume totals are today's values
-      if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && lastDayendTime) {
-        // API filtered by after_closing_date, so totals should be today's values
-        todayOrders = totalOrders;
-        todaySales = totalSales;
-        console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (API filtered by dayend)');
-      } else if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && !lastDayendTime) {
-        // No dayend, so if totals exist and today's values are 0, use totals as today's values
-        todayOrders = totalOrders;
-        todaySales = totalSales;
-        console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (no dayend)');
-      }
-      
-      // ADDITIONAL FALLBACK: If still no data, try fetching orders directly
+      // ADDITIONAL FALLBACK: If still no data, try fetching bills directly (sales should come from bills, not orders)
       if (todayOrders === 0 && todaySales === 0 && (totalOrders === 0 || !totalOrders)) {
-        console.log('📊 No data from dashboard stats, attempting to fetch orders directly...');
+        console.log('📊 No data from dashboard stats, attempting to fetch bills directly for accurate sales...');
         try {
-          const ordersParams = { date: today };
+          const billsParams = {
+            terminal,
+            date: today,
+          };
           if (branchId) {
-            ordersParams.branch_id = branchId;
+            billsParams.branch_id = branchId;
           }
           if (lastDayendTime) {
-            ordersParams.after_closing_date = lastDayendTime;
+            billsParams.after_closing_date = lastDayendTime;
           }
           
-          const ordersResult = await apiPost('/order_management.php', ordersParams);
-          console.log('📊 Direct orders fetch response:', ordersResult);
+          const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+          console.log('📊 Direct bills fetch response:', billsResult);
           
-          if (ordersResult.success && ordersResult.data) {
-            let ordersList = [];
-            if (Array.isArray(ordersResult.data)) {
-              ordersList = ordersResult.data;
-            } else if (ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
-              ordersList = ordersResult.data.data;
-            } else if (ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
-              ordersList = ordersResult.data.orders;
+          if (billsResult.success && billsResult.data) {
+            let billsList = [];
+            if (Array.isArray(billsResult.data)) {
+              billsList = billsResult.data;
+            } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
+              billsList = billsResult.data.data;
+            } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
+              billsList = billsResult.data.bills;
             }
             
-            if (ordersList.length > 0) {
-              // Filter orders to only include today's orders (after dayend if dayend exists)
+            if (billsList.length > 0) {
+              // Filter bills to only include today's bills (after dayend if dayend exists)
               const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
               const todayEnd = new Date();
               
-              const todayOrdersList = ordersList.filter(order => {
-                if (!order) return false;
+              const todayBillsList = billsList.filter(bill => {
+                if (!bill) return false;
                 
-                const orderDate = order.created_at || order.date || order.order_date || order.created_date;
-                if (!orderDate) return false;
+                const billDate = bill.created_at || bill.bill_date || bill.date || bill.created_date || bill.bill_created_at;
+                if (!billDate) return false;
                 
-                const orderDateTime = new Date(orderDate);
-                return orderDateTime >= todayStart && orderDateTime <= todayEnd;
+                const billDateTime = new Date(billDate);
+                if (isNaN(billDateTime.getTime())) return false;
+                
+                return billDateTime >= todayStart && billDateTime <= todayEnd;
               });
               
-              if (todayOrdersList.length > 0) {
-                todayOrders = todayOrdersList.length;
-                todaySales = todayOrdersList.reduce((sum, order) => {
-                  const orderTotal = parseFloat(order.total || order.g_total_amount || order.net_total_amount || order.amount || 0);
-                  return sum + orderTotal;
+              if (todayBillsList.length > 0) {
+                // Count unique orders from bills
+                const uniqueOrderIds = new Set(todayBillsList.map(bill => bill.order_id || bill.order_ID || bill.orderId).filter(Boolean));
+                todayOrders = uniqueOrderIds.size || todayBillsList.length;
+                
+                // Calculate sales from bills - use grand_total, net_total, or total
+                todaySales = todayBillsList.reduce((sum, bill) => {
+                  const billTotal = parseFloat(
+                    bill.grand_total || 
+                    bill.net_total || 
+                    bill.total || 
+                    bill.amount || 
+                    bill.total_amount ||
+                    bill.bill_amount ||
+                    bill.paid_amount ||
+                    0
+                  );
+                  return sum + billTotal;
                 }, 0);
                 
                 // Update totals to match today's values
                 totalOrders = todayOrders;
                 totalSales = todaySales;
                 
-                console.log('📊 ✅ Successfully fetched today\'s orders directly:', {
+                console.log('📊 ✅ Successfully fetched today\'s bills directly:', {
                   todayOrders,
-                  todaySales
+                  todaySales,
+                  billsCount: todayBillsList.length
                 });
               }
             }
           }
-        } catch (ordersError) {
-          console.error('📊 Error fetching orders directly:', ordersError);
+        } catch (billsError) {
+          console.error('📊 Error fetching bills directly:', billsError);
           // Continue with existing values (0)
         }
       }
