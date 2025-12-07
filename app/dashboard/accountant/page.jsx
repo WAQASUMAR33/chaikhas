@@ -18,8 +18,6 @@ import {
   PlusCircle, 
   FileText, 
   TrendingUp,
-  ShoppingCart,
-  DollarSign,
   Receipt,
   CheckCircle
 } from 'lucide-react';
@@ -158,95 +156,163 @@ export default function AccountantDashboardPage() {
         }
       }
       
-      // CLIENT-SIDE FILTERING: Ensure sales are reset after dayend
-      // If dayend exists, only count sales after dayend closing time
-      // If no dayend, only count today's sales
-      let filteredTotalSales = parseFloat(statsData.totalSales || statsData.total_sales || 0);
-      let filteredTodaySales = parseFloat(statsData.todaySales || statsData.today_sales || 0);
-      let filteredTotalOrders = parseInt(statsData.totalOrders || statsData.total_orders || 0);
-      let filteredTodayOrders = parseInt(statsData.todayOrders || statsData.today_orders || 0);
+      console.log('📊 Raw statsData from API:', statsData);
       
-      // STRICT FILTERING: If dayend exists, ensure sales are ONLY from after dayend
-      if (lastDayendTime) {
-        const cutoffDateTime = new Date(lastDayendTime);
-        console.log('📅 Applying dayend filter - cutoff time:', cutoffDateTime);
-        console.log('📅 Dayend date:', cutoffDateTime.toISOString());
-        console.log('📅 Raw API stats before filtering:', {
-          totalSales: filteredTotalSales,
-          todaySales: filteredTodaySales,
-          totalOrders: filteredTotalOrders,
-          todayOrders: filteredTodayOrders
+      // Extract values from API response - handle various field name formats
+      let totalSales = parseFloat(statsData.totalSales || statsData.total_sales || statsData.sales || 0);
+      let totalOrders = parseInt(statsData.totalOrders || statsData.total_orders || statsData.orders || 0);
+      
+      // Try to get today-specific values, or calculate from recent orders
+      let todaySales = parseFloat(statsData.todaySales || statsData.today_sales || statsData.daily_sales || 0);
+      let todayOrders = parseInt(statsData.todayOrders || statsData.today_orders || statsData.daily_orders || 0);
+      
+      // If todayOrders/todaySales are not provided, try to calculate from recent orders
+      // Check if there's a recentOrders array we can use
+      const recentOrders = statsData.recentOrders || statsData.recent_orders || statsData.orders || [];
+      
+      if (Array.isArray(recentOrders) && recentOrders.length > 0) {
+        console.log('📊 Found recentOrders array, calculating today\'s stats from orders');
+        
+        // Filter orders to only include today's orders (after dayend if dayend exists)
+        const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
+        const todayEnd = new Date();
+        
+        const todayOrdersList = recentOrders.filter(order => {
+          if (!order) return false;
+          
+          const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+          if (!orderDate) return false;
+          
+          const orderDateTime = new Date(orderDate);
+          return orderDateTime >= todayStart && orderDateTime <= todayEnd;
         });
         
-        // CRITICAL: If dayend exists, totalSales should ONLY include sales after dayend
-        // Since dayend was marked, all sales before dayend should be excluded
-        // If todayOrders is 0, it means no orders after dayend, so totalSales MUST be 0
-        if (filteredTodayOrders === 0) {
-          // No orders today means no sales after dayend - reset everything to 0
-          filteredTotalSales = 0;
-          filteredTodaySales = 0;
-          filteredTotalOrders = 0;
-          console.log('📅 ✅ No orders after dayend - resetting all sales to 0');
+        // Calculate today's orders and sales from filtered orders
+        if (todayOrdersList.length > 0) {
+          todayOrders = todayOrdersList.length;
+          todaySales = todayOrdersList.reduce((sum, order) => {
+            const orderTotal = parseFloat(order.total || order.g_total_amount || order.net_total_amount || order.amount || 0);
+            return sum + orderTotal;
+          }, 0);
+          
+          console.log('📊 Calculated from recentOrders:', {
+            todayOrders,
+            todaySales,
+            ordersCount: todayOrdersList.length
+          });
+        }
+      }
+      
+      // FALLBACK: If todayOrders/todaySales are still 0 but we have totalOrders/totalSales,
+      // and the API was called with after_closing_date, assume totals are today's values
+      if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && lastDayendTime) {
+        // API filtered by after_closing_date, so totals should be today's values
+        todayOrders = totalOrders;
+        todaySales = totalSales;
+        console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (API filtered by dayend)');
+      } else if (todayOrders === 0 && todaySales === 0 && totalOrders > 0 && !lastDayendTime) {
+        // No dayend, so if totals exist and today's values are 0, use totals as today's values
+        todayOrders = totalOrders;
+        todaySales = totalSales;
+        console.log('📊 Fallback: Using totalOrders/totalSales as today\'s values (no dayend)');
+      }
+      
+      // ADDITIONAL FALLBACK: If still no data, try fetching orders directly
+      if (todayOrders === 0 && todaySales === 0 && (totalOrders === 0 || !totalOrders)) {
+        console.log('📊 No data from dashboard stats, attempting to fetch orders directly...');
+        try {
+          const ordersParams = { date: today };
+          if (branchId) {
+            ordersParams.branch_id = branchId;
+          }
+          if (lastDayendTime) {
+            ordersParams.after_closing_date = lastDayendTime;
+          }
+          
+          const ordersResult = await apiPost('/order_management.php', ordersParams);
+          console.log('📊 Direct orders fetch response:', ordersResult);
+          
+          if (ordersResult.success && ordersResult.data) {
+            let ordersList = [];
+            if (Array.isArray(ordersResult.data)) {
+              ordersList = ordersResult.data;
+            } else if (ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
+              ordersList = ordersResult.data.data;
+            } else if (ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
+              ordersList = ordersResult.data.orders;
+            }
+            
+            if (ordersList.length > 0) {
+              // Filter orders to only include today's orders (after dayend if dayend exists)
+              const todayStart = lastDayendTime ? new Date(lastDayendTime) : new Date(today + 'T00:00:00');
+              const todayEnd = new Date();
+              
+              const todayOrdersList = ordersList.filter(order => {
+                if (!order) return false;
+                
+                const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+                if (!orderDate) return false;
+                
+                const orderDateTime = new Date(orderDate);
+                return orderDateTime >= todayStart && orderDateTime <= todayEnd;
+              });
+              
+              if (todayOrdersList.length > 0) {
+                todayOrders = todayOrdersList.length;
+                todaySales = todayOrdersList.reduce((sum, order) => {
+                  const orderTotal = parseFloat(order.total || order.g_total_amount || order.net_total_amount || order.amount || 0);
+                  return sum + orderTotal;
+                }, 0);
+                
+                // Update totals to match today's values
+                totalOrders = todayOrders;
+                totalSales = todaySales;
+                
+                console.log('📊 ✅ Successfully fetched today\'s orders directly:', {
+                  todayOrders,
+                  todaySales
+                });
+              }
+            }
+          }
+        } catch (ordersError) {
+          console.error('📊 Error fetching orders directly:', ordersError);
+          // Continue with existing values (0)
+        }
+      }
+      
+      // Apply dayend filtering: if dayend exists, only show sales after dayend
+      if (lastDayendTime) {
+        console.log('📅 Dayend exists, filtering sales after:', lastDayendTime);
+        
+        // If todayOrders is 0, there are no orders after dayend - reset everything
+        if (todayOrders === 0) {
+          totalSales = 0;
+          todaySales = 0;
+          totalOrders = 0;
+          console.log('📅 ✅ No orders after dayend - all stats reset to 0');
         } else {
-          // There are orders after dayend - ensure totalSales matches todaySales
-          // Total sales should only be from after dayend (which is today)
-          // If API returned different values, use today's values as source of truth
-          filteredTotalSales = filteredTodaySales;
-          filteredTotalOrders = filteredTodayOrders;
-          console.log('📅 ✅ Orders exist after dayend - using today\'s sales as total');
+          // There are orders after dayend - total should match today (since dayend was marked)
+          totalSales = todaySales;
+          totalOrders = todayOrders;
+          console.log('📅 ✅ Orders exist after dayend - using today\'s values');
         }
-      } else {
-        // No dayend exists - ensure we only show today's data
-        console.log('📅 No dayend found - showing only today\'s data');
-        // If todayOrders is 0, todaySales should be 0
-        if (filteredTodayOrders === 0) {
-          filteredTodaySales = 0;
-        }
-        // Total sales should match today's sales if no dayend
-        filteredTotalSales = filteredTodaySales;
-        filteredTotalOrders = filteredTodayOrders;
       }
       
-      // FINAL SAFETY CHECK: If todayOrders is 0, ensure all sales are 0
-      // This catches any edge cases where API might return stale data
-      if (filteredTodayOrders === 0) {
-        filteredTotalSales = 0;
-        filteredTodaySales = 0;
-        filteredTotalOrders = 0;
-        console.log('📅 ✅ Final safety check: No orders today, all sales reset to 0');
-      }
-      
-      // ABSOLUTE FINAL CHECK: If todayOrders is 0, ALL sales must be 0
-      // This is the most important check - ensures reset after dayend
-      if (filteredTodayOrders === 0 && filteredTotalSales > 0) {
-        console.warn('⚠️ WARNING: API returned totalSales > 0 but todayOrders = 0. Forcing reset to 0.');
-        filteredTotalSales = 0;
-        filteredTotalOrders = 0;
-      }
-      
-      // If dayend exists and todayOrders is 0, totalSales MUST be 0 (no exceptions)
-      if (lastDayendTime && filteredTodayOrders === 0) {
-        filteredTotalSales = 0;
-        filteredTotalOrders = 0;
-        console.log('📅 ✅ Dayend exists + no orders today = all sales reset to 0');
-      }
-      
-      console.log('📊 Final filtered stats:', {
-        totalOrders: filteredTotalOrders,
-        totalSales: filteredTotalSales,
-        todayOrders: filteredTodayOrders,
-        todaySales: filteredTodaySales,
+      console.log('📊 Final stats to display:', {
+        totalOrders,
+        totalSales,
+        todayOrders,
+        todaySales,
         hasDayend: !!lastDayendTime,
-        dayendTime: lastDayendTime || 'None',
-        originalTotalSales: parseFloat(statsData.totalSales || statsData.total_sales || 0),
-        originalTodaySales: parseFloat(statsData.todaySales || statsData.today_sales || 0)
+        dayendTime: lastDayendTime || 'None'
       });
       
       setStats({
-        totalOrders: filteredTotalOrders,
-        totalSales: filteredTotalSales,
-        todayOrders: filteredTodayOrders,
-        todaySales: filteredTodaySales,
+        totalOrders,
+        totalSales,
+        todayOrders,
+        todaySales,
       });
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
@@ -305,33 +371,7 @@ export default function AccountantDashboardPage() {
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Total Orders */}
-          <div className="bg-blue-50 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition">
-            <div className="flex items-center justify-between mb-3 sm:mb-4">
-              <div className="text-blue-500 text-2xl sm:text-3xl font-bold">
-                {loading ? '...' : stats.totalOrders}
-              </div>
-              <div className="text-blue-500 bg-white rounded-full p-2 sm:p-3">
-                <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6" />
-              </div>
-            </div>
-            <h3 className="text-xs sm:text-sm font-medium text-gray-700">Total Orders</h3>
-          </div>
-
-          {/* Total Sales */}
-          <div className="bg-green-50 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition">
-            <div className="flex items-center justify-between mb-3 sm:mb-4">
-              <div className="text-green-500 text-2xl sm:text-3xl font-bold">
-                {loading ? '...' : formatPKR(stats.totalSales)}
-              </div>
-              <div className="text-green-500 bg-white rounded-full p-2 sm:p-3">
-                <DollarSign className="w-5 h-5 sm:w-6 sm:h-6" />
-              </div>
-            </div>
-            <h3 className="text-xs sm:text-sm font-medium text-gray-700">Total Sales</h3>
-          </div>
-
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Today Orders */}
           <div className="bg-purple-50 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition">
             <div className="flex items-center justify-between mb-3 sm:mb-4">
