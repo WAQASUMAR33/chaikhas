@@ -3015,14 +3015,53 @@ export default function OrderManagementPage() {
     );
   };
 
-  // Filter orders by status and search order ID
+  // Filter orders by status, date, and search order ID
   const filteredOrders = orders.filter(order => {
-    // Filter by status
+    if (!order) return false; // Filter out null/undefined orders
+    
+    // Filter by status - case-insensitive with proper trimming
     if (filter !== 'all') {
-      const orderStatus = (order.status || '').toLowerCase().trim();
+      const orderStatus = (order.status || order.order_status || '').toLowerCase().trim();
       const filterStatus = filter.toLowerCase().trim();
       if (orderStatus !== filterStatus) {
         return false;
+      }
+    }
+    
+    // Client-side date filtering as fallback (API should handle this, but ensure consistency)
+    if (dateFilter && dateFilter !== 'all') {
+      const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+      if (orderDate) {
+        const orderDateObj = new Date(orderDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (dateFilter === 'today') {
+          const orderDateStr = orderDateObj.toISOString().split('T')[0];
+          const todayStr = today.toISOString().split('T')[0];
+          if (orderDateStr !== todayStr) {
+            return false;
+          }
+        } else if (dateFilter === 'week') {
+          const weekAgo = new Date(today);
+          weekAgo.setDate(today.getDate() - 7);
+          if (orderDateObj < weekAgo) {
+            return false;
+          }
+        } else if (dateFilter === 'month') {
+          const monthAgo = new Date(today);
+          monthAgo.setMonth(today.getMonth() - 1);
+          if (orderDateObj < monthAgo) {
+            return false;
+          }
+        } else if (dateFilter === 'custom' && customDate) {
+          const customDateObj = new Date(customDate);
+          const orderDateStr = orderDateObj.toISOString().split('T')[0];
+          const customDateStr = customDateObj.toISOString().split('T')[0];
+          if (orderDateStr !== customDateStr) {
+            return false;
+          }
+        }
       }
     }
     
@@ -3030,7 +3069,7 @@ export default function OrderManagementPage() {
     if (searchOrderId && searchOrderId.trim()) {
       const searchTerm = searchOrderId.trim().toLowerCase();
       const orderId = String(order.order_id || order.id || '').toLowerCase();
-      const orderNumber = String(order.orderid || order.order_number || '').toLowerCase();
+      const orderNumber = String(order.orderid || order.order_number || order.orderNumber || '').toLowerCase();
       const orderIdFormatted = orderNumber.replace(/ord-?/i, ''); // Remove ORD- prefix for matching
       
       // Match exact order ID, order number, or order number without prefix

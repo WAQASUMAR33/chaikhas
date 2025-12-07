@@ -2412,21 +2412,36 @@ export default function OrderManagementPage() {
 
   // Filter orders by branch, status, and search order ID
   const filteredOrders = orders.filter(order => {
-    // Filter by branch
-    if (selectedBranchFilter && order.branch_id != selectedBranchFilter) {
-      return false;
+    if (!order) return false; // Filter out null/undefined orders
+    
+    // Filter by branch - use proper string comparison to handle number/string mismatches
+    if (selectedBranchFilter && selectedBranchFilter !== '') {
+      const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
+      if (!orderBranchId) {
+        return false; // Exclude orders without branch_id when filter is active
+      }
+      // Convert both to strings for proper comparison
+      const orderBranchIdStr = String(orderBranchId).trim();
+      const filterBranchIdStr = String(selectedBranchFilter).trim();
+      if (orderBranchIdStr !== filterBranchIdStr) {
+        return false;
+      }
     }
     
-    // Filter by status
-    if (filter !== 'all' && order.status.toLowerCase() !== filter.toLowerCase()) {
-      return false;
+    // Filter by status - case-insensitive with proper trimming
+    if (filter !== 'all') {
+      const orderStatus = (order.status || '').toLowerCase().trim();
+      const filterStatus = filter.toLowerCase().trim();
+      if (orderStatus !== filterStatus) {
+        return false;
+      }
     }
     
     // Filter by search order ID if provided
     if (searchOrderId && searchOrderId.trim()) {
       const searchTerm = searchOrderId.trim().toLowerCase();
       const orderId = String(order.order_id || order.id || '').toLowerCase();
-      const orderNumber = String(order.orderid || order.order_number || '').toLowerCase();
+      const orderNumber = String(order.orderid || order.order_number || order.orderNumber || '').toLowerCase();
       const orderIdFormatted = orderNumber.replace(/ord-?/i, ''); // Remove ORD- prefix for matching
       
       // Match exact order ID, order number, or order number without prefix

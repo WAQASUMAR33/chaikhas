@@ -2727,16 +2727,22 @@ export default function OrderManagementPage() {
 
   // Filter orders by status and search order ID
   const filteredOrders = orders.filter(order => {
-    // Filter by status
-    if (filter !== 'all' && order.status.toLowerCase() !== filter.toLowerCase()) {
-      return false;
+    if (!order) return false; // Filter out null/undefined orders
+    
+    // Filter by status - case-insensitive with proper trimming and handle multiple status field names
+    if (filter !== 'all') {
+      const orderStatus = (order.status || order.order_status || '').toLowerCase().trim();
+      const filterStatus = filter.toLowerCase().trim();
+      if (orderStatus !== filterStatus) {
+        return false;
+      }
     }
     
     // Filter by search order ID if provided
     if (searchOrderId && searchOrderId.trim()) {
       const searchTerm = searchOrderId.trim().toLowerCase();
       const orderId = String(order.order_id || order.id || '').toLowerCase();
-      const orderNumber = String(order.orderid || order.order_number || '').toLowerCase();
+      const orderNumber = String(order.orderid || order.order_number || order.orderNumber || '').toLowerCase();
       const orderIdFormatted = orderNumber.replace(/ord-?/i, ''); // Remove ORD- prefix for matching
       
       // Match exact order ID, order number, or order number without prefix
