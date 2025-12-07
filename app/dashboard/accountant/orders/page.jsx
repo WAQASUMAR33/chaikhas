@@ -27,6 +27,10 @@ export default function OrderManagementPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
   const [searchOrderId, setSearchOrderId] = useState(''); // Search by order ID
+  const [dateFilter, setDateFilter] = useState('all'); // all, daily, weekly, custom
+  const [customDate, setCustomDate] = useState(''); // Custom date for filtering
+  const [customDateFrom, setCustomDateFrom] = useState(''); // Custom date range start
+  const [customDateTo, setCustomDateTo] = useState(''); // Custom date range end
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -85,7 +89,7 @@ export default function OrderManagementPage() {
       clearInterval(interval);
       cleanup();
     };
-  }, [filter]);
+  }, [filter, dateFilter, customDate, customDateFrom, customDateTo]);
 
       // Initialize bill data when bill modal opens (no auto-calculation)
       useEffect(() => {
@@ -165,6 +169,45 @@ export default function OrderManagementPage() {
    * Fetch orders from API
    * API: order_management.php (GET with terminal and optional status)
    */
+  /**
+   * Get today's date in YYYY-MM-DD format
+   */
+  const getTodayDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Get start of week (Monday) date in YYYY-MM-DD format
+   */
+  const getWeekStartDate = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
+    const monday = new Date(now.setDate(diff));
+    const year = monday.getFullYear();
+    const month = String(monday.getMonth() + 1).padStart(2, '0');
+    const dayStr = String(monday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${dayStr}`;
+  };
+
+  /**
+   * Get end of week (Sunday) date in YYYY-MM-DD format
+   */
+  const getWeekEndDate = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const diff = now.getDate() - day + (day === 0 ? 0 : 7); // Adjust to Sunday
+    const sunday = new Date(now.setDate(diff));
+    const year = sunday.getFullYear();
+    const month = String(sunday.getMonth() + 1).padStart(2, '0');
+    const dayStr = String(sunday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${dayStr}`;
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
     setAlert({ type: '', message: '' });
@@ -175,8 +218,54 @@ export default function OrderManagementPage() {
         params.status = filter;
       }
       
-      // Use GET method for fetching orders list
-      const result = await apiGet('api/order_management.php', params);
+      // Add date filtering
+      if (dateFilter === 'daily') {
+        // Daily = Today's orders
+        const today = getTodayDate();
+        params.date = today;
+        params.from_date = today;
+        params.to_date = today;
+        console.log('📅 Filtering by daily (today):', today);
+      } else if (dateFilter === 'weekly') {
+        // Weekly = This week's orders (Monday to Sunday)
+        const weekStart = getWeekStartDate();
+        const weekEnd = getWeekEndDate();
+        params.from_date = weekStart;
+        params.to_date = weekEnd;
+        console.log('📅 Filtering by weekly:', weekStart, 'to', weekEnd);
+      } else if (dateFilter === 'custom') {
+        // Custom date range
+        if (customDateFrom && customDateTo) {
+          params.from_date = customDateFrom;
+          params.to_date = customDateTo;
+          console.log('📅 Filtering by custom range:', customDateFrom, 'to', customDateTo);
+        } else if (customDate) {
+          // Single custom date (backward compatibility)
+          params.date = customDate;
+          params.from_date = customDate;
+          params.to_date = customDate;
+          console.log('📅 Filtering by custom date:', customDate);
+        }
+      } else {
+        // 'all' - no date filtering, fetch all orders
+        console.log('📅 No date filter - fetching all orders');
+      }
+      
+      console.log('=== Fetching Orders (Accountant) ===');
+      console.log('Date filter:', dateFilter);
+      console.log('Custom date:', customDate);
+      console.log('Params:', params);
+      
+      // Try POST first (better for complex parameters like dates), fallback to GET
+      let result;
+      try {
+        result = await apiPost('api/order_management.php', params);
+      } catch (postError) {
+        console.warn('⚠️ POST failed for orders, trying GET:', postError);
+        result = await apiGet('api/order_management.php', params);
+      }
+      
+      console.log('Orders API response:', result);
       
       // Handle multiple possible response structures
       let ordersData = [];
@@ -184,35 +273,41 @@ export default function OrderManagementPage() {
       // Check if result.data is an array directly
       if (result.data && Array.isArray(result.data)) {
         ordersData = result.data;
+        console.log('✅ Found orders in result.data (array), count:', ordersData.length);
       }
       // Check if result.data.data is an array (nested structure)
       else if (result.data && result.data.data && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.data (nested array), count:', ordersData.length);
       }
       // Check if result.data.orders is an array
       else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
         ordersData = result.data.orders;
+        console.log('✅ Found orders in result.data.orders, count:', ordersData.length);
       }
       // Check if result.data.success and result.data.data is an array
       else if (result.data && result.data.success && Array.isArray(result.data.data)) {
         ordersData = result.data.data;
+        console.log('✅ Found orders in result.data.success.data, count:', ordersData.length);
       }
       // Check if result.success and result.data is an array
       else if (result.success && result.data && Array.isArray(result.data)) {
         ordersData = result.data;
+        console.log('✅ Found orders in result.success.data, count:', ordersData.length);
       }
       // Try to find any array in result.data object
       else if (result.data && typeof result.data === 'object') {
         for (const key in result.data) {
           if (Array.isArray(result.data[key])) {
             ordersData = result.data[key];
+            console.log(`✅ Found orders in result.data.${key}, count:`, ordersData.length);
             break;
           }
         }
       }
       // Check if response has success field with false
       else if (result.data && result.data.success === false) {
-        console.error('Orders API returned error:', result.data);
+        console.error('❌ Orders API returned error:', result.data);
         setAlert({ type: 'error', message: result.data.message || 'Failed to load orders' });
         setOrders([]);
         setLoading(false);
@@ -220,7 +315,7 @@ export default function OrderManagementPage() {
       }
       // Check if result is not successful
       else if (!result.success) {
-        console.error('Orders API request failed:', result);
+        console.error('❌ Orders API request failed:', result);
         setAlert({ 
           type: 'error', 
           message: result.data?.message || result.data?.error || 'Failed to load orders. Please check your connection.' 
@@ -228,6 +323,11 @@ export default function OrderManagementPage() {
         setOrders([]);
         setLoading(false);
         return;
+      }
+      
+      // Log if no orders found but API call was successful
+      if (ordersData.length === 0 && result.success) {
+        console.log('ℹ️ No orders found in API response (this may be normal if no orders match the filter)');
       }
       
       
@@ -1054,6 +1154,19 @@ export default function OrderManagementPage() {
     e.preventDefault();
     setAlert({ type: '', message: '' });
 
+    // Validate editingOrder exists and has order_id
+    if (!editingOrder) {
+      setAlert({ type: 'error', message: 'No order selected for editing. Please select an order first.' });
+      return;
+    }
+
+    const orderId = editingOrder.order_id || editingOrder.id;
+    if (!orderId) {
+      setAlert({ type: 'error', message: 'Order ID is missing. Cannot update order. Please refresh and try again.' });
+      console.error('Editing order missing order_id:', editingOrder);
+      return;
+    }
+
     // Validate items
     if (!formData.items || formData.items.length === 0) {
       setAlert({ type: 'error', message: 'Order must have at least one item.' });
@@ -1072,9 +1185,17 @@ export default function OrderManagementPage() {
       const oldTableId = originalTableId;
       const tableChanged = isDineIn && oldTableId && newTableId && oldTableId.toString() !== newTableId.toString();
 
+      // Get order ID and order number (already validated above)
+      const orderNumber = editingOrder.orderid || editingOrder.order_number || (orderId ? `ORD-${orderId}` : null);
+
       // Update order details
+      // Ensure order_id is a number (parse it if it's a string)
+      const numericOrderId = typeof orderId === 'string' ? parseInt(orderId, 10) : orderId;
+      
       const orderData = {
-        order_id: editingOrder.order_id || editingOrder.id,
+        order_id: numericOrderId, // Ensure it's a number
+        orderid: orderNumber, // Include formatted order number
+        action: 'update', // Explicitly indicate this is an update
         order_type: editingOrder.order_type || 'Dine In',
         order_status: formData.status,
         table_id: newTableId,
@@ -1085,8 +1206,24 @@ export default function OrderManagementPage() {
         terminal: terminal,
       };
 
+      // Also include branch_id if available
+      const branchId = getBranchId();
+      if (branchId) {
+        orderData.branch_id = branchId;
+      }
+
+      console.log('=== Updating Order ===');
+      console.log('Order Data:', JSON.stringify(orderData, null, 2));
+      console.log('Order ID (numeric):', numericOrderId);
+      console.log('Order Number:', orderNumber);
+      console.log('Editing Order:', editingOrder);
+
       // Update order first
       const orderResult = await apiPost('api/order_management.php', orderData);
+      
+      console.log('=== Order Update Response ===');
+      console.log('Success:', orderResult.success);
+      console.log('Response Data:', JSON.stringify(orderResult.data, null, 2));
 
       if (!orderResult.success || !orderResult.data || !orderResult.data.success) {
         setAlert({ type: 'error', message: orderResult.data?.message || 'Failed to update order details' });
@@ -2725,9 +2862,19 @@ export default function OrderManagementPage() {
     );
   };
 
-  // Filter orders by status and search order ID
+  // Filter orders by status, search order ID, and date
   const filteredOrders = orders.filter(order => {
     if (!order) return false; // Filter out null/undefined orders
+    
+    // Debug: Log first order when filtering by date
+    if (dateFilter !== 'all' && orders.indexOf(order) === 0) {
+      console.log('🔍 Filtering orders by date:', {
+        dateFilter,
+        customDate,
+        orderDate: order.created_at || order.date,
+        order: order.order_id || order.id
+      });
+    }
     
     // Filter by status - case-insensitive with proper trimming and handle multiple status field names
     if (filter !== 'all') {
@@ -2749,6 +2896,95 @@ export default function OrderManagementPage() {
       if (!orderId.includes(searchTerm) && 
           !orderNumber.includes(searchTerm) && 
           !orderIdFormatted.includes(searchTerm)) {
+        return false;
+      }
+    }
+    
+    // Filter by date (client-side fallback in case API doesn't filter properly)
+    if (dateFilter === 'daily') {
+      const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+      if (!orderDate) {
+        return false;
+      }
+      
+      try {
+        let orderDateObj = new Date(orderDate);
+        if (isNaN(orderDateObj.getTime())) {
+          if (typeof orderDate === 'string' && orderDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+            orderDateObj = new Date(orderDate + 'T00:00:00');
+          } else {
+            return false;
+          }
+        }
+        
+        const orderDateStr = orderDateObj.toISOString().split('T')[0];
+        const today = getTodayDate();
+        
+        if (orderDateStr !== today) {
+          return false;
+        }
+      } catch (error) {
+        console.error('Error parsing order date:', error, orderDate);
+        return false;
+      }
+    } else if (dateFilter === 'weekly') {
+      const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+      if (!orderDate) {
+        return false;
+      }
+      
+      try {
+        let orderDateObj = new Date(orderDate);
+        if (isNaN(orderDateObj.getTime())) {
+          if (typeof orderDate === 'string' && orderDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+            orderDateObj = new Date(orderDate + 'T00:00:00');
+          } else {
+            return false;
+          }
+        }
+        
+        const orderDateStr = orderDateObj.toISOString().split('T')[0];
+        const weekStart = getWeekStartDate();
+        const weekEnd = getWeekEndDate();
+        
+        if (orderDateStr < weekStart || orderDateStr > weekEnd) {
+          return false;
+        }
+      } catch (error) {
+        console.error('Error parsing order date:', error, orderDate);
+        return false;
+      }
+    } else if (dateFilter === 'custom') {
+      const orderDate = order.created_at || order.date || order.order_date || order.created_date;
+      if (!orderDate) {
+        return false;
+      }
+      
+      try {
+        let orderDateObj = new Date(orderDate);
+        if (isNaN(orderDateObj.getTime())) {
+          if (typeof orderDate === 'string' && orderDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+            orderDateObj = new Date(orderDate + 'T00:00:00');
+          } else {
+            return false;
+          }
+        }
+        
+        const orderDateStr = orderDateObj.toISOString().split('T')[0];
+        
+        // Check custom date range
+        if (customDateFrom && customDateTo) {
+          if (orderDateStr < customDateFrom || orderDateStr > customDateTo) {
+            return false;
+          }
+        } else if (customDate) {
+          // Single custom date (backward compatibility)
+          if (orderDateStr !== customDate) {
+            return false;
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing order date:', error, orderDate);
         return false;
       }
     }
@@ -2787,9 +3023,10 @@ export default function OrderManagementPage() {
           />
         )}
 
-        {/* Search Bar */}
+        {/* Search Bar and Date Filter */}
         <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
-          <div className="flex items-center gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Search Order ID */}
             <div className="flex-1">
               <Input
                 label="Search Order by ID"
@@ -2800,20 +3037,91 @@ export default function OrderManagementPage() {
                 className="w-full"
               />
             </div>
-            {searchOrderId && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setSearchOrderId('')}
-                className="mt-6"
-              >
-                Clear
-              </Button>
-            )}
+            
+            {/* Date Filter */}
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Filter by Date Period
+              </label>
+              <div className="space-y-2">
+                <select
+                  value={dateFilter}
+                  onChange={(e) => {
+                    setDateFilter(e.target.value);
+                    if (e.target.value !== 'custom') {
+                      setCustomDate('');
+                      setCustomDateFrom('');
+                      setCustomDateTo('');
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                >
+                  <option value="all">All Orders</option>
+                  <option value="daily">Daily (Today)</option>
+                  <option value="weekly">Weekly (This Week)</option>
+                  <option value="custom">Custom Date Range</option>
+                </select>
+                {dateFilter === 'custom' && (
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-600 mb-1">From Date</label>
+                      <input
+                        type="date"
+                        value={customDateFrom}
+                        onChange={(e) => setCustomDateFrom(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-600 mb-1">To Date</label>
+                      <input
+                        type="date"
+                        value={customDateTo}
+                        onChange={(e) => setCustomDateTo(e.target.value)}
+                        className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                      />
+                    </div>
+                    {/* Backward compatibility: single date input */}
+                    {!customDateFrom && !customDateTo && (
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-600 mb-1">Single Date</label>
+                        <input
+                          type="date"
+                          value={customDate}
+                          onChange={(e) => setCustomDate(e.target.value)}
+                          className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {(dateFilter !== 'all' || searchOrderId) && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setDateFilter('all');
+                      setCustomDate('');
+                      setCustomDateFrom('');
+                      setCustomDateTo('');
+                      setSearchOrderId('');
+                    }}
+                    className="w-full"
+                  >
+                    Clear Filters
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
-          {searchOrderId && (
+          {(searchOrderId || dateFilter !== 'all') && (
             <p className="text-sm text-gray-600 mt-2">
-              Showing {filteredOrders.length} order(s) matching "{searchOrderId}"
+              Showing {filteredOrders.length} order(s)
+              {searchOrderId && ` matching "${searchOrderId}"`}
+              {dateFilter === 'daily' && ' from today'}
+              {dateFilter === 'weekly' && ` from this week (${getWeekStartDate()} to ${getWeekEndDate()})`}
+              {dateFilter === 'custom' && customDateFrom && customDateTo && ` from ${customDateFrom} to ${customDateTo}`}
+              {dateFilter === 'custom' && customDate && !customDateFrom && !customDateTo && ` from ${customDate}`}
             </p>
           )}
         </div>
