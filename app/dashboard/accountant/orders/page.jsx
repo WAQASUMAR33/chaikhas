@@ -2198,12 +2198,189 @@ export default function OrderManagementPage() {
   /**
    * Handle print receipt - Print bill receipt if bill exists, otherwise print KOT
    */
-  const handlePrintReceipt = async () => {
-    // Wait a bit for the DOM to render if receipt modal just opened
-    const checkForReceiptElement = () => {
-      return document.getElementById('receipt-print-area');
+  /**
+   * Generate receipt HTML directly from generatedBill data
+   * This avoids DOM dependency issues
+   */
+  const generateReceiptHTML = (bill) => {
+    if (!bill) return '';
+    
+    const items = bill.items || [];
+    const orderId = bill.order_id || 'N/A';
+    const orderNumber = bill.order_number || `ORD-${orderId}`;
+    const orderDate = bill.date || new Date().toISOString();
+    const formattedDate = new Date(orderDate).toLocaleString('en-PK', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const orderType = bill.order_type || 'Dine In';
+    const displayOrderType = orderType === 'Dine In' ? 'Dine-In' : orderType === 'Take Away' ? 'Takeaway' : orderType;
+    
+    const subtotal = parseFloat(bill.subtotal || 0);
+    const serviceCharge = parseFloat(bill.service_charge || 0);
+    const discount = parseFloat(bill.discount_amount || 0);
+    const grandTotal = parseFloat(bill.grand_total || 0);
+    
+    const paymentMethod = bill.payment_method || 'Cash';
+    const paymentStatus = bill.payment_status || 'Unpaid';
+    const cashReceived = parseFloat(bill.cash_received || 0);
+    const change = parseFloat(bill.change || 0);
+    const billId = bill.bill_id || null;
+    
+    const isCredit = paymentMethod === 'Credit' || bill.is_credit || paymentStatus === 'Credit';
+    const customerName = bill.customer_name || null;
+    const customerPhone = bill.customer_phone || null;
+    const branchName = getBranchName() || '';
+    
+    // Format currency helper
+    const formatPKR = (amount) => {
+      return `PKR ${parseFloat(amount || 0).toFixed(2)}`;
     };
     
+    // Generate items HTML
+    let itemsHTML = '';
+    if (items.length > 0) {
+      itemsHTML = items.map(item => {
+        const itemName = item.dish_name || item.name || item.title || 'Item';
+        const itemPrice = parseFloat(item.price || item.rate || 0);
+        const itemQty = parseInt(item.quantity || item.qty || 1);
+        const itemTotal = parseFloat(item.total_amount || item.total || (itemPrice * itemQty));
+        const displayName = itemName.length > 28 ? itemName.substring(0, 25) + '...' : itemName;
+        
+        return `
+          <tr>
+            <td style="width: 42%; text-align: left; padding: 4px 2px; font-size: 10px;">${displayName}</td>
+            <td style="width: 20%; text-align: right; padding: 4px 2px; font-size: 10px;">${formatPKR(itemPrice)}</td>
+            <td style="width: 10%; text-align: center; padding: 4px 2px; font-size: 10px;">${itemQty}</td>
+            <td style="width: 28%; text-align: right; padding: 4px 2px; font-size: 10px; font-weight: bold;">${formatPKR(itemTotal)}</td>
+          </tr>
+        `;
+      }).join('');
+    } else {
+      itemsHTML = '<tr><td colspan="4" style="text-align: center; padding: 10px; font-size: 11px; color: #666;">No items found</td></tr>';
+    }
+    
+    return `
+      <div style="width: 80mm; max-width: 80mm; margin: 0 auto; padding: 8mm 5mm; background: white; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.4; color: #000; box-sizing: border-box;">
+        <!-- Logo -->
+        <div style="text-align: center; margin-bottom: 10px;">
+          <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
+            RESTAURANT
+          </div>
+          <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
+            KHAS
+          </div>
+        </div>
+        
+        <!-- Header -->
+        <div style="text-align: center; margin-bottom: 15px; border-bottom: 2px solid #FF5F15; padding-bottom: 12px;">
+          ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #333;">${branchName}</div>` : ''}
+        </div>
+        
+        <!-- Order Information -->
+        <div style="text-align: center; margin-bottom: 12px; font-size: 10px; line-height: 1.6;">
+          <div style="margin: 3px 0;">Date: ${formattedDate}</div>
+          <div style="margin: 3px 0;">Order #: ${orderNumber}</div>
+          <div style="margin: 3px 0;">
+            <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 4px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+          </div>
+          ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 3px 0;">Table: ${bill.table_number}</div>` : ''}
+          ${isCredit && customerName ? `
+            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
+              <div style="font-weight: bold; color: #FF5F15;">Credit Customer:</div>
+              <div style="margin-top: 4px; font-weight: bold;">${customerName}</div>
+              ${customerPhone ? `<div style="font-size: 10px; color: #666;">${customerPhone}</div>` : ''}
+            </div>
+          ` : ''}
+        </div>
+        
+        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        
+        <!-- Items Table -->
+        <table style="width: 100%; margin: 12px 0; border-collapse: collapse; table-layout: fixed;">
+          <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
+            <tr>
+              <th style="width: 42%; text-align: left; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
+              <th style="width: 20%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
+              <th style="width: 10%; text-align: center; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
+              <th style="width: 28%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHTML}
+          </tbody>
+        </table>
+        
+        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+        
+        <!-- Totals Section -->
+        <div style="margin-top: 15px; border-top: 1px solid #000; padding-top: 10px;">
+          <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
+            <span>Subtotal:</span>
+            <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+          </div>
+          ${serviceCharge > 0 ? `
+            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
+              <span>Service Charge:</span>
+              <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
+            </div>
+          ` : ''}
+          ${discount > 0 ? `
+            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
+              <span>Discount:</span>
+              <span style="font-weight: bold;">-${formatPKR(discount)}</span>
+            </div>
+          ` : ''}
+          <div style="display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
+            <span>Net Total:</span>
+            <span>${formatPKR(grandTotal)}</span>
+          </div>
+          ${paymentMethod ? `
+            <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; border-top: 1px solid #ddd; padding-top: 8px;">
+              <span>Payment Method:</span>
+              <span style="font-weight: bold;">${paymentMethod}</span>
+            </div>
+          ` : ''}
+          ${paymentStatus === 'Paid' && cashReceived > 0 ? `
+            <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
+              <span>Amount Paid:</span>
+              <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
+            </div>
+            ${change > 0 ? `
+              <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                <span>Change Returned:</span>
+                <span style="color: #059669;">${formatPKR(change)}</span>
+              </div>
+            ` : ''}
+            <div style="display: flex; justify-content: space-between; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #ccc; font-size: 11px;">
+              <span>Payment Status:</span>
+              <span style="color: #059669; font-weight: bold;">✓ PAID</span>
+            </div>
+          ` : ''}
+          ${billId ? `
+            <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; font-size: 10px; color: #666;">
+              <span>Bill ID:</span>
+              <span>#${billId}</span>
+            </div>
+          ` : ''}
+        </div>
+        
+        <!-- Thank You -->
+        <div style="text-align: center; margin-top: 20px; padding-top: 15px; border-top: 2px dashed #FF5F15; font-size: 15px; font-weight: bold; letter-spacing: 3px; color: #FF5F15;">
+          THANK YOU
+        </div>
+        <div style="text-align: center; margin-top: 15px; font-size: 9px;">
+          Visit us again!
+        </div>
+      </div>
+    `;
+  };
+
+  const handlePrintReceipt = async () => {
     // If no bill, try to print KOT from order details
     if (!generatedBill) {
       // Try to get order details from the currently selected order
@@ -2216,17 +2393,6 @@ export default function OrderManagementPage() {
       }
       setAlert({ type: 'error', message: 'No receipt data available to print. Please generate a bill first or select an order.' });
       return;
-    }
-    
-    // Wait for receipt element to be rendered (max 2 seconds)
-    let attempts = 0;
-    while (!checkForReceiptElement() && attempts < 20) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      attempts++;
-    }
-    
-    if (!checkForReceiptElement()) {
-      console.warn('Receipt element not found after waiting, proceeding anyway...');
     }
     
     // Prevent multiple simultaneous print requests
@@ -2322,13 +2488,25 @@ export default function OrderManagementPage() {
     console.log('Items:', items);
     
     try {
-      // Get the receipt print area content
-      const printContent = document.getElementById('receipt-print-area');
-      if (!printContent) {
-        setAlert({ type: 'error', message: 'Receipt content not found' });
+      // Generate receipt HTML directly from data (more reliable than DOM)
+      let receiptHTML = generateReceiptHTML(generatedBill);
+      
+      // Fallback: Try to get from DOM if HTML generation fails
+      if (!receiptHTML || receiptHTML.trim().length === 0) {
+        console.warn('⚠️ Generated HTML is empty, trying DOM fallback...');
+        const printContent = document.getElementById('receipt-print-area');
+        if (printContent) {
+          receiptHTML = printContent.innerHTML;
+        }
+      }
+      
+      if (!receiptHTML || receiptHTML.trim().length === 0) {
+        setAlert({ type: 'error', message: 'Receipt content is empty. Please regenerate the bill.' });
         setIsPrinting(false);
         return;
       }
+      
+      console.log('✅ Receipt HTML generated, length:', receiptHTML.length);
 
       // Get categories from items
       const categoryIds = [...new Set(
@@ -2336,9 +2514,6 @@ export default function OrderManagementPage() {
           .map(item => item.category_id || item.kitchen_id)
           .filter(Boolean)
       )];
-
-      // Prepare receipt content
-      const receiptHTML = printContent.innerHTML;
       
       console.log('Receipt HTML length:', receiptHTML.length);
       console.log('Category IDs:', categoryIds);
