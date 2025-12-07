@@ -2265,117 +2265,115 @@ export default function OrderManagementPage() {
     }
     
     return `
-      <div style="width: 80mm; max-width: 80mm; margin: 0 auto; padding: 8mm 5mm; background: white; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.4; color: #000; box-sizing: border-box;">
-        <!-- Logo -->
-        <div style="text-align: center; margin-bottom: 10px;">
-          <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
-            RESTAURANT
+      <!-- Logo -->
+      <div style="text-align: center; margin-bottom: 10px; padding-top: 5px;">
+        <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
+          RESTAURANT
+        </div>
+        <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
+          KHAS
+        </div>
+      </div>
+      
+      <!-- Header -->
+      <div style="text-align: center; margin-bottom: 12px; border-bottom: 2px solid #FF5F15; padding-bottom: 10px;">
+        ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #333;">${branchName}</div>` : ''}
+      </div>
+      
+      <!-- Order Information -->
+      <div style="text-align: center; margin-bottom: 10px; font-size: 10px; line-height: 1.5;">
+        <div style="margin: 2px 0;">Date: ${formattedDate}</div>
+        <div style="margin: 2px 0;">Order #: ${orderNumber}</div>
+        <div style="margin: 3px 0;">
+          <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 3px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+        </div>
+        ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 2px 0;">Table: ${bill.table_number}</div>` : ''}
+        ${isCredit && customerName ? `
+          <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc;">
+            <div style="font-weight: bold; color: #FF5F15; font-size: 10px;">Credit Customer:</div>
+            <div style="margin-top: 3px; font-weight: bold; font-size: 11px;">${customerName}</div>
+            ${customerPhone ? `<div style="font-size: 9px; color: #666; margin-top: 2px;">${customerPhone}</div>` : ''}
           </div>
-          <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
-            KHAS
+        ` : ''}
+      </div>
+      
+      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      
+      <!-- Items Table -->
+      <table style="width: 100%; margin: 10px 0; border-collapse: collapse; table-layout: fixed; font-size: 10px;">
+        <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
+          <tr>
+            <th style="width: 42%; text-align: left; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
+            <th style="width: 20%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
+            <th style="width: 10%; text-align: center; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
+            <th style="width: 28%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHTML}
+        </tbody>
+      </table>
+      
+      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      
+      <!-- Totals Section -->
+      <div style="margin-top: 12px; border-top: 1px solid #000; padding-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+          <span>Subtotal:</span>
+          <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+        </div>
+        ${serviceCharge > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+            <span>Service Charge:</span>
+            <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
           </div>
-        </div>
-        
-        <!-- Header -->
-        <div style="text-align: center; margin-bottom: 15px; border-bottom: 2px solid #FF5F15; padding-bottom: 12px;">
-          ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #333;">${branchName}</div>` : ''}
-        </div>
-        
-        <!-- Order Information -->
-        <div style="text-align: center; margin-bottom: 12px; font-size: 10px; line-height: 1.6;">
-          <div style="margin: 3px 0;">Date: ${formattedDate}</div>
-          <div style="margin: 3px 0;">Order #: ${orderNumber}</div>
-          <div style="margin: 3px 0;">
-            <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 4px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+        ` : ''}
+        ${discount > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+            <span>Discount:</span>
+            <span style="font-weight: bold;">-${formatPKR(discount)}</span>
           </div>
-          ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 3px 0;">Table: ${bill.table_number}</div>` : ''}
-          ${isCredit && customerName ? `
-            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
-              <div style="font-weight: bold; color: #FF5F15;">Credit Customer:</div>
-              <div style="margin-top: 4px; font-weight: bold;">${customerName}</div>
-              ${customerPhone ? `<div style="font-size: 10px; color: #666;">${customerPhone}</div>` : ''}
-            </div>
-          ` : ''}
+        ` : ''}
+        <div style="display: flex; justify-content: space-between; margin: 8px 0; padding: 6px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 12px; font-weight: bold; color: #FF5F15;">
+          <span>Net Total:</span>
+          <span>${formatPKR(grandTotal)}</span>
         </div>
-        
-        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-        
-        <!-- Items Table -->
-        <table style="width: 100%; margin: 12px 0; border-collapse: collapse; table-layout: fixed;">
-          <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
-            <tr>
-              <th style="width: 42%; text-align: left; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
-              <th style="width: 20%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
-              <th style="width: 10%; text-align: center; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
-              <th style="width: 28%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHTML}
-          </tbody>
-        </table>
-        
-        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-        
-        <!-- Totals Section -->
-        <div style="margin-top: 15px; border-top: 1px solid #000; padding-top: 10px;">
-          <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-            <span>Subtotal:</span>
-            <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+        ${paymentMethod ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; border-top: 1px solid #ddd; padding-top: 6px;">
+            <span>Payment Method:</span>
+            <span style="font-weight: bold;">${paymentMethod}</span>
           </div>
-          ${serviceCharge > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-              <span>Service Charge:</span>
-              <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
-            </div>
-          ` : ''}
-          ${discount > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-              <span>Discount:</span>
-              <span style="font-weight: bold;">-${formatPKR(discount)}</span>
-            </div>
-          ` : ''}
-          <div style="display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
-            <span>Net Total:</span>
-            <span>${formatPKR(grandTotal)}</span>
+        ` : ''}
+        ${paymentStatus === 'Paid' && cashReceived > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px;">
+            <span>Amount Paid:</span>
+            <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
           </div>
-          ${paymentMethod ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; border-top: 1px solid #ddd; padding-top: 8px;">
-              <span>Payment Method:</span>
-              <span style="font-weight: bold;">${paymentMethod}</span>
+          ${change > 0 ? `
+            <div style="display: flex; justify-content: space-between; font-size: 10px;">
+              <span>Change Returned:</span>
+              <span style="color: #059669;">${formatPKR(change)}</span>
             </div>
           ` : ''}
-          ${paymentStatus === 'Paid' && cashReceived > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
-              <span>Amount Paid:</span>
-              <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
-            </div>
-            ${change > 0 ? `
-              <div style="display: flex; justify-content: space-between; font-size: 11px;">
-                <span>Change Returned:</span>
-                <span style="color: #059669;">${formatPKR(change)}</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #ccc; font-size: 11px;">
-              <span>Payment Status:</span>
-              <span style="color: #059669; font-weight: bold;">✓ PAID</span>
-            </div>
-          ` : ''}
-          ${billId ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; font-size: 10px; color: #666;">
-              <span>Bill ID:</span>
-              <span>#${billId}</span>
-            </div>
-          ` : ''}
-        </div>
-        
-        <!-- Thank You -->
-        <div style="text-align: center; margin-top: 20px; padding-top: 15px; border-top: 2px dashed #FF5F15; font-size: 15px; font-weight: bold; letter-spacing: 3px; color: #FF5F15;">
-          THANK YOU
-        </div>
-        <div style="text-align: center; margin-top: 15px; font-size: 9px;">
-          Visit us again!
-        </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #ccc; font-size: 10px;">
+            <span>Payment Status:</span>
+            <span style="color: #059669; font-weight: bold;">✓ PAID</span>
+          </div>
+        ` : ''}
+        ${billId ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc; font-size: 9px; color: #666;">
+            <span>Bill ID:</span>
+            <span>#${billId}</span>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Thank You -->
+      <div style="text-align: center; margin-top: 15px; padding-top: 12px; border-top: 2px dashed #FF5F15; font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #FF5F15;">
+        THANK YOU
+      </div>
+      <div style="text-align: center; margin-top: 10px; font-size: 9px; color: #666;">
+        Visit us again!
       </div>
     `;
   };
@@ -2551,82 +2549,138 @@ export default function OrderManagementPage() {
         const printWindow = window.open('', '_blank');
         if (printWindow) {
           printWindow.document.open();
-          printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>Receipt - Restaurant Khas</title>
-                <meta charset="UTF-8">
-                <style>
-                  @media print {
-                    @page {
-                      size: 80mm auto;
-                      margin: 0;
-                      padding: 0;
-                    }
-                    html, body {
-                      margin: 0 !important;
-                      padding: 5px !important;
-                      width: 80mm;
-                      max-width: 80mm;
-                      overflow: visible !important;
-                    }
-                    * {
-                      margin: 0;
-                      padding: 0;
-                      box-sizing: border-box;
-                    }
-                    .no-print {
-                      display: none !important;
-                    }
-                    button, .no-print {
-                      display: none !important;
-                    }
-                    * {
-                      page-break-inside: avoid;
-                      break-inside: avoid;
-                    }
-                    body {
-                      height: auto !important;
-                      min-height: auto !important;
-                      max-height: none !important;
-                      overflow: visible !important;
-                    }
-                    html {
-                      height: auto !important;
-                    }
-                  }
-                  @media screen {
-                    html, body {
-                      margin: 0;
-                      padding: 5px;
-                      width: 80mm;
-                      max-width: 80mm;
-                    }
-                  }
-                  html, body {
-                    font-family: 'Courier New', monospace;
-                    margin: 0;
-                    padding: 5px;
-                    font-size: 11px;
-                    line-height: 1.3;
-                    width: 80mm;
-                    max-width: 80mm;
-                    background: white;
-                  }
-                  * {
-                    box-sizing: border-box;
-                    margin: 0;
-                    padding: 0;
-                  }
-                  body > * {
-                    visibility: visible;
-                  }
-                </style>
-              </head>
-              <body>${receiptHTML}</body>
-            </html>
-          `);
+          const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+html, body { 
+  margin: 0; 
+  padding: 0; 
+  width: 80mm; 
+  height: auto;
+  min-height: auto;
+  font-family: 'Courier New', monospace; 
+  font-size: 11px; 
+  line-height: 1.4; 
+  background: white; 
+  color: #000;
+  overflow: visible;
+}
+@media print {
+  @page { 
+    size: 80mm auto; 
+    margin: 0; 
+    padding: 0;
+  }
+  html, body { 
+    width: 80mm !important; 
+    max-width: 80mm !important;
+    margin: 0 !important; 
+    padding: 0 !important; 
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  .no-print { 
+    display: none !important; 
+  }
+  .receipt-wrapper {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    background: white !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-wrapper * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  /* Ensure all content is visible */
+  .receipt-wrapper,
+  .receipt-wrapper * {
+    visibility: visible !important;
+    display: block !important;
+  }
+  table {
+    display: table !important;
+  }
+  tr {
+    display: table-row !important;
+  }
+  td, th {
+    display: table-cell !important;
+  }
+}
+.receipt-wrapper {
+  width: 80mm;
+  max-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  position: relative;
+}
+.no-print {
+  display: none;
+}
+@media screen {
+  body { 
+    padding: 20px; 
+    background: #f5f5f5; 
+  }
+  .no-print { 
+    display: block; 
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #f0f0f0; 
+    border-radius: 5px; 
+    text-align: center; 
+    font-size: 12px;
+  }
+  .receipt-wrapper {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-wrapper">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Press Ctrl+P to print or click the Print button.</p>
+<p style="font-size: 10px; color: #666; margin-top: 10px;">Make sure to select your 80mm thermal printer.</p>
+</div>
+<script>
+(function() {
+  // Wait for content to load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 300);
+    });
+  } else {
+    setTimeout(function() {
+      window.focus();
+      window.print();
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>`;
+          printWindow.document.write(printHTML);
           printWindow.document.close();
           
           // Wait for content to fully load before printing
@@ -2714,54 +2768,115 @@ export default function OrderManagementPage() {
                   <title>Receipt - Restaurant Khas</title>
                   <meta charset="UTF-8">
                   <style>
+                    * {
+                      margin: 0;
+                      padding: 0;
+                      box-sizing: border-box;
+                    }
+                    
+                    html, body {
+                      margin: 0;
+                      padding: 0;
+                      width: 80mm;
+                      max-width: 80mm;
+                      height: auto;
+                      min-height: auto;
+                      background: white;
+                      font-family: 'Courier New', monospace;
+                      font-size: 11px;
+                      line-height: 1.4;
+                      color: #000;
+                      overflow: visible;
+                    }
+                    
                     @media print {
                       @page {
                         size: 80mm auto;
                         margin: 0;
                         padding: 0;
                       }
+                      
                       html, body {
                         margin: 0 !important;
-                        padding: 5px !important;
-                        width: 80mm;
-                        max-width: 80mm;
-                        overflow: visible !important;
-                      }
-                      body {
+                        padding: 0 !important;
+                        width: 80mm !important;
+                        max-width: 80mm !important;
                         height: auto !important;
                         min-height: auto !important;
-                        max-height: none !important;
+                        overflow: visible !important;
                       }
-                      html {
-                        height: auto !important;
+                      
+                      body > *:not(.receipt-content) {
+                        display: none !important;
+                      }
+                      
+                      .no-print {
+                        display: none !important;
+                      }
+                      
+                      .receipt-content {
+                        display: block !important;
+                        visibility: visible !important;
+                        width: 80mm !important;
+                        max-width: 80mm !important;
+                        margin: 0 !important;
+                        padding: 5mm 4mm !important;
+                        page-break-after: avoid;
+                        page-break-inside: avoid;
+                        break-inside: avoid;
+                      }
+                      
+                      .receipt-content * {
+                        page-break-inside: avoid;
+                        break-inside: avoid;
                       }
                     }
+                    
                     @media screen {
-                      html, body {
-                        margin: 0;
-                        padding: 5px;
-                        width: 80mm;
-                        max-width: 80mm;
+                      body {
+                        padding: 10px;
+                      }
+                      
+                      .no-print {
+                        display: block;
+                        margin-top: 20px;
+                        padding: 10px;
+                        background: #f0f0f0;
+                        border-radius: 5px;
+                        text-align: center;
                       }
                     }
-                    html, body {
-                      font-family: 'Courier New', monospace;
-                      margin: 0;
-                      padding: 5px;
-                      font-size: 11px;
-                      line-height: 1.3;
+                    
+                    .receipt-content {
                       width: 80mm;
                       max-width: 80mm;
+                      margin: 0 auto;
+                      padding: 5mm 4mm;
                       background: white;
-                    }
-                    * {
-                      box-sizing: border-box;
-                      margin: 0;
-                      padding: 0;
                     }
                   </style>
                 </head>
-                <body>${receiptHTML}</body>
+                <body>
+                  <div class="receipt-content">
+                    ${receiptHTML}
+                  </div>
+                  <div class="no-print">
+                    <p><strong>Print Preview</strong></p>
+                    <p>Click the Print button or press Ctrl+P to print this receipt.</p>
+                  </div>
+                  <script>
+                    window.onload = function() {
+                      setTimeout(function() {
+                        const receiptContent = document.querySelector('.receipt-content');
+                        if (receiptContent) {
+                          receiptContent.style.display = 'block';
+                          receiptContent.style.visibility = 'visible';
+                        }
+                        window.focus();
+                      }, 100);
+                    };
+                  </script>
+                </body>
               </html>
             `);
             printWindow.document.close();
@@ -2803,108 +2918,153 @@ export default function OrderManagementPage() {
         console.warn('Print API failed, using fallback');
         const printWindow = window.open('', '_blank');
         if (printWindow) {
+          const fallbackPrintHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+html, body { 
+  margin: 0; 
+  padding: 0; 
+  width: 80mm; 
+  height: auto;
+  min-height: auto;
+  font-family: 'Courier New', monospace; 
+  font-size: 11px; 
+  line-height: 1.4; 
+  background: white; 
+  color: #000;
+  overflow: visible;
+}
+@media print {
+  @page { 
+    size: 80mm auto; 
+    margin: 0; 
+    padding: 0;
+  }
+  html, body { 
+    width: 80mm !important; 
+    max-width: 80mm !important;
+    margin: 0 !important; 
+    padding: 0 !important; 
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  .no-print { 
+    display: none !important; 
+  }
+  .receipt-wrapper {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    background: white !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-wrapper * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .receipt-wrapper,
+  .receipt-wrapper * {
+    visibility: visible !important;
+    display: block !important;
+  }
+  table {
+    display: table !important;
+  }
+  tr {
+    display: table-row !important;
+  }
+  td, th {
+    display: table-cell !important;
+  }
+}
+.receipt-wrapper {
+  width: 80mm;
+  max-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  position: relative;
+}
+.no-print {
+  display: none;
+}
+@media screen {
+  body { 
+    padding: 20px; 
+    background: #f5f5f5; 
+  }
+  .no-print { 
+    display: block; 
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #f0f0f0; 
+    border-radius: 5px; 
+    text-align: center; 
+    font-size: 12px;
+  }
+  .receipt-wrapper {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-wrapper">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Press Ctrl+P to print or click the Print button.</p>
+</div>
+<script>
+(function() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 300);
+    });
+  } else {
+    setTimeout(function() {
+      window.focus();
+      window.print();
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>`;
           printWindow.document.open();
-          printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>Receipt - Restaurant Khas</title>
-                <meta charset="UTF-8">
-                <style>
-                  @media print {
-                    @page {
-                      size: 80mm auto;
-                      margin: 0;
-                      padding: 0;
-                    }
-                    html, body {
-                      margin: 0 !important;
-                      padding: 5px !important;
-                      width: 80mm;
-                      max-width: 80mm;
-                      overflow: visible !important;
-                    }
-                    * {
-                      margin: 0;
-                      padding: 0;
-                      box-sizing: border-box;
-                    }
-                    .no-print {
-                      display: none !important;
-                    }
-                    button, .no-print {
-                      display: none !important;
-                    }
-                    * {
-                      page-break-inside: avoid;
-                      break-inside: avoid;
-                    }
-                    body {
-                      height: auto !important;
-                      min-height: auto !important;
-                      max-height: none !important;
-                      overflow: visible !important;
-                    }
-                    html {
-                      height: auto !important;
-                    }
-                  }
-                  @media screen {
-                    html, body {
-                      margin: 0;
-                      padding: 5px;
-                      width: 80mm;
-                      max-width: 80mm;
-                    }
-                  }
-                  html, body {
-                    font-family: 'Courier New', monospace;
-                    margin: 0;
-                    padding: 5px;
-                    font-size: 11px;
-                    line-height: 1.3;
-                    width: 80mm;
-                    max-width: 80mm;
-                    background: white;
-                  }
-                  * {
-                    box-sizing: border-box;
-                    margin: 0;
-                    padding: 0;
-                  }
-                  body > * {
-                    visibility: visible;
-                  }
-                </style>
-              </head>
-              <body>${receiptHTML}</body>
-            </html>
-          `);
+          printWindow.document.write(fallbackPrintHTML);
           printWindow.document.close();
           
-          // Wait for content to fully load before printing
-          printWindow.onload = function() {
-            setTimeout(() => {
-              try {
-                printWindow.focus();
-                printWindow.print();
-              } catch (error) {
-                console.error('Error triggering print:', error);
-              }
-            }, 500);
-          };
-          
-          // Fallback: if onload doesn't fire, try after a delay
+          // Trigger print after content loads
           setTimeout(() => {
-            if (printWindow && !printWindow.closed) {
-              try {
+            try {
+              if (printWindow && !printWindow.closed) {
                 printWindow.focus();
-                printWindow.print();
-              } catch (error) {
-                console.error('Error triggering print (fallback):', error);
+                setTimeout(() => {
+                  if (printWindow && !printWindow.closed) {
+                    printWindow.print();
+                  }
+                }, 300);
               }
+            } catch (error) {
+              console.error('Error triggering print:', error);
             }
-          }, 1000);
+          }, 200);
         } else {
           window.print();
         }
@@ -2919,105 +3079,185 @@ export default function OrderManagementPage() {
       
       // Fallback to window.print on any error
       try {
-        const printContent = document.getElementById('receipt-print-area');
-        if (printContent) {
-          const printWindow = window.open('', '_blank');
-          if (printWindow) {
-            printWindow.document.open();
-            printWindow.document.write(`
-              <!DOCTYPE html>
-              <html>
-                <head>
-                  <title>Receipt - Restaurant Khas</title>
-                  <meta charset="UTF-8">
-                  <style>
-                    @media print {
-                      @page {
-                        size: 80mm auto;
-                        margin: 0;
-                        padding: 0;
-                      }
-                      html, body {
-                        margin: 0 !important;
-                        padding: 5px !important;
-                        width: 80mm;
-                        max-width: 80mm;
-                        overflow: visible !important;
-                      }
-                      body {
-                        height: auto !important;
-                        min-height: auto !important;
-                        max-height: none !important;
-                      }
-                      html {
-                        height: auto !important;
-                      }
-                    }
-                    @media screen {
-                      html, body {
-                        margin: 0;
-                        padding: 5px;
-                        width: 80mm;
-                        max-width: 80mm;
-                      }
-                    }
-                    html, body {
-                      font-family: 'Courier New', monospace;
-                      margin: 0;
-                      padding: 5px;
-                      font-size: 11px;
-                      line-height: 1.3;
-                      width: 80mm;
-                      max-width: 80mm;
-                      background: white;
-                    }
-                    * {
-                      box-sizing: border-box;
-                      margin: 0;
-                      padding: 0;
-                    }
-                  </style>
-                </head>
-                <body>${printContent.innerHTML}</body>
-              </html>
-            `);
-            printWindow.document.close();
-            
-            // Wait for content to fully load before printing
-            printWindow.onload = function() {
-              setTimeout(() => {
-                try {
-                  printWindow.focus();
-                  printWindow.print();
-                } catch (error) {
-                  console.error('Error triggering print:', error);
-                }
-              }, 500);
-            };
-            
-            // Fallback: if onload doesn't fire, try after a delay
-            setTimeout(() => {
+        // Generate receipt HTML from generatedBill if available
+        let receiptHTML = '';
+        if (generatedBill) {
+          receiptHTML = generateReceiptHTML(generatedBill);
+        }
+        
+        // Fallback to DOM if HTML generation failed
+        if (!receiptHTML || receiptHTML.trim().length === 0) {
+          const printContent = document.getElementById('receipt-print-area');
+          if (printContent) {
+            receiptHTML = printContent.innerHTML;
+          }
+        }
+        
+        if (!receiptHTML || receiptHTML.trim().length === 0) {
+          setAlert({ type: 'error', message: 'Receipt content is empty. Please regenerate the bill.' });
+          setIsPrinting(false);
+          return;
+        }
+        
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          const errorFallbackPrintHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+html, body { 
+  margin: 0; 
+  padding: 0; 
+  width: 80mm; 
+  height: auto;
+  min-height: auto;
+  font-family: 'Courier New', monospace; 
+  font-size: 11px; 
+  line-height: 1.4; 
+  background: white; 
+  color: #000;
+  overflow: visible;
+}
+@media print {
+  @page { 
+    size: 80mm auto; 
+    margin: 0; 
+    padding: 0;
+  }
+  html, body { 
+    width: 80mm !important; 
+    max-width: 80mm !important;
+    margin: 0 !important; 
+    padding: 0 !important; 
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  .no-print { 
+    display: none !important; 
+  }
+  .receipt-wrapper {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    background: white !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-wrapper * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .receipt-wrapper,
+  .receipt-wrapper * {
+    visibility: visible !important;
+    display: block !important;
+  }
+  table {
+    display: table !important;
+  }
+  tr {
+    display: table-row !important;
+  }
+  td, th {
+    display: table-cell !important;
+  }
+}
+.receipt-wrapper {
+  width: 80mm;
+  max-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  position: relative;
+}
+.no-print {
+  display: none;
+}
+@media screen {
+  body { 
+    padding: 20px; 
+    background: #f5f5f5; 
+  }
+  .no-print { 
+    display: block; 
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #f0f0f0; 
+    border-radius: 5px; 
+    text-align: center; 
+    font-size: 12px;
+  }
+  .receipt-wrapper {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-wrapper">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Press Ctrl+P to print or click the Print button.</p>
+</div>
+<script>
+(function() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 300);
+    });
+  } else {
+    setTimeout(function() {
+      window.focus();
+      window.print();
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>`;
+          printWindow.document.open();
+          printWindow.document.write(errorFallbackPrintHTML);
+          printWindow.document.close();
+          
+          // Trigger print after content loads
+          setTimeout(() => {
+            try {
               if (printWindow && !printWindow.closed) {
-                try {
-                  printWindow.focus();
-                  printWindow.print();
-                } catch (error) {
-                  console.error('Error triggering print (fallback):', error);
-                }
+                printWindow.focus();
+                setTimeout(() => {
+                  if (printWindow && !printWindow.closed) {
+                    printWindow.print();
+                  }
+                }, 300);
               }
-            }, 1000);
+            } catch (error) {
+              console.error('Error triggering print:', error);
+            }
+          }, 200);
         } else {
           window.print();
         }
-        }
       } catch (fallbackError) {
         console.error('Fallback print also failed:', fallbackError);
+        setAlert({ 
+          type: 'error', 
+          message: 'Error printing receipt. Using browser print dialog instead.' 
+        });
       }
-      
-      setAlert({ 
-        type: 'error', 
-        message: 'Error printing receipt. Using browser print dialog instead.' 
-      });
     } finally {
       setIsPrinting(false);
     }

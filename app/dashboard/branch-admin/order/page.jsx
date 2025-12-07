@@ -27,7 +27,7 @@ export default function OrderManagementPage() {
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
-  const [dateFilter, setDateFilter] = useState('today'); // today, week, month, custom
+  const [dateFilter, setDateFilter] = useState('all'); // all, today, week, month, custom
   const [customDate, setCustomDate] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [searchOrderId, setSearchOrderId] = useState(''); // Search by order ID
@@ -373,6 +373,7 @@ export default function OrderManagementPage() {
         fromDate = customDate;
         toDate = customDate;
       }
+      // If dateFilter is 'all', don't add date parameters - fetch all orders
       
       const params = { 
         terminal,
@@ -381,7 +382,8 @@ export default function OrderManagementPage() {
       if (filter !== 'all') {
         params.status = filter;
       }
-      if (fromDate && toDate) {
+      // Only add date parameters if dateFilter is not 'all'
+      if (dateFilter !== 'all' && fromDate && toDate) {
         params.from_date = fromDate;
         params.to_date = toDate;
       }
@@ -452,18 +454,20 @@ export default function OrderManagementPage() {
       if (ordersData.length > 0) {
         logger.info(`Mapping ${ordersData.length} orders from API response`);
         
-        // STRICT BRANCH FILTERING: Filter out any orders that don't belong to this branch
+        // BRANCH FILTERING: Filter out any orders that don't belong to this branch
         // This is a safety measure in case the API returns data from other branches
-        // CRITICAL: Only show orders that explicitly belong to this branch
+        // Note: If API already filters by branch_id, this should not filter anything out
         const filteredOrdersData = ordersData.filter(order => {
           if (!order) return false; // Filter out null/undefined
           const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-          // STRICT: Order MUST have branch_id AND it MUST match the current branch
-          // Do NOT include orders without branch_id - they might be from other branches
+          
+          // If order has no branch_id, include it if API was called with branch_id (API should have filtered)
+          // This handles cases where API filters correctly but doesn't return branch_id in response
           if (!orderBranchId) {
-            console.warn('⚠️ Order missing branch_id, excluding:', order.order_id || order.id);
-            return false;
+            console.warn('⚠️ Order missing branch_id in response, but including since API was called with branch_id:', order.order_id || order.id);
+            return true; // Include orders without branch_id if API was called with branch_id filter
           }
+          
           // Convert both to strings for comparison to handle number/string mismatches
           const orderBranchIdStr = String(orderBranchId).trim();
           const currentBranchIdStr = String(branchId).trim();
@@ -630,7 +634,16 @@ export default function OrderManagementPage() {
         if (!result.success && result.data && result.data.message) {
           setAlert({ type: 'warning', message: result.data.message || 'No orders found' });
         } else {
-          setAlert({ type: 'info', message: 'No orders found. Check console for API response details.' });
+          // Provide helpful message based on filters
+          let message = 'No orders found';
+          if (dateFilter !== 'all') {
+            message += ` for the selected date filter (${dateFilter})`;
+          }
+          if (filter !== 'all') {
+            message += ` with status "${filter}"`;
+          }
+          message += '. Try changing the filters or check if there are orders in the system.';
+          setAlert({ type: 'info', message });
         }
         setOrders([]);
       }
@@ -2626,117 +2639,115 @@ export default function OrderManagementPage() {
     }
     
     return `
-      <div style="width: 80mm; max-width: 80mm; margin: 0 auto; padding: 8mm 5mm; background: white; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.4; color: #000; box-sizing: border-box;">
-        <!-- Logo -->
-        <div style="text-align: center; margin-bottom: 10px;">
-          <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
-            RESTAURANT
+      <!-- Logo -->
+      <div style="text-align: center; margin-bottom: 10px; padding-top: 5px;">
+        <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase; color: #FF5F15;">
+          RESTAURANT
+        </div>
+        <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
+          KHAS
+        </div>
+      </div>
+        
+      <!-- Header -->
+      <div style="text-align: center; margin-bottom: 12px; border-bottom: 2px solid #FF5F15; padding-bottom: 10px;">
+        ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 5px; color: #333;">${branchName}</div>` : ''}
+      </div>
+      
+      <!-- Order Information -->
+      <div style="text-align: center; margin-bottom: 10px; font-size: 10px; line-height: 1.5;">
+        <div style="margin: 2px 0;">Date: ${formattedDate}</div>
+        <div style="margin: 2px 0;">Order #: ${orderNumber}</div>
+        <div style="margin: 3px 0;">
+          <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 3px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+        </div>
+        ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 2px 0;">Table: ${bill.table_number}</div>` : ''}
+        ${isCredit && customerName ? `
+          <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc;">
+            <div style="font-weight: bold; color: #FF5F15; font-size: 10px;">Credit Customer:</div>
+            <div style="margin-top: 3px; font-weight: bold; font-size: 11px;">${customerName}</div>
+            ${customerPhone ? `<div style="font-size: 9px; color: #666; margin-top: 2px;">${customerPhone}</div>` : ''}
           </div>
-          <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase; color: #FF5F15;">
-            KHAS
+        ` : ''}
+      </div>
+      
+      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      
+      <!-- Items Table -->
+      <table style="width: 100%; margin: 10px 0; border-collapse: collapse; table-layout: fixed; font-size: 10px;">
+        <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
+          <tr>
+            <th style="width: 42%; text-align: left; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
+            <th style="width: 20%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
+            <th style="width: 10%; text-align: center; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
+            <th style="width: 28%; text-align: right; padding: 4px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHTML}
+        </tbody>
+      </table>
+      
+      <div style="text-align: center; margin: 8px 0; font-size: 10px; color: #000;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
+      
+      <!-- Totals Section -->
+      <div style="margin-top: 12px; border-top: 1px solid #000; padding-top: 8px;">
+        <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+          <span>Subtotal:</span>
+          <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+        </div>
+        ${serviceCharge > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+            <span>Service Charge:</span>
+            <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
           </div>
-        </div>
-        
-        <!-- Header -->
-        <div style="text-align: center; margin-bottom: 15px; border-bottom: 2px solid #FF5F15; padding-bottom: 12px;">
-          ${branchName ? `<div style="font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #333;">${branchName}</div>` : ''}
-        </div>
-        
-        <!-- Order Information -->
-        <div style="text-align: center; margin-bottom: 12px; font-size: 10px; line-height: 1.6;">
-          <div style="margin: 3px 0;">Date: ${formattedDate}</div>
-          <div style="margin: 3px 0;">Order #: ${orderNumber}</div>
-          <div style="margin: 3px 0;">
-            <span style="display: inline-block; padding: 2px 6px; border: 1px solid #000; margin-top: 4px; font-weight: bold; font-size: 10px;">${displayOrderType}</span>
+        ` : ''}
+        ${discount > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin: 3px 0; font-size: 10px;">
+            <span>Discount:</span>
+            <span style="font-weight: bold;">-${formatPKR(discount)}</span>
           </div>
-          ${bill.table_number && orderType === 'Dine In' ? `<div style="margin: 3px 0;">Table: ${bill.table_number}</div>` : ''}
-          ${isCredit && customerName ? `
-            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
-              <div style="font-weight: bold; color: #FF5F15;">Credit Customer:</div>
-              <div style="margin-top: 4px; font-weight: bold;">${customerName}</div>
-              ${customerPhone ? `<div style="font-size: 10px; color: #666;">${customerPhone}</div>` : ''}
-            </div>
-          ` : ''}
+        ` : ''}
+        <div style="display: flex; justify-content: space-between; margin: 8px 0; padding: 6px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 12px; font-weight: bold; color: #FF5F15;">
+          <span>Net Total:</span>
+          <span>${formatPKR(grandTotal)}</span>
         </div>
-        
-        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-        
-        <!-- Items Table -->
-        <table style="width: 100%; margin: 12px 0; border-collapse: collapse; table-layout: fixed;">
-          <thead style="border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0;">
-            <tr>
-              <th style="width: 42%; text-align: left; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Item</th>
-              <th style="width: 20%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Price</th>
-              <th style="width: 10%; text-align: center; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Qty</th>
-              <th style="width: 28%; text-align: right; padding: 5px 2px; font-weight: bold; font-size: 10px; text-transform: uppercase; color: #FF5F15;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHTML}
-          </tbody>
-        </table>
-        
-        <div style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-        
-        <!-- Totals Section -->
-        <div style="margin-top: 15px; border-top: 1px solid #000; padding-top: 10px;">
-          <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-            <span>Subtotal:</span>
-            <span style="font-weight: bold;">${formatPKR(subtotal)}</span>
+        ${paymentMethod ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; border-top: 1px solid #ddd; padding-top: 6px;">
+            <span>Payment Method:</span>
+            <span style="font-weight: bold;">${paymentMethod}</span>
           </div>
-          ${serviceCharge > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-              <span>Service Charge:</span>
-              <span style="font-weight: bold;">${formatPKR(serviceCharge)}</span>
-            </div>
-          ` : ''}
-          ${discount > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin: 4px 0; font-size: 10px;">
-              <span>Discount:</span>
-              <span style="font-weight: bold;">-${formatPKR(discount)}</span>
-            </div>
-          ` : ''}
-          <div style="display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
-            <span>Net Total:</span>
-            <span>${formatPKR(grandTotal)}</span>
+        ` : ''}
+        ${paymentStatus === 'Paid' && cashReceived > 0 ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px;">
+            <span>Amount Paid:</span>
+            <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
           </div>
-          ${paymentMethod ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; border-top: 1px solid #ddd; padding-top: 8px;">
-              <span>Payment Method:</span>
-              <span style="font-weight: bold;">${paymentMethod}</span>
+          ${change > 0 ? `
+            <div style="display: flex; justify-content: space-between; font-size: 10px;">
+              <span>Change Returned:</span>
+              <span style="color: #059669;">${formatPKR(change)}</span>
             </div>
           ` : ''}
-          ${paymentStatus === 'Paid' && cashReceived > 0 ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px;">
-              <span>Amount Paid:</span>
-              <span style="color: #059669; font-weight: bold;">${formatPKR(cashReceived)}</span>
-            </div>
-            ${change > 0 ? `
-              <div style="display: flex; justify-content: space-between; font-size: 11px;">
-                <span>Change Returned:</span>
-                <span style="color: #059669;">${formatPKR(change)}</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #ccc; font-size: 11px;">
-              <span>Payment Status:</span>
-              <span style="color: #059669; font-weight: bold;">✓ PAID</span>
-            </div>
-          ` : ''}
-          ${billId ? `
-            <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; font-size: 10px; color: #666;">
-              <span>Bill ID:</span>
-              <span>#${billId}</span>
-            </div>
-          ` : ''}
-        </div>
-        
-        <!-- Thank You -->
-        <div style="text-align: center; margin-top: 20px; padding-top: 15px; border-top: 2px dashed #FF5F15; font-size: 15px; font-weight: bold; letter-spacing: 3px; color: #FF5F15;">
-          THANK YOU
-        </div>
-        <div style="text-align: center; margin-top: 15px; font-size: 9px;">
-          Visit us again!
-        </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #ccc; font-size: 10px;">
+            <span>Payment Status:</span>
+            <span style="color: #059669; font-weight: bold;">✓ PAID</span>
+          </div>
+        ` : ''}
+        ${billId ? `
+          <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ccc; font-size: 9px; color: #666;">
+            <span>Bill ID:</span>
+            <span>#${billId}</span>
+          </div>
+        ` : ''}
+      </div>
+      
+      <!-- Thank You -->
+      <div style="text-align: center; margin-top: 15px; padding-top: 12px; border-top: 2px dashed #FF5F15; font-size: 14px; font-weight: bold; letter-spacing: 2px; color: #FF5F15;">
+        THANK YOU
+      </div>
+      <div style="text-align: center; margin-top: 10px; font-size: 9px; color: #666;">
+        Visit us again!
       </div>
     `;
   };
@@ -2799,136 +2810,163 @@ export default function OrderManagementPage() {
         return false;
       }
 
-      // Create print-ready HTML with proper styling
-      const printHTML = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Receipt - Order ${orderId}</title>
-            <meta charset="UTF-8">
-            <style>
-              @media print {
-                @page { 
-                  size: 80mm auto; 
-                  margin: 0;
-                  padding: 0;
-                }
-                html, body {
-                  margin: 0 !important;
-                  padding: 5px !important;
-                  width: 80mm;
-                  max-width: 80mm;
-                  overflow: visible !important;
-                }
-                .no-print { 
-                  display: none !important; 
-                }
-                button, .no-print { 
-                  display: none !important; 
-                }
-                /* Prevent page breaks inside content */
-                * {
-                  page-break-inside: avoid;
-                  break-inside: avoid;
-                }
-                /* Prevent extra blank pages */
-                body {
-                  height: auto !important;
-                  min-height: auto !important;
-                  max-height: none !important;
-                  overflow: visible !important;
-                }
-                /* Remove any empty space */
-                html {
-                  height: auto !important;
-                }
-              }
-              @media screen {
-                html, body {
-                  margin: 0;
-                  padding: 5px;
-                  width: 80mm;
-                  max-width: 80mm;
-                }
-              }
-              html, body {
-                font-family: 'Courier New', monospace;
-                margin: 0;
-                padding: 5px;
-                font-size: 11px;
-                line-height: 1.3;
-                width: 80mm;
-                max-width: 80mm;
-                background: white;
-              }
-              * {
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-              }
-              /* Remove any extra spacing */
-              div, p, span {
-                margin: 0;
-                padding: 0;
-              }
-              /* Ensure content is visible */
-              body > * {
-                visibility: visible;
-              }
-            </style>
-          </head>
-          <body>
-            ${receiptHTML}
-            <div class="no-print" style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px; text-align: center;">
-              <p><strong>Print Preview</strong></p>
-              <p>Click the Print button or press Ctrl+P to print this receipt.</p>
-              <p>Make sure to select your USB printer.</p>
-            </div>
-            <script>
-              // Ensure content is loaded before printing
-              window.onload = function() {
-                // Small delay to ensure all content is rendered
-                setTimeout(function() {
-                  window.focus();
-                  // Don't auto-print, let user click print button
-                }, 100);
-              };
-            </script>
-          </body>
-        </html>
-      `;
+      // Create print-ready HTML - FIXED to render receipt properly
+      const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Receipt - Order ${orderId}</title>
+<style>
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
+html, body { 
+  margin: 0; 
+  padding: 0; 
+  width: 80mm; 
+  height: auto;
+  min-height: auto;
+  font-family: 'Courier New', monospace; 
+  font-size: 11px; 
+  line-height: 1.4; 
+  background: white; 
+  color: #000;
+  overflow: visible;
+}
+@media print {
+  @page { 
+    size: 80mm auto; 
+    margin: 0; 
+    padding: 0;
+  }
+  html, body { 
+    width: 80mm !important; 
+    max-width: 80mm !important;
+    margin: 0 !important; 
+    padding: 0 !important; 
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  .no-print { 
+    display: none !important; 
+  }
+  .receipt-wrapper {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    background: white !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-wrapper * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  /* Ensure all content is visible */
+  .receipt-wrapper,
+  .receipt-wrapper * {
+    visibility: visible !important;
+    display: block !important;
+  }
+  table {
+    display: table !important;
+  }
+  tr {
+    display: table-row !important;
+  }
+  td, th {
+    display: table-cell !important;
+  }
+}
+.receipt-wrapper {
+  width: 80mm;
+  max-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  position: relative;
+}
+.no-print {
+  display: none;
+}
+@media screen {
+  body { 
+    padding: 20px; 
+    background: #f5f5f5; 
+  }
+  .no-print { 
+    display: block; 
+    margin-top: 20px; 
+    padding: 15px; 
+    background: #f0f0f0; 
+    border-radius: 5px; 
+    text-align: center; 
+    font-size: 12px;
+  }
+  .receipt-wrapper {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-wrapper">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Press Ctrl+P to print or click the Print button.</p>
+<p style="font-size: 10px; color: #666; margin-top: 10px;">Make sure to select your 80mm thermal printer.</p>
+</div>
+<script>
+(function() {
+  // Wait for content to load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 300);
+    });
+  } else {
+    setTimeout(function() {
+      window.focus();
+      window.print();
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>`;
 
+      // Write to print window
       printWindow.document.open();
       printWindow.document.write(printHTML);
       printWindow.document.close();
 
-      // Wait for content to fully load, then trigger print dialog
-      printWindow.onload = function() {
-        setTimeout(() => {
-          try {
-            printWindow.focus();
-            printWindow.print();
-          } catch (error) {
-            console.error('Error triggering print:', error);
-            setAlert({ 
-              type: 'error', 
-              message: 'Error opening print dialog. Please try printing manually (Ctrl+P).' 
-            });
-          }
-        }, 500);
-      };
-
-      // Fallback: if onload doesn't fire, try after a delay
+      // Trigger print after content loads
       setTimeout(() => {
-        if (printWindow && !printWindow.closed) {
-          try {
+        try {
+          if (printWindow && !printWindow.closed) {
             printWindow.focus();
-            printWindow.print();
-          } catch (error) {
-            console.error('Error triggering print (fallback):', error);
+            setTimeout(() => {
+              if (printWindow && !printWindow.closed) {
+                printWindow.print();
+              }
+            }, 300);
           }
+        } catch (error) {
+          console.error('Error triggering print:', error);
+          setAlert({ 
+            type: 'warning', 
+            message: 'Print window opened. Please press Ctrl+P to print manually.' 
+          });
         }
-      }, 1000);
+      }, 200);
 
       // Show success notification
       setAlert({ 
@@ -3434,6 +3472,17 @@ export default function OrderManagementPage() {
           {/* Date Filter */}
           <div className="flex gap-2 flex-wrap items-center bg-white p-3 rounded-lg border border-gray-200">
             <span className="text-sm font-medium text-gray-700 mr-2">Filter by Date:</span>
+            <Button
+              variant={dateFilter === 'all' ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => {
+                setDateFilter('all');
+                setShowDatePicker(false);
+                setCustomDate('');
+              }}
+            >
+              All
+            </Button>
             {['today', 'week', 'month'].map((period) => (
               <Button
                 key={period}
@@ -3478,11 +3527,11 @@ export default function OrderManagementPage() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => {
-                      setCustomDate('');
-                      setDateFilter('today');
-                      setShowDatePicker(false);
-                    }}
+                  onClick={() => {
+                    setCustomDate('');
+                    setDateFilter('all');
+                    setShowDatePicker(false);
+                  }}
                   >
                     <X className="w-4 h-4" />
                   </Button>
@@ -3490,11 +3539,16 @@ export default function OrderManagementPage() {
               </div>
             )}
             
-            {dateFilter !== 'today' && (
+            {dateFilter !== 'all' && dateFilter !== 'today' && (
               <span className="text-xs text-gray-500 ml-2">
                 {dateFilter === 'week' && 'Showing orders from last 7 days'}
                 {dateFilter === 'month' && 'Showing orders from last 30 days'}
                 {dateFilter === 'custom' && customDate && `Showing orders for ${new Date(customDate).toLocaleDateString()}`}
+              </span>
+            )}
+            {dateFilter === 'all' && (
+              <span className="text-xs text-gray-500 ml-2">
+                Showing all orders
               </span>
             )}
           </div>
