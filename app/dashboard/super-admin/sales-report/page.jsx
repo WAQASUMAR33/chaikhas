@@ -17,11 +17,18 @@ import { isCreditPayment, getPaymentMethodDisplay } from '@/utils/payment';
 import { FileText, Printer, Download, Calendar, Building2 } from 'lucide-react';
 
 export default function SalesReportPage() {
-  const [periodFilter, setPeriodFilter] = useState('daily'); // daily, weekly, monthly, all, custom
-  const [selectedMonth, setSelectedMonth] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
-  const [customDateFrom, setCustomDateFrom] = useState('');
-  const [customDateTo, setCustomDateTo] = useState('');
+  // Date range filter state - default to last 30 days
+  const getDefaultDateRange = () => {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    return {
+      fromDate: thirtyDaysAgo.toISOString().split('T')[0],
+      toDate: today.toISOString().split('T')[0],
+    };
+  };
+  
+  const [dateRange, setDateRange] = useState(getDefaultDateRange());
   const [selectedBranchId, setSelectedBranchId] = useState('all');
   const [branches, setBranches] = useState([]);
   const [reportData, setReportData] = useState([]);
@@ -72,22 +79,13 @@ export default function SalesReportPage() {
   };
 
   useEffect(() => {
-    // Set defaults based on period filter
-    const now = new Date();
-    
-    if (periodFilter === 'daily') {
-      setSelectedDate(getTodayDate());
-    } else if (periodFilter === 'monthly') {
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      setSelectedMonth(currentMonth);
-    }
-    
     // Generate report number
+    const now = new Date();
     const reportNum = `SR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
     
     fetchBranches();
-  }, [periodFilter]);
+  }, []);
 
   /**
    * Fetch all branches
@@ -137,55 +135,29 @@ export default function SalesReportPage() {
     setAlert({ type: '', message: '' });
 
     try {
-      let startDate = '';
-      let endDate = '';
-
-      // Determine date range based on period filter
-      if (periodFilter === 'daily') {
-        if (!selectedDate) {
-          setAlert({ type: 'error', message: 'Please select a date' });
-          setLoading(false);
-          return;
-        }
-        startDate = selectedDate;
-        endDate = selectedDate;
-        console.log('📅 Generating daily report for:', selectedDate);
-      } else if (periodFilter === 'weekly') {
-        startDate = getWeekStartDate();
-        endDate = getWeekEndDate();
-        console.log('📅 Generating weekly report from:', startDate, 'to', endDate);
-      } else if (periodFilter === 'monthly') {
-        if (!selectedMonth) {
-          setAlert({ type: 'error', message: 'Please select a month' });
-          setLoading(false);
-          return;
-        }
-        const [year, month] = selectedMonth.split('-');
-        startDate = `${year}-${month}-01`;
-        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-        endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
-        console.log('📅 Generating monthly report for:', selectedMonth);
-      } else if (periodFilter === 'custom') {
-        if (!customDateFrom || !customDateTo) {
-          setAlert({ type: 'error', message: 'Please select both start and end dates' });
-          setLoading(false);
-          return;
-        }
-        startDate = customDateFrom;
-        endDate = customDateTo;
-        console.log('📅 Generating custom report from:', startDate, 'to', endDate);
-      } else {
-        // 'all' - no date filtering
-        console.log('📅 Generating report for all time (no date filter)');
+      // Validate date range
+      if (!dateRange.fromDate || !dateRange.toDate) {
+        setAlert({ type: 'error', message: 'Please select both start and end dates' });
+        setLoading(false);
+        return;
       }
 
-      const params = {};
+      // Validate date range
+      const fromDate = new Date(dateRange.fromDate);
+      const toDate = new Date(dateRange.toDate);
       
-      // Only add date params if not 'all'
-      if (periodFilter !== 'all') {
-        params.start_date = startDate;
-        params.end_date = endDate;
+      if (fromDate > toDate) {
+        setAlert({ type: 'error', message: 'Start date cannot be after end date' });
+        setLoading(false);
+        return;
       }
+
+      const params = {
+        start_date: dateRange.fromDate,
+        end_date: dateRange.toDate
+      };
+      
+      console.log('📅 Generating report from:', params.start_date, 'to', params.end_date);
 
       // Add branch_id only if not 'all'
       if (selectedBranchId !== 'all') {
@@ -701,98 +673,54 @@ export default function SalesReportPage() {
         {/* Filter Section */}
         <div className="bg-white rounded-lg shadow p-4 sm:p-6 border border-gray-200">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Period Filter */}
+            {/* Date Range Selector */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Calendar className="w-4 h-4 inline mr-1" />
-                Report Period
+                From Date
               </label>
-              <select
-                value={periodFilter}
+              <input
+                type="date"
+                value={dateRange.fromDate}
                 onChange={(e) => {
-                  setPeriodFilter(e.target.value);
+                  setDateRange(prev => ({ ...prev, fromDate: e.target.value }));
                   setReportGenerated(false);
                 }}
+                max={dateRange.toDate || new Date().toISOString().split('T')[0]}
                 className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-              >
-                <option value="daily">Daily (Today)</option>
-                <option value="weekly">Weekly (This Week)</option>
-                <option value="monthly">Monthly</option>
-                <option value="custom">Custom Date Range</option>
-                <option value="all">All Time</option>
-              </select>
+              />
             </div>
 
-            {/* Date/Month Selection based on Period */}
-            {periodFilter === 'daily' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Date
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    setReportGenerated(false);
-                  }}
-                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                />
-              </div>
-            )}
-
-            {periodFilter === 'monthly' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Month
-                </label>
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => {
-                    setSelectedMonth(e.target.value);
-                    setReportGenerated(false);
-                  }}
-                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                />
-              </div>
-            )}
-
-            {periodFilter === 'custom' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    From Date
-                  </label>
-                  <input
-                    type="date"
-                    value={customDateFrom}
-                    onChange={(e) => {
-                      setCustomDateFrom(e.target.value);
-                      setReportGenerated(false);
-                    }}
-                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    To Date
-                  </label>
-                  <input
-                    type="date"
-                    value={customDateTo}
-                    onChange={(e) => {
-                      setCustomDateTo(e.target.value);
-                      setReportGenerated(false);
-                    }}
-                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                  />
-                </div>
-              </>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                To Date
+              </label>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => {
+                  setDateRange(prev => ({ ...prev, toDate: e.target.value }));
+                  setReportGenerated(false);
+                }}
+                min={dateRange.fromDate}
+                max={new Date().toISOString().split('T')[0]}
+                className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+              />
+            </div>
+            
+            <div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setDateRange(getDefaultDateRange())}
+                className="w-full"
+              >
+                Reset to Last 30 Days
+              </Button>
+            </div>
 
             {/* Branch Filter */}
-            <div className={periodFilter === 'custom' ? 'md:col-span-2' : ''}>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Building2 className="w-4 h-4 inline mr-1" />
                 Branch
@@ -1007,23 +935,9 @@ export default function SalesReportPage() {
         {/* Print View */}
         {reportGenerated && reportData.length > 0 && (
         <div ref={printRef} className="print-only">
-          {(() => {
-            let periodText = '';
-            if (periodFilter === 'daily') {
-              periodText = `Daily Report - ${selectedDate || getTodayDate()}`;
-            } else if (periodFilter === 'weekly') {
-              periodText = `Weekly Report - ${getWeekStartDate()} to ${getWeekEndDate()}`;
-            } else if (periodFilter === 'monthly') {
-              const [year, month] = selectedMonth.split('-');
-              const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('default', { month: 'long' });
-              periodText = `Monthly Report - ${monthName} ${year}`;
-            } else if (periodFilter === 'custom') {
-              periodText = `Custom Report - ${customDateFrom} to ${customDateTo}`;
-            } else {
-              periodText = 'All Time Report';
-            }
-            return periodText;
-          })()}
+          {dateRange.fromDate && dateRange.toDate
+            ? `Sales Report - ${new Date(dateRange.fromDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} to ${new Date(dateRange.toDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+            : 'Sales Report'}
           <style jsx global>{`
             @media print {
               @page {

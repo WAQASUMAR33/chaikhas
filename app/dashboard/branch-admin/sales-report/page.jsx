@@ -17,11 +17,18 @@ import { isCreditPayment, getPaymentMethodDisplay } from '@/utils/payment';
 import { FileText, Printer, Download, Calendar, Building2 } from 'lucide-react';
 
 export default function SalesReportPage() {
-  const [periodFilter, setPeriodFilter] = useState('daily'); // daily, weekly, monthly, all, custom
-  const [selectedMonth, setSelectedMonth] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
-  const [customDateFrom, setCustomDateFrom] = useState('');
-  const [customDateTo, setCustomDateTo] = useState('');
+  // Date range filter state - default to last 30 days
+  const getDefaultDateRange = () => {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    return {
+      fromDate: thirtyDaysAgo.toISOString().split('T')[0],
+      toDate: today.toISOString().split('T')[0],
+    };
+  };
+  
+  const [dateRange, setDateRange] = useState(getDefaultDateRange());
   const [reportData, setReportData] = useState([]);
   const [branchInfo, setBranchInfo] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -70,22 +77,13 @@ export default function SalesReportPage() {
   };
 
   useEffect(() => {
-    // Set defaults based on period filter
-    const now = new Date();
-    
-    if (periodFilter === 'daily') {
-      setSelectedDate(getTodayDate());
-    } else if (periodFilter === 'monthly') {
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      setSelectedMonth(currentMonth);
-    }
-    
     // Generate report number
+    const now = new Date();
     const reportNum = `SR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
     
     fetchBranchInfo();
-  }, [periodFilter]);
+  }, []);
 
   /**
    * Fetch branch information
@@ -133,65 +131,32 @@ export default function SalesReportPage() {
         return;
       }
 
-      let startDate = '';
-      let endDate = '';
-
-      // Determine date range based on period filter
-      if (periodFilter === 'daily') {
-        if (!selectedDate) {
-          setAlert({ type: 'error', message: 'Please select a date' });
-          setLoading(false);
-          return;
-        }
-        startDate = selectedDate;
-        endDate = selectedDate;
-        console.log('📅 Generating daily report for:', selectedDate);
-      } else if (periodFilter === 'weekly') {
-        startDate = getWeekStartDate();
-        endDate = getWeekEndDate();
-        console.log('📅 Generating weekly report from:', startDate, 'to', endDate);
-      } else if (periodFilter === 'monthly') {
-        if (!selectedMonth) {
-          setAlert({ type: 'error', message: 'Please select a month' });
-          setLoading(false);
-          return;
-        }
-        const [year, month] = selectedMonth.split('-');
-        startDate = `${year}-${month}-01`;
-        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-        endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
-        console.log('📅 Generating monthly report for:', selectedMonth);
-      } else if (periodFilter === 'custom') {
-        if (!customDateFrom || !customDateTo) {
-          setAlert({ type: 'error', message: 'Please select both start and end dates' });
-          setLoading(false);
-          return;
-        }
-        startDate = customDateFrom;
-        endDate = customDateTo;
-        console.log('📅 Generating custom report from:', startDate, 'to', endDate);
-      } else {
-        // 'all' - no date filtering
-        console.log('📅 Generating report for all time (no date filter)');
+      // Validate date range
+      if (!dateRange.fromDate || !dateRange.toDate) {
+        setAlert({ type: 'error', message: 'Please select both start and end dates' });
+        setLoading(false);
+        return;
       }
 
-      const params = {};
+      // Validate date range
+      const fromDate = new Date(dateRange.fromDate);
+      const toDate = new Date(dateRange.toDate);
       
-      // Only add date params if not 'all'
-      if (periodFilter !== 'all') {
-        params.start_date = startDate;
-        params.end_date = endDate;
+      if (fromDate > toDate) {
+        setAlert({ type: 'error', message: 'Start date cannot be after end date' });
+        setLoading(false);
+        return;
       }
-      
-      params.branch_id = numBranchId;
+
+      console.log('📅 Generating report from:', dateRange.fromDate, 'to', dateRange.toDate);
 
       // Fetch sales report including credit sales
       // The API should return all bills (paid, unpaid, and credit) in the date range
       // ALWAYS include branch_id for branch-admin - strict restriction
       const result = await apiPost('api/get_sales_report.php', {
         branch_id: branchId,
-        start_date: startDate,
-        end_date: endDate,
+        start_date: dateRange.fromDate,
+        end_date: dateRange.toDate,
         include_credit: true, // Explicitly request credit sales to be included
       });
 
@@ -212,8 +177,8 @@ export default function SalesReportPage() {
       try {
         const billsResult = await apiGet('api/bills_management.php', {
           branch_id: branchId,
-          start_date: startDate,
-          end_date: endDate,
+          start_date: dateRange.fromDate,
+          end_date: dateRange.toDate,
         });
         
         if (billsResult.success && billsResult.data) {
@@ -592,91 +557,47 @@ export default function SalesReportPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Calendar className="w-4 h-4 inline mr-1" />
-                Report Period
+                From Date
               </label>
-              <select
-                value={periodFilter}
+              <input
+                type="date"
+                value={dateRange.fromDate}
                 onChange={(e) => {
-                  setPeriodFilter(e.target.value);
+                  setDateRange(prev => ({ ...prev, fromDate: e.target.value }));
                   setReportGenerated(false);
                 }}
+                max={dateRange.toDate || new Date().toISOString().split('T')[0]}
                 className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-              >
-                <option value="daily">Daily (Today)</option>
-                <option value="weekly">Weekly (This Week)</option>
-                <option value="monthly">Monthly</option>
-                <option value="custom">Custom Date Range</option>
-                <option value="all">All Time</option>
-              </select>
+              />
             </div>
 
-            {/* Date/Month Selection based on Period */}
-            {periodFilter === 'daily' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Date
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    setReportGenerated(false);
-                  }}
-                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                />
-              </div>
-            )}
-
-            {periodFilter === 'monthly' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Month
-                </label>
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => {
-                    setSelectedMonth(e.target.value);
-                    setReportGenerated(false);
-                  }}
-                  className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                />
-              </div>
-            )}
-
-            {periodFilter === 'custom' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    From Date
-                  </label>
-                  <input
-                    type="date"
-                    value={customDateFrom}
-                    onChange={(e) => {
-                      setCustomDateFrom(e.target.value);
-                      setReportGenerated(false);
-                    }}
-                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    To Date
-                  </label>
-                  <input
-                    type="date"
-                    value={customDateTo}
-                    onChange={(e) => {
-                      setCustomDateTo(e.target.value);
-                      setReportGenerated(false);
-                    }}
-                    className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                  />
-                </div>
-              </>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                To Date
+              </label>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => {
+                  setDateRange(prev => ({ ...prev, toDate: e.target.value }));
+                  setReportGenerated(false);
+                }}
+                min={dateRange.fromDate}
+                max={new Date().toISOString().split('T')[0]}
+                className="w-full px-3 py-2 border border-[#E0E0E0] rounded-lg text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+              />
+            </div>
+            
+            <div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setDateRange(getDefaultDateRange())}
+                className="w-full"
+              >
+                Reset to Last 30 Days
+              </Button>
+            </div>
           </div>
 
           {/* Generate Report Button */}
@@ -918,21 +839,9 @@ export default function SalesReportPage() {
                       </p>
                     )}
                     <p style={{ margin: '8px 0 0 0', fontSize: '16px', fontWeight: 'bold' }}>
-                      {(() => {
-                        if (periodFilter === 'daily') {
-                          return `Daily Sales Report - ${selectedDate || getTodayDate()}`;
-                        } else if (periodFilter === 'weekly') {
-                          return `Weekly Sales Report - ${getWeekStartDate()} to ${getWeekEndDate()}`;
-                        } else if (periodFilter === 'monthly') {
-                          const [year, month] = selectedMonth.split('-');
-                          const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('default', { month: 'long' });
-                          return `Monthly Sales Report - ${monthName} ${year}`;
-                        } else if (periodFilter === 'custom') {
-                          return `Custom Sales Report - ${customDateFrom} to ${customDateTo}`;
-                        } else {
-                          return 'All Time Sales Report';
-                        }
-                      })()}
+                      {dateRange.fromDate && dateRange.toDate
+                        ? `Sales Report - ${new Date(dateRange.fromDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} to ${new Date(dateRange.toDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                        : 'Sales Report'}
                     </p>
                   </div>
                   <div style={{ width: '15%', textAlign: 'right', fontSize: '11px' }}>

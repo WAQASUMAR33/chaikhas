@@ -28,7 +28,7 @@ import logger from '@/utils/logger';
  */
 const fetchLastDayend = async (branchId) => {
   try {
-    const result = await apiPost('/get_dayend.php', {
+    const result = await apiPost('api/get_dayend.php', {
       branch_id: branchId,
     });
     
@@ -64,7 +64,6 @@ export default function SalesListPage() {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [period, setPeriod] = useState('daily'); // daily, weekly, monthly, custom
   const [summary, setSummary] = useState({
     totalSales: 0,
     totalOrders: 0,
@@ -75,12 +74,18 @@ export default function SalesListPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(null);
   
-  // Date range filter state
-  const [dateRange, setDateRange] = useState({
-    fromDate: '',
-    toDate: '',
-  });
-  const [showDateRange, setShowDateRange] = useState(false);
+  // Date range filter state - default to last 30 days
+  const getDefaultDateRange = () => {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    return {
+      fromDate: thirtyDaysAgo.toISOString().split('T')[0],
+      toDate: today.toISOString().split('T')[0],
+    };
+  };
+  
+  const [dateRange, setDateRange] = useState(getDefaultDateRange());
 
   /**
    * Fetch sales data from API
@@ -117,32 +122,37 @@ export default function SalesListPage() {
         return;
       }
       
-      // Prepare API parameters
-      // For custom date range, use 'custom' period and include dates
-      const apiPeriod = period === 'custom' ? 'custom' : period;
+      // Prepare API parameters - always use date range
       // ALWAYS include branch_id for branch-admin - strict restriction
-      const apiParams = { terminal, period: apiPeriod, branch_id: branchId };
+      const apiParams = { 
+        terminal, 
+        branch_id: branchId,
+        from_date: dateRange.fromDate,
+        to_date: dateRange.toDate
+      };
       
-      // For daily period, add dayend filtering to ensure sales reset to zero after dayend
-      if (period === 'daily') {
-        const lastDayendTime = await fetchLastDayend(branchId);
-        if (lastDayendTime) {
-          apiParams.after_closing_date = lastDayendTime;
-          console.log('📅 Filtering daily sales after dayend:', lastDayendTime);
+      // Validate date range
+      if (!dateRange.fromDate || !dateRange.toDate) {
+        setAlert({ 
+          type: 'error', 
+          message: 'Please select both start and end dates' 
+        });
+        setSales([]);
+        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        if (showRefreshing) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
         }
+        return;
       }
       
-      // Add date range if custom period is selected
-      if (period === 'custom' && dateRange.fromDate && dateRange.toDate) {
-        apiParams.from_date = dateRange.fromDate;
-        apiParams.to_date = dateRange.toDate;
-      }
+      console.log('📅 Fetching sales for date range:', apiParams.from_date, 'to', apiParams.to_date);
       
       logger.info('Fetching Sales Data', { 
         terminal, 
         branch_id: branchId,
-        period: apiPeriod,
-        dateRange: period === 'custom' ? { from: dateRange.fromDate, to: dateRange.toDate } : null
+        dateRange: { from: dateRange.fromDate, to: dateRange.toDate }
       });
       
       console.log('Fetching sales data with params:', apiParams);
@@ -315,35 +325,91 @@ export default function SalesListPage() {
       }
       
       // Handle case where result.success is true but result.data is empty or undefined
-      // Empty object {} from API might mean no sales data for the period
+      // Try to fetch from bills as fallback if sales API returns empty
       if (result.success && (!result.data || (typeof result.data === 'object' && Object.keys(result.data).length === 0))) {
         console.warn('API returned success but no data (empty object)');
-        console.warn('This might mean: 1) No sales for the period, 2) API returned empty response');
+        console.warn('Attempting fallback: Fetching from bills API...');
         
-        // Check if it's truly empty or if there's data elsewhere
-        if (result.data && typeof result.data === 'object' && Object.keys(result.data).length === 0) {
-          // Empty object - treat as no data available
-          setAlert({ 
-            type: 'info', 
-            message: 'No sales data available for the selected period. Try selecting a different date range.' 
-          });
-        } else {
-          // No data property at all
-          setAlert({ 
-            type: 'warning', 
-            message: 'API returned success but no data. The server may have returned an empty response.' 
-          });
+        // Fallback: Try fetching from bills API
+        try {
+          const billsParams = {
+            terminal,
+            branch_id: branchId,
+          };
+          
+          // Add date range to bills params
+          if (dateRange.fromDate && dateRange.toDate) {
+            billsParams.from_date = dateRange.fromDate;
+            billsParams.to_date = dateRange.toDate;
+          }
+          
+          const billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
+          
+          if (billsResult.success && billsResult.data) {
+            let billsList = [];
+            if (Array.isArray(billsResult.data)) {
+              billsList = billsResult.data;
+            } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
+              billsList = billsResult.data.data;
+            } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
+              billsList = billsResult.data.bills;
+            }
+            
+            if (billsList.length > 0) {
+              console.log('✅ Fallback: Found', billsList.length, 'bills, converting to sales format');
+              
+              // Group bills by date and calculate totals
+              const salesByDate = {};
+              billsList.forEach(bill => {
+                const billDate = bill.created_at || bill.bill_date || bill.date || new Date().toISOString().split('T')[0];
+                const dateKey = billDate.split('T')[0]; // Get YYYY-MM-DD
+                
+                if (!salesByDate[dateKey]) {
+                  salesByDate[dateKey] = {
+                    date: dateKey,
+                    total_sales: 0,
+                    total_orders: 0,
+                  };
+                }
+                
+                const billTotal = parseFloat(bill.grand_total || bill.net_total || bill.total_amount || 0);
+                salesByDate[dateKey].total_sales += billTotal;
+                salesByDate[dateKey].total_orders += 1;
+              });
+              
+              // Convert to array format
+              salesData = Object.values(salesByDate);
+              console.log('✅ Converted bills to sales data:', salesData.length, 'records');
+            }
+          }
+        } catch (fallbackError) {
+          console.error('Fallback bills fetch failed:', fallbackError);
         }
         
-        setSales([]);
-        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
-        if (showRefreshing) {
-          setRefreshing(false);
-        } else {
-          setLoading(false);
+        // If still no data after fallback, show message
+        if (salesData.length === 0) {
+          if (result.data && typeof result.data === 'object' && Object.keys(result.data).length === 0) {
+            setAlert({ 
+              type: 'info', 
+              message: 'No sales data available for the selected period. Try selecting a different date range.' 
+            });
+          } else {
+            setAlert({ 
+              type: 'warning', 
+              message: 'API returned success but no data. The server may have returned an empty response.' 
+            });
+          }
+          
+          setSales([]);
+          setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+          if (showRefreshing) {
+            setRefreshing(false);
+          } else {
+            setLoading(false);
+          }
+          setLastUpdated(new Date());
+          return;
         }
-        setLastUpdated(new Date());
-        return;
       }
       
       if (salesData.length > 0) {
@@ -358,22 +424,25 @@ export default function SalesListPage() {
         console.warn('No sales data found in response. Full response:', result);
       }
 
-      // STRICT BRANCH FILTERING: Filter out any sales that don't belong to this branch
-      // This is a safety measure in case the API returns data from other branches
-      // CRITICAL: Only show sales that explicitly belong to this branch
+      // BRANCH FILTERING: Filter out sales that explicitly belong to other branches
+      // Since we called the API with branch_id, we trust the API filtered correctly
+      // Only filter out sales that explicitly have a different branch_id
       const filteredSalesData = salesData.filter(sale => {
         if (!sale) return false; // Filter out null/undefined
+        
         const saleBranchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
-        // STRICT: Sale MUST have branch_id AND it MUST match the current branch
-        // Do NOT include sales without branch_id - they might be from other branches
+        
+        // If sale has no branch_id, include it (API was called with branch_id, so it should be filtered)
         if (!saleBranchId) {
-          console.warn('⚠️ Sale missing branch_id, excluding:', sale.order_id || sale.id || sale.date);
-          return false;
+          console.log('ℹ️ Sale missing branch_id, including (API was called with branch_id):', sale.order_id || sale.id || sale.date);
+          return true; // Include sales without branch_id since API was called with branch_id
         }
-        // Convert both to strings for comparison to handle number/string mismatches
+        
+        // If sale has branch_id, check if it matches current branch
         const saleBranchIdStr = String(saleBranchId).trim();
         const currentBranchIdStr = String(branchId).trim();
         const matches = saleBranchIdStr === currentBranchIdStr;
+        
         if (!matches) {
           console.warn('⚠️ Sale from different branch excluded:', {
             order_id: sale.order_id || sale.id,
@@ -384,7 +453,7 @@ export default function SalesListPage() {
         return matches;
       });
       
-      console.log(`📊 Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} from branch ${branchId}`);
+      console.log(`📊 Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} after filtering for branch ${branchId}`);
       
       // Log if no sales data found
       if (salesData.length === 0) {
@@ -395,19 +464,20 @@ export default function SalesListPage() {
           message: 'No sales data available for the selected period. Try selecting a different date range or period.' 
         });
       } else if (filteredSalesData.length === 0 && salesData.length > 0) {
-        console.warn('⚠️ All sales filtered out due to branch mismatch');
+        console.warn('⚠️ All sales filtered out - this might indicate a data issue');
+        console.warn('Sample sale data:', salesData[0]);
         setAlert({ 
           type: 'warning', 
-          message: `Found ${salesData.length} sales records, but none match your branch (${branchId}). This might indicate a data issue.` 
+          message: `Found ${salesData.length} sales records, but none match your branch (${branchId}). Check console for details.` 
         });
       }
       
       // Process and format sales data (even if empty, so UI can show "no data" message)
       const processedSales = filteredSalesData.map((sale, index) => {
-        // Format date based on period
+        // Format date - always format as date
         let formattedDate = sale.date || sale.date_period || sale.period || '';
         
-        if (period === 'daily' && sale.date) {
+        if (sale.date) {
           // Format: YYYY-MM-DD to DD/MM/YYYY or keep as is
           try {
             const date = new Date(sale.date);
@@ -421,10 +491,6 @@ export default function SalesListPage() {
           } catch (e) {
             formattedDate = sale.date;
           }
-        } else if (period === 'weekly' && sale.week) {
-          formattedDate = sale.week || `Week ${index + 1}`;
-        } else if (period === 'monthly' && sale.month) {
-          formattedDate = sale.month || `Month ${index + 1}`;
         }
 
         // Calculate values
@@ -486,16 +552,15 @@ export default function SalesListPage() {
         setLoading(false);
       }
     }
-  }, [period, dateRange]);
+  }, [dateRange]);
 
-  // Initial fetch and period change
+  // Initial fetch on mount
   useEffect(() => {
-    // Only auto-fetch if not custom period or if dates are set
-    if (period !== 'custom' || (dateRange.fromDate && dateRange.toDate)) {
+    if (dateRange.fromDate && dateRange.toDate) {
       fetchSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+  }, []);
   
   // Handle date range changes
   const handleDateRangeChange = (field, value) => {
@@ -505,8 +570,8 @@ export default function SalesListPage() {
     }));
   };
   
-  // Fetch sales for custom date range
-  const fetchCustomDateRange = () => {
+  // Apply date range filter
+  const applyDateRange = () => {
     if (!dateRange.fromDate || !dateRange.toDate) {
       setAlert({ 
         type: 'error', 
@@ -537,16 +602,13 @@ export default function SalesListPage() {
       return;
     }
     
-    setPeriod('custom');
     fetchSales();
   };
   
-  // Clear date range filter
-  const clearDateRange = () => {
-    setDateRange({ fromDate: '', toDate: '' });
-    setShowDateRange(false);
-    setPeriod('daily');
-    fetchSales();
+  // Reset to default date range (last 30 days)
+  const resetDateRange = () => {
+    setDateRange(getDefaultDateRange());
+    // fetchSales will be triggered by useEffect when dateRange changes
   };
 
   // Auto-refresh functionality (every 30 seconds when enabled)
@@ -569,15 +631,7 @@ export default function SalesListPage() {
    * Generate and download PDF report (monthly or custom date range)
    */
   const downloadPDFReport = async () => {
-    if (period !== 'monthly' && period !== 'custom') {
-      setAlert({ 
-        type: 'error', 
-        message: 'PDF download is only available for monthly reports or custom date ranges' 
-      });
-      return;
-    }
-    
-    if (period === 'custom' && (!dateRange.fromDate || !dateRange.toDate)) {
+    if (!dateRange.fromDate || !dateRange.toDate) {
       setAlert({ 
         type: 'error', 
         message: 'Please select a date range before downloading PDF' 
@@ -600,9 +654,7 @@ export default function SalesListPage() {
       // Header
       doc.setFontSize(20);
       doc.setTextColor(255, 95, 21); // #FF5F15
-      const reportTitle = period === 'custom' 
-        ? 'Custom Date Range Sales Report'
-        : 'Monthly Sales Report';
+      const reportTitle = 'Sales Report';
       doc.text(reportTitle, margin, yPos);
       yPos += 10;
 
@@ -613,7 +665,7 @@ export default function SalesListPage() {
       doc.text(`Terminal: ${getTerminal()}`, margin, yPos);
       yPos += 5;
       
-      if (period === 'custom' && dateRange.fromDate && dateRange.toDate) {
+      if (dateRange.fromDate && dateRange.toDate) {
         doc.text(
           `Date Range: ${new Date(dateRange.fromDate).toLocaleDateString()} - ${new Date(dateRange.toDate).toLocaleDateString()}`,
           margin,
@@ -640,14 +692,12 @@ export default function SalesListPage() {
       // Table Header
       doc.setFontSize(12);
       doc.setTextColor(0, 0, 0);
-      const tableTitle = period === 'custom' 
-        ? 'Sales Details'
-        : 'Monthly Sales Details';
+      const tableTitle = 'Sales Details';
       doc.text(tableTitle, margin, yPos);
       yPos += 8;
 
       // Table Headers
-      const dateColumnHeader = period === 'custom' ? 'Date' : 'Month';
+      const dateColumnHeader = 'Date';
       const tableHeaders = [dateColumnHeader, 'Orders', 'Total Sales', 'Avg Order'];
       const colWidths = [50, 40, 50, 40];
       const colXPositions = [margin, margin + 50, margin + 90, margin + 140];
@@ -707,16 +757,12 @@ export default function SalesListPage() {
       }
 
       // Download PDF
-      const fileName = period === 'custom'
-        ? `Sales_Report_${dateRange.fromDate}_to_${dateRange.toDate}.pdf`
-        : `Monthly_Sales_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `Sales_Report_${dateRange.fromDate}_to_${dateRange.toDate}.pdf`;
       doc.save(fileName);
 
       setAlert({ 
         type: 'success', 
-        message: period === 'custom' 
-          ? 'Sales report downloaded successfully!' 
-          : 'Monthly sales report downloaded successfully!' 
+        message: 'Sales report downloaded successfully!' 
       });
     } catch (error) {
       console.error('Error generating PDF:', error);
@@ -755,7 +801,7 @@ export default function SalesListPage() {
    */
   const columns = [
     {
-      header: period === 'daily' ? 'Date' : period === 'weekly' ? 'Week' : 'Month',
+      header: 'Date',
       accessor: 'date',
       className: 'min-w-[120px]',
       wrap: false,
@@ -796,7 +842,7 @@ export default function SalesListPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Sales List</h1>
             <p className="text-sm sm:text-base text-gray-600 mt-1">
-              View daily, weekly, and monthly sales reports
+              View sales reports by date range
             </p>
           </div>
           
@@ -814,19 +860,17 @@ export default function SalesListPage() {
               <span className="sm:hidden">Refresh</span>
             </Button>
             
-            {(period === 'monthly' || period === 'custom') && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={downloadPDFReport}
-                className="flex items-center gap-2 w-full sm:w-auto justify-center"
-                disabled={period === 'custom' && (!dateRange.fromDate || !dateRange.toDate)}
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Download PDF</span>
-                <span className="sm:hidden">PDF</span>
-              </Button>
-            )}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={downloadPDFReport}
+              className="flex items-center gap-2 w-full sm:w-auto justify-center"
+              disabled={!dateRange.fromDate || !dateRange.toDate}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Download PDF</span>
+              <span className="sm:hidden">PDF</span>
+            </Button>
           </div>
         </div>
 
@@ -839,34 +883,56 @@ export default function SalesListPage() {
           />
         )}
 
-        {/* Period Selector & Auto-Refresh Toggle */}
+        {/* Date Range Selector & Auto-Refresh Toggle */}
         <div className="flex flex-col gap-4 bg-white rounded-lg shadow p-3 sm:p-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
-            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-              {['daily', 'weekly', 'monthly'].map((p) => (
-                <Button
-                  key={p}
-                  variant={period === p ? 'primary' : 'secondary'}
-                  size="sm"
-                  onClick={() => {
-                    setPeriod(p);
-                    setShowDateRange(false);
-                    setDateRange({ fromDate: '', toDate: '' });
-                  }}
-                  className="capitalize"
-                >
-                  {p === 'daily' ? 'Daily' : p === 'weekly' ? 'Weekly' : 'Monthly'}
-                </Button>
-              ))}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
+                  From Date:
+                </label>
+                <input
+                  type="date"
+                  value={dateRange.fromDate}
+                  onChange={(e) => handleDateRangeChange('fromDate', e.target.value)}
+                  max={dateRange.toDate || new Date().toISOString().split('T')[0]}
+                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                />
+              </div>
+              
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
+                <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
+                  To Date:
+                </label>
+                <input
+                  type="date"
+                  value={dateRange.toDate}
+                  onChange={(e) => handleDateRangeChange('toDate', e.target.value)}
+                  min={dateRange.fromDate}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                />
+              </div>
               
               <Button
-                variant={period === 'custom' ? 'primary' : 'secondary'}
+                variant="primary"
                 size="sm"
-                onClick={() => setShowDateRange(!showDateRange)}
-                className="flex items-center gap-2"
+                onClick={applyDateRange}
+                disabled={!dateRange.fromDate || !dateRange.toDate}
+                className="flex items-center gap-2 w-full sm:w-auto"
               >
-                <Calendar className="w-4 h-4" />
-                <span>Custom Range</span>
+                <Search className="w-4 h-4" />
+                <span>Search</span>
+              </Button>
+              
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={resetDateRange}
+                className="flex items-center gap-2 w-full sm:w-auto"
+              >
+                <X className="w-4 h-4" />
+                <span>Reset</span>
               </Button>
             </div>
             
@@ -889,72 +955,11 @@ export default function SalesListPage() {
             </div>
           </div>
           
-          {/* Date Range Selector */}
-          {showDateRange && (
-            <div className="border-t pt-4 mt-2">
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
-                    <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
-                      From Date:
-                    </label>
-                    <input
-                      type="date"
-                      value={dateRange.fromDate}
-                      onChange={(e) => handleDateRangeChange('fromDate', e.target.value)}
-                      max={dateRange.toDate || new Date().toISOString().split('T')[0]}
-                      className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-                    />
-                  </div>
-                  
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1 w-full sm:w-auto">
-                    <label className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap w-full sm:w-auto">
-                      To Date:
-                    </label>
-                    <input
-                      type="date"
-                      value={dateRange.toDate}
-                      onChange={(e) => handleDateRangeChange('toDate', e.target.value)}
-                      min={dateRange.fromDate}
-                      max={new Date().toISOString().split('T')[0]}
-                      className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-                    />
-                  </div>
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={fetchCustomDateRange}
-                    disabled={!dateRange.fromDate || !dateRange.toDate}
-                    className="flex items-center gap-2 w-full sm:w-auto"
-                  >
-                    <Search className="w-4 h-4" />
-                    <span>Search</span>
-                  </Button>
-                  
-                  {(dateRange.fromDate || dateRange.toDate) && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={clearDateRange}
-                      className="flex items-center gap-2 w-full sm:w-auto"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Clear</span>
-                    </Button>
-                  )}
-                </div>
-              </div>
-              
-              {period === 'custom' && dateRange.fromDate && dateRange.toDate && (
-                <div className="mt-3 pt-3 border-t">
-                  <p className="text-xs sm:text-sm text-gray-600 break-words">
-                    Showing sales from <span className="font-semibold">{new Date(dateRange.fromDate).toLocaleDateString()}</span> to <span className="font-semibold">{new Date(dateRange.toDate).toLocaleDateString()}</span>
-                  </p>
-                </div>
-              )}
+          {dateRange.fromDate && dateRange.toDate && (
+            <div className="mt-3 pt-3 border-t">
+              <p className="text-xs sm:text-sm text-gray-600 break-words">
+                Showing sales from <span className="font-semibold">{new Date(dateRange.fromDate).toLocaleDateString()}</span> to <span className="font-semibold">{new Date(dateRange.toDate).toLocaleDateString()}</span>
+              </p>
             </div>
           )}
         </div>
@@ -1011,15 +1016,7 @@ export default function SalesListPage() {
             <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
             <p className="text-gray-500 text-lg font-medium">No sales data found</p>
             <p className="text-gray-400 text-sm mt-1">
-              {period === 'daily' 
-                ? 'No sales recorded for the selected period' 
-                : period === 'weekly'
-                ? 'No weekly sales data available'
-                : period === 'monthly'
-                ? 'No monthly sales data available'
-                : period === 'custom'
-                ? 'No sales data found for the selected date range'
-                : 'No sales data available'}
+              No sales data found for the selected date range. Try selecting a different date range.
             </p>
           </div>
         ) : (

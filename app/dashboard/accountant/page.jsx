@@ -33,7 +33,7 @@ const fetchLastDayend = async (branchId) => {
       return null; // No branch ID, cannot fetch dayend
     }
     
-    const result = await apiPost('/get_dayend.php', {
+    const result = await apiPost('api/get_dayend.php', {
       branch_id: branchId,
     });
 

@@ -185,7 +185,7 @@ export default function SuperAdminDashboardPage() {
   const fetchLastDayendForBranch = async (branchId) => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('/get_dayend.php', {
+      const result = await apiPost('api/get_dayend.php', {
         terminal,
         branch_id: branchId,
       });

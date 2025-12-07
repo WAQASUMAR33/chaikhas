@@ -80,6 +80,7 @@ export default function DayEndPage() {
 
   /**
    * Calculate today's totals from orders and expenses
+   * Only includes sales/expenses created AFTER the last dayend's closing_date_time
    */
   const calculateTodayTotals = async () => {
     try {
@@ -87,7 +88,44 @@ export default function DayEndPage() {
       const terminal = getTerminal();
       if (!branchId) return;
 
-      // Get today's date in YYYY-MM-DD format
+      // Get the last dayend's closing_date_time to filter sales
+      let lastDayendTime = null;
+      try {
+        const dayendResult = await apiPost('api/get_dayend.php', { branch_id: branchId });
+        if (dayendResult.success && dayendResult.data) {
+          let dayendData = [];
+          if (Array.isArray(dayendResult.data)) {
+            dayendData = dayendResult.data;
+          } else if (dayendResult.data.data && Array.isArray(dayendResult.data.data)) {
+            dayendData = dayendResult.data.data;
+          }
+          
+          if (dayendData.length > 0) {
+            // Sort by closing_date_time descending and get the most recent
+            const sortedDayends = [...dayendData].sort((a, b) => {
+              const dateA = new Date(a.closing_date_time || a.created_at || 0);
+              const dateB = new Date(b.closing_date_time || b.created_at || 0);
+              return dateB - dateA;
+            });
+            
+            if (sortedDayends[0] && sortedDayends[0].closing_date_time) {
+              lastDayendTime = sortedDayends[0].closing_date_time;
+              console.log('📅 Found last dayend, filtering sales after:', lastDayendTime);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching dayend for calculation:', error);
+      }
+
+      // Determine the start date for filtering
+      // If dayend exists, use closing_date_time; otherwise use today at 00:00:00
+      const filterStartDate = lastDayendTime ? new Date(lastDayendTime) : new Date();
+      if (!lastDayendTime) {
+        filterStartDate.setHours(0, 0, 0, 0);
+      }
+      
+      // Get today's date in YYYY-MM-DD format (for API calls)
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayStr = today.toISOString().split('T')[0];
@@ -118,12 +156,20 @@ export default function DayEndPage() {
           }
         }
 
-        // Filter today's bills and calculate totals by payment method
+        // Filter bills created AFTER the last dayend's closing_date_time
         const todayBills = billsData.filter(bill => {
           if (!bill.created_at && !bill.date) return false;
           const billDate = new Date(bill.created_at || bill.date);
-          billDate.setHours(0, 0, 0, 0);
-          return billDate.toISOString().split('T')[0] === todayStr;
+          if (isNaN(billDate.getTime())) return false;
+          
+          // If dayend exists, only include bills after closing_date_time
+          // Otherwise, include bills from today
+          if (lastDayendTime) {
+            return billDate > filterStartDate;
+          } else {
+            billDate.setHours(0, 0, 0, 0);
+            return billDate.toISOString().split('T')[0] === todayStr;
+          }
         });
 
         todayBills.forEach(bill => {
@@ -162,12 +208,20 @@ export default function DayEndPage() {
             }
           }
 
-          // Filter today's orders and calculate totals by payment method
+          // Filter orders created AFTER the last dayend's closing_date_time
           const todayOrders = ordersData.filter(order => {
             if (!order.created_at && !order.date) return false;
             const orderDate = new Date(order.created_at || order.date);
-            orderDate.setHours(0, 0, 0, 0);
-            return orderDate.toISOString().split('T')[0] === todayStr;
+            if (isNaN(orderDate.getTime())) return false;
+            
+            // If dayend exists, only include orders after closing_date_time
+            // Otherwise, include orders from today
+            if (lastDayendTime) {
+              return orderDate > filterStartDate;
+            } else {
+              orderDate.setHours(0, 0, 0, 0);
+              return orderDate.toISOString().split('T')[0] === todayStr;
+            }
           });
 
           todayOrders.forEach(order => {
@@ -207,12 +261,20 @@ export default function DayEndPage() {
           }
         }
 
-        // Filter today's expenses
+        // Filter expenses created AFTER the last dayend's closing_date_time
         const todayExpenses = expensesData.filter(expense => {
           if (!expense.created_at && !expense.date) return false;
           const expenseDate = new Date(expense.created_at || expense.date);
-          expenseDate.setHours(0, 0, 0, 0);
-          return expenseDate.toISOString().split('T')[0] === todayStr;
+          if (isNaN(expenseDate.getTime())) return false;
+          
+          // If dayend exists, only include expenses after closing_date_time
+          // Otherwise, include expenses from today
+          if (lastDayendTime) {
+            return expenseDate > filterStartDate;
+          } else {
+            expenseDate.setHours(0, 0, 0, 0);
+            return expenseDate.toISOString().split('T')[0] === todayStr;
+          }
         });
 
         todayExpenses.forEach(expense => {
@@ -266,7 +328,7 @@ export default function DayEndPage() {
       if (dateFilter.start_date) params.start_date = dateFilter.start_date;
       if (dateFilter.end_date) params.end_date = dateFilter.end_date;
 
-      const result = await apiPost('/get_dayend.php', params);
+      const result = await apiPost('api/get_dayend.php', params);
 
       if (result.success && result.data) {
         let dayendData = [];
@@ -430,7 +492,7 @@ export default function DayEndPage() {
         total_receivings: parseFloat(formData.total_receivings || 0),
         drawings: parseFloat(formData.drawings || 0),
         closing_balance: parseFloat(formData.closing_balance || 0),
-        closing_date_time: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        closing_date_time: new Date().toISOString().slice(0, 19).replace('T', ' '), // MySQL datetime format: YYYY-MM-DD HH:mm:ss
         closing_by: 1, // You may need to get actual user ID
         closing_by_name: closingBy, // Add closing_by_name for display
         note: formData.note.trim(),
@@ -438,7 +500,7 @@ export default function DayEndPage() {
       };
 
       console.log('📤 Submitting dayend data:', JSON.stringify(data, null, 2));
-      const result = await apiPost('/dayend_management.php', data);
+      const result = await apiPost('api/dayend_management.php', data);
       console.log('📥 Dayend API response:', JSON.stringify(result, null, 2));
 
       // Handle multiple possible response structures
@@ -446,8 +508,10 @@ export default function DayEndPage() {
       let successMessage = 'Day-end marked successfully!';
       let errorMessage = 'Failed to mark day-end';
 
-      // Check various success indicators
-      if (result.status === 'success' || result.success === true) {
+      // Check if result exists and has data
+      if (!result) {
+        errorMessage = 'No response from server. Please check your connection and try again.';
+      } else if (result.status === 'success' || result.success === true) {
         isSuccess = true;
         successMessage = result.message || result.data?.message || successMessage;
       } else if (result.data) {
@@ -455,14 +519,21 @@ export default function DayEndPage() {
         if (result.data.status === 'success' || result.data.success === true) {
           isSuccess = true;
           successMessage = result.data.message || result.message || successMessage;
-        } else if (result.data.success === false) {
-          errorMessage = result.data.message || result.message || errorMessage;
+        } else if (result.data.status === 'error' || result.data.success === false) {
+          errorMessage = result.data.message || result.message || result.data.error || errorMessage;
         } else if (result.data.error) {
           errorMessage = result.data.error || errorMessage;
+        } else if (result.status === 'error') {
+          errorMessage = result.message || result.data?.message || errorMessage;
         }
+      } else if (result.status === 'error') {
+        errorMessage = result.message || errorMessage;
       } else if (result.message && result.message.toLowerCase().includes('success')) {
         isSuccess = true;
         successMessage = result.message;
+      } else if (result.message) {
+        // If there's a message but it's not success, treat as error
+        errorMessage = result.message;
       }
 
       if (isSuccess) {
@@ -484,25 +555,45 @@ export default function DayEndPage() {
         fetchDayends();
       } else {
         // Extract error message from various possible locations
-        const finalErrorMessage = result.message || 
-                                 result.data?.message || 
-                                 result.data?.error || 
-                                 result.error ||
+        const finalErrorMessage = result?.message || 
+                                 result?.data?.message || 
+                                 result?.data?.error || 
+                                 result?.error ||
+                                 (result?.status === 'error' ? 'An error occurred while processing your request' : null) ||
                                  errorMessage;
+        
         console.error('❌ Dayend submission failed:', {
-          result,
-          errorMessage: finalErrorMessage
+          result: result ? JSON.stringify(result, null, 2) : 'null',
+          errorMessage: finalErrorMessage,
+          resultStatus: result?.status,
+          resultSuccess: result?.success,
+          resultData: result?.data
         });
-        setAlert({ type: 'error', message: finalErrorMessage });
+        setAlert({ type: 'error', message: finalErrorMessage || 'Failed to mark day-end. Please check the console for details.' });
       }
     } catch (error) {
       console.error('❌ Error marking day-end:', error);
       console.error('Error details:', {
         message: error.message,
         stack: error.stack,
-        response: error.response
+        response: error.response,
+        responseData: error.response?.data
       });
-      const errorMsg = error.message || error.response?.data?.message || 'Network error';
+      
+      // Extract error message from various possible locations
+      let errorMsg = 'Network error';
+      if (error.response?.data) {
+        const responseData = error.response.data;
+        errorMsg = responseData.message || 
+                  responseData.error || 
+                  responseData.data?.message ||
+                  (typeof responseData === 'string' ? responseData : null) ||
+                  error.message ||
+                  'Network error';
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
       setAlert({ type: 'error', message: 'Failed to mark day-end: ' + errorMsg });
     } finally {
       setSubmitting(false);

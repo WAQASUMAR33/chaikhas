@@ -97,7 +97,7 @@ export default function MenuSalesListPage() {
           
           if (branchIdToCheck) {
             // Single branch selected - fetch dayend for that branch
-            const dayendResult = await apiPost('/get_dayend.php', {
+            const dayendResult = await apiPost('api/get_dayend.php', {
               branch_id: branchIdToCheck,
             });
             

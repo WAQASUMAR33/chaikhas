@@ -18,21 +18,39 @@ import { BarChart3, Printer } from 'lucide-react';
 export default function MenuSalesListPage() {
   const [menuSales, setMenuSales] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState('daily'); // daily, weekly, monthly
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [branchInfo, setBranchInfo] = useState(null);
   const [reportNumber, setReportNumber] = useState('');
   const printRef = useRef(null);
+  
+  // Date range filter state - default to last 30 days
+  const getDefaultDateRange = () => {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    return {
+      fromDate: thirtyDaysAgo.toISOString().split('T')[0],
+      toDate: today.toISOString().split('T')[0],
+    };
+  };
+  
+  const [dateRange, setDateRange] = useState(getDefaultDateRange());
 
   useEffect(() => {
-    fetchMenuSales();
     fetchBranchInfo();
     
     // Generate report number
     const now = new Date();
     const reportNum = `MSR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
-  }, [period]);
+  }, []);
+  
+  useEffect(() => {
+    if (dateRange.fromDate && dateRange.toDate) {
+      fetchMenuSales();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
 
   /**
    * Fetch branch information
@@ -72,84 +90,26 @@ export default function MenuSalesListPage() {
         return;
       }
       
-      // Build API params with date filtering based on period
+      // Build API params with date range
       const apiParams = { 
         terminal, 
-        period,
-        branch_id: branchId 
+        branch_id: branchId,
+        from_date: dateRange.fromDate,
+        to_date: dateRange.toDate
       };
       
-      // For daily period, add today's date and optionally dayend filtering
-      if (period === 'daily') {
-        // Get today's date
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        const todayStr = `${year}-${month}-${day}`;
-        
-        // Add date parameters for daily period
-        apiParams.date = todayStr;
-        apiParams.from_date = todayStr;
-        apiParams.to_date = todayStr;
-        
-        // Fetch last dayend to filter sales after dayend
-        try {
-          const dayendResult = await apiPost('/get_dayend.php', {
-            branch_id: branchId,
-          });
-          
-          if (dayendResult.success && dayendResult.data) {
-            let dayendData = [];
-            if (Array.isArray(dayendResult.data)) {
-              dayendData = dayendResult.data;
-            } else if (dayendResult.data.data && Array.isArray(dayendResult.data.data)) {
-              dayendData = dayendResult.data.data;
-            }
-            
-            if (dayendData.length > 0) {
-              const sortedDayends = [...dayendData].sort((a, b) => {
-                const dateA = new Date(a.closing_date_time || 0);
-                const dateB = new Date(b.closing_date_time || 0);
-                return dateB - dateA;
-              });
-              const lastDayend = sortedDayends[0];
-              if (lastDayend && lastDayend.closing_date_time) {
-                apiParams.after_closing_date = lastDayend.closing_date_time;
-                console.log('📅 Filtering daily menu sales after dayend:', lastDayend.closing_date_time);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching dayend for menu sales:', error);
-          // Don't fail the request if dayend fetch fails - continue without dayend filter
-        }
-      } else if (period === 'weekly') {
-        // Add date range for weekly period
-        const now = new Date();
-        const day = now.getDay();
-        const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
-        const monday = new Date(now.setDate(diff));
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 6);
-        
-        const weekStart = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
-        const weekEnd = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, '0')}-${String(sunday.getDate()).padStart(2, '0')}`;
-        
-        apiParams.from_date = weekStart;
-        apiParams.to_date = weekEnd;
-      } else if (period === 'monthly') {
-        // Add date range for monthly period
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const firstDay = `${year}-${month}-01`;
-        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-        const lastDayStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
-        
-        apiParams.from_date = firstDay;
-        apiParams.to_date = lastDayStr;
+      // Validate date range
+      if (!dateRange.fromDate || !dateRange.toDate) {
+        setAlert({ 
+          type: 'error', 
+          message: 'Please select both start and end dates' 
+        });
+        setMenuSales([]);
+        setLoading(false);
+        return;
       }
+      
+      console.log('📅 Fetching menu sales for date range:', apiParams.from_date, 'to', apiParams.to_date);
       
       console.log('Fetching menu sales with:', apiParams);
       
@@ -284,46 +244,6 @@ export default function MenuSalesListPage() {
       } else {
         setMenuSales([]);
         
-        // Before showing error, try to check if there are any orders/bills for today (diagnostic)
-        let hasOrdersToday = false;
-        if (period === 'daily') {
-          try {
-            const today = new Date();
-            const year = today.getFullYear();
-            const month = String(today.getMonth() + 1).padStart(2, '0');
-            const day = String(today.getDate()).padStart(2, '0');
-            const todayStr = `${year}-${month}-${day}`;
-            
-            // Quick check: try to fetch orders for today
-            const ordersCheck = await apiPost('api/order_management.php', { 
-              date: todayStr,
-              branch_id: branchId,
-              action: 'get' 
-            });
-            if (ordersCheck && ordersCheck.data) {
-              let orders = [];
-              if (Array.isArray(ordersCheck.data)) {
-                orders = ordersCheck.data;
-              } else if (ordersCheck.data.data && Array.isArray(ordersCheck.data.data)) {
-                orders = ordersCheck.data.data;
-              } else if (ordersCheck.data.orders && Array.isArray(ordersCheck.data.orders)) {
-                orders = ordersCheck.data.orders;
-              }
-              
-              // Filter orders that are completed/have bills
-              const completedOrders = orders.filter(order => {
-                const status = order.order_status || order.status || order.sts;
-                return status === 'completed' || status === 'Completed' || status === 'paid' || status === 'Paid' || order.bill_id || order.bill_generated;
-              });
-              
-              hasOrdersToday = completedOrders.length > 0;
-              console.log(`🔍 Diagnostic: Found ${completedOrders.length} completed orders for today`);
-            }
-          } catch (error) {
-            console.warn('Could not check for orders (diagnostic):', error);
-          }
-        }
-        
         // Check if there's an explicit error message
         if (result && result.data && result.data.message) {
           const errorMsg = result.data.message;
@@ -344,17 +264,11 @@ export default function MenuSalesListPage() {
           setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
         } else if (result && result.success && result.data) {
           // API returned success but no data
-          const periodText = period === 'daily' ? 'today' : period === 'weekly' ? 'this week' : period === 'monthly' ? 'this month' : period;
+          const dateRangeText = dateRange.fromDate && dateRange.toDate 
+            ? `${new Date(dateRange.fromDate).toLocaleDateString()} to ${new Date(dateRange.toDate).toLocaleDateString()}`
+            : 'the selected date range';
           
-          let message = `No menu sales data found for ${periodText}.`;
-          
-          if (period === 'daily' && hasOrdersToday) {
-            message += ` However, there are completed orders for today. This suggests the API (api/get_menu_sales.php) may need to be updated to properly aggregate menu sales from order items. Please check the backend API.`;
-          } else if (period === 'daily' && !hasOrdersToday) {
-            message += ` There are no completed orders for today. Menu sales will appear once orders are completed and bills are generated.`;
-          } else {
-            message += ` Try selecting a different period or check if there are any completed orders with bills generated.`;
-          }
+          const message = `No menu sales data found for ${dateRangeText}. Try selecting a different date range or check if there are any completed orders with bills generated.`;
           
           setAlert({ type: 'info', message });
         } else {
@@ -385,22 +299,18 @@ export default function MenuSalesListPage() {
   }, { totalQuantity: 0, totalRevenue: 0 });
 
   /**
-   * Get period display name
+   * Get date range display name
    */
-  const getPeriodDisplayName = () => {
-    const now = new Date();
-    if (period === 'daily') {
-      return now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    } else if (period === 'weekly') {
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - now.getDay());
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
-      return `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    } else if (period === 'monthly') {
-      return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const getDateRangeDisplayName = () => {
+    if (dateRange.fromDate && dateRange.toDate) {
+      const fromDate = new Date(dateRange.fromDate);
+      const toDate = new Date(dateRange.toDate);
+      if (fromDate.toDateString() === toDate.toDateString()) {
+        return fromDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      }
+      return `${fromDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - ${toDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
     }
-    return period;
+    return 'Date Range';
   };
 
   /**
@@ -487,28 +397,61 @@ export default function MenuSalesListPage() {
           />
         )}
 
-        {/* Period Selector and Print Button */}
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-          <div className="flex gap-2">
-            {['daily', 'weekly', 'monthly'].map((p) => (
-              <Button
-                key={p}
-                variant={period === p ? 'primary' : 'secondary'}
-                onClick={() => setPeriod(p)}
-              >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </Button>
-            ))}
-          </div>
-          {!loading && menuSales.length > 0 && (
+        {/* Date Range Selector and Print Button */}
+        <div className="flex flex-col gap-4 bg-white rounded-lg shadow p-4">
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                From Date:
+              </label>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
+                max={dateRange.toDate || new Date().toISOString().split('T')[0]}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+              />
+            </div>
+            
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                To Date:
+              </label>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
+                min={dateRange.fromDate}
+                max={new Date().toISOString().split('T')[0]}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+              />
+            </div>
+            
             <Button
-              onClick={handlePrint}
-              variant="outline"
+              variant="secondary"
+              size="sm"
+              onClick={() => setDateRange(getDefaultDateRange())}
               className="flex items-center gap-2"
             >
-              <Printer className="w-4 h-4" />
-              <span>Print Report</span>
+              <span>Reset</span>
             </Button>
+            
+            {!loading && menuSales.length > 0 && (
+              <Button
+                onClick={handlePrint}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Report</span>
+              </Button>
+            )}
+          </div>
+          
+          {dateRange.fromDate && dateRange.toDate && (
+            <p className="text-sm text-gray-600">
+              Showing menu sales from <span className="font-semibold">{new Date(dateRange.fromDate).toLocaleDateString()}</span> to <span className="font-semibold">{new Date(dateRange.toDate).toLocaleDateString()}</span>
+            </p>
           )}
         </div>
 
@@ -537,11 +480,7 @@ export default function MenuSalesListPage() {
             <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-600 font-medium text-lg mb-2">No menu sales data found</p>
             <p className="text-gray-500 text-sm">
-              {period === 'daily' 
-                ? 'There are no menu sales for today. Sales data will appear here once orders are completed.' 
-                : period === 'weekly'
-                ? 'There are no menu sales for this week. Try selecting a different period.'
-                : 'There are no menu sales for this month. Try selecting a different period.'}
+              No menu sales found for the selected date range. Try selecting a different date range or check if there are any completed orders.
             </p>
           </div>
         ) : (
@@ -615,7 +554,7 @@ export default function MenuSalesListPage() {
                       </p>
                     )}
                     <p style={{ margin: '8px 0 0 0', fontSize: '16px', fontWeight: 'bold' }}>
-                      Menu Sales Report - {getPeriodDisplayName()}
+                      Menu Sales Report - {getDateRangeDisplayName()}
                     </p>
                   </div>
                   <div style={{ width: '15%', textAlign: 'right', fontSize: '11px' }}>
