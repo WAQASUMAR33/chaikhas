@@ -1419,71 +1419,185 @@ export default function CreateOrderPage() {
                 <Button
                   onClick={() => {
                     const printWindow = window.open('', '_blank');
-                    const printContent = document.getElementById('receipt-print-area').innerHTML;
-                    printWindow.document.write(`
-                      <!DOCTYPE html>
-                      <html>
-                        <head>
-                          <title>Receipt - Restaurant Khas</title>
-                          <style>
-                            @media print {
-                              @page {
-                                size: 80mm auto;
-                                margin: 0;
-                                padding: 0;
-                              }
-                              html, body {
-                                margin: 0 !important;
-                                padding: 5px !important;
-                                width: 80mm;
-                                max-width: 80mm;
-                                overflow: hidden;
-                              }
-                              * {
-                                margin: 0;
-                                padding: 0;
-                                box-sizing: border-box;
-                              }
-                              .no-print {
-                                display: none !important;
-                              }
-                              button, .no-print {
-                                display: none !important;
-                              }
-                              * {
-                                page-break-inside: avoid;
-                                break-inside: avoid;
-                              }
-                              body {
-                                height: auto !important;
-                                min-height: auto !important;
-                                max-height: none !important;
-                              }
-                            }
-                            html, body {
-                              font-family: 'Courier New', monospace;
-                              margin: 0;
-                              padding: 5px;
-                              font-size: 11px;
-                              line-height: 1.3;
-                              width: 80mm;
-                              max-width: 80mm;
-                            }
-                            * {
-                              box-sizing: border-box;
-                              margin: 0;
-                              padding: 0;
-                            }
-                          </style>
-                        </head>
-                        <body>${printContent}</body>
-                      </html>
-                    `);
+                    if (!printWindow) {
+                      alert('Please allow popups to print receipts.');
+                      return;
+                    }
+                    const printContent = document.getElementById('receipt-print-area');
+                    if (!printContent) {
+                      alert('Receipt content not found.');
+                      return;
+                    }
+                    const receiptHTML = printContent.innerHTML;
+                    
+                    const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 80mm;
+  height: auto;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  background: white;
+  color: #000;
+}
+.receipt-container {
+  width: 80mm;
+  max-width: 80mm;
+  min-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  box-sizing: border-box;
+}
+.receipt-container img {
+  max-width: 60mm;
+  max-height: 30mm;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+.no-print {
+  display: none;
+}
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+    padding: 0;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .receipt-container {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    min-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-container * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .no-print {
+    display: none !important;
+  }
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+@media screen {
+  body {
+    padding: 20px;
+    background: #f5f5f5;
+  }
+  .no-print {
+    display: block;
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f0f0;
+    border-radius: 5px;
+    text-align: center;
+    font-size: 12px;
+  }
+  .receipt-container {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-container">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Print dialog will open automatically...</p>
+</div>
+<script>
+(function() {
+  function triggerPrint() {
+    try {
+      window.focus();
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    triggerPrint();
+  } else {
+    document.addEventListener('DOMContentLoaded', triggerPrint);
+    window.addEventListener('load', triggerPrint);
+    setTimeout(triggerPrint, 1000);
+  }
+})();
+</script>
+</body>
+</html>`;
+                    printWindow.document.open();
+                    printWindow.document.write(printHTML);
                     printWindow.document.close();
-                    setTimeout(() => {
-                      printWindow.print();
-                      printWindow.close();
-                    }, 250);
+                    
+                    // Multiple triggers to ensure print dialog opens
+                    const triggerPrint = () => {
+                      try {
+                        if (printWindow && !printWindow.closed) {
+                          printWindow.focus();
+                          setTimeout(() => {
+                            if (printWindow && !printWindow.closed) {
+                              printWindow.print();
+                            }
+                          }, 300);
+                        }
+                      } catch (error) {
+                        console.error('Error triggering print:', error);
+                      }
+                    };
+
+                    // Try multiple methods to ensure print opens
+                    if (printWindow.document.readyState === 'complete') {
+                      triggerPrint();
+                    } else {
+                      printWindow.onload = triggerPrint;
+                      printWindow.addEventListener('load', triggerPrint);
+                      setTimeout(triggerPrint, 500);
+                      setTimeout(triggerPrint, 1000);
+                    }
                   }}
                   className="flex-1 flex items-center justify-center gap-2"
                 >

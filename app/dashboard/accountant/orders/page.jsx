@@ -2245,7 +2245,7 @@ export default function OrderManagementPage() {
     let itemsHTML = '';
     if (items.length > 0) {
       itemsHTML = items.map(item => {
-        const itemName = item.dish_name || item.name || item.title || 'Item';
+        const itemName = item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || 'Item';
         const itemPrice = parseFloat(item.price || item.rate || 0);
         const itemQty = parseInt(item.quantity || item.qty || 1);
         const itemTotal = parseFloat(item.total_amount || item.total || (itemPrice * itemQty));
@@ -2280,10 +2280,11 @@ export default function OrderManagementPage() {
       }
     };
     const formattedDateFormatted = formatDateTime(orderDate);
+    const logoPath = typeof window !== 'undefined' ? `${window.location.origin}/assets/CHAIKHAS.PNG` : '/assets/CHAIKHAS.PNG';
     
     return `
       <div class="receipt-logo" style="text-align: center; margin-bottom: 10px;">
-        <img src="/assets/CHAIKHAS.PNG" alt="Restaurant Khas Logo" style="max-width: 60mm; max-height: 30mm; height: auto; width: auto; object-fit: contain; display: block; margin: 0 auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <img src="${logoPath}" alt="Restaurant Khas Logo" style="max-width: 60mm; max-height: 30mm; height: auto; width: auto; object-fit: contain; display: block; margin: 0 auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
         <div style="display: none; font-family: 'Courier New', monospace; color: #000; text-align: center; padding: 5px 0;">
           <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase;">RESTAURANT</div>
           <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;">KHAS</div>
@@ -2576,564 +2577,23 @@ export default function OrderManagementPage() {
 <html>
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Receipt - Restaurant Khas</title>
 <style>
-* { 
-  margin: 0; 
-  padding: 0; 
-  box-sizing: border-box; 
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
-html, body { 
-  margin: 0; 
-  padding: 0; 
-  width: 80mm; 
-  height: auto;
-  min-height: auto;
-  font-family: 'Courier New', monospace; 
-  font-size: 11px; 
-  line-height: 1.4; 
-  background: white; 
-  color: #000;
-  overflow: visible;
-}
-@media print {
-  @page { 
-    size: 80mm auto; 
-    margin: 0; 
-    padding: 0;
-  }
-  html, body { 
-    width: 80mm !important; 
-    max-width: 80mm !important;
-    margin: 0 !important; 
-    padding: 0 !important; 
-    height: auto !important;
-    min-height: auto !important;
-    overflow: visible !important;
-  }
-  .no-print { 
-    display: none !important; 
-  }
-  .receipt-container {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm !important;
-    max-width: 80mm !important;
-    min-width: 80mm !important;
-    margin: 0 !important;
-    padding: 5mm 4mm !important;
-    page-break-after: avoid;
-    page-break-inside: avoid;
-    box-sizing: border-box;
-  }
-  .receipt-container,
-  .receipt-container * {
-    visibility: visible !important;
-  }
-  table {
-    display: table !important;
-  }
-  tr {
-    display: table-row !important;
-  }
-  td, th {
-    display: table-cell !important;
-  }
-}
-.receipt-wrapper {
+html, body {
+  margin: 0;
+  padding: 0;
   width: 80mm;
-  max-width: 80mm;
-  margin: 0 auto;
-  padding: 5mm 4mm;
-  background: white;
-  position: relative;
-}
-.no-print {
-  display: none;
-}
-@media screen {
-  body { 
-    padding: 20px; 
-    background: #f5f5f5; 
-  }
-  .no-print { 
-    display: block; 
-    margin-top: 20px; 
-    padding: 15px; 
-    background: #f0f0f0; 
-    border-radius: 5px; 
-    text-align: center; 
-    font-size: 12px;
-  }
-  .receipt-wrapper {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  }
-}
-</style>
-</head>
-<body>
-<div class="receipt-container">${receiptHTML}</div>
-<div class="no-print">
-<p><strong>Print Preview</strong></p>
-<p>Print dialog will open automatically...</p>
-</div>
-</body>
-</html>`;
-          printWindow.document.open();
-          printWindow.document.write(printHTML);
-          printWindow.document.close();
-          
-          // Wait for window to fully load, then trigger print automatically
-          const triggerPrint = () => {
-            try {
-              if (printWindow && !printWindow.closed) {
-                printWindow.focus();
-                // Small delay to ensure content is rendered
-                setTimeout(() => {
-                  if (printWindow && !printWindow.closed) {
-                    printWindow.print();
-                  }
-                }, 100);
-              }
-            } catch (error) {
-              console.error('Error triggering print:', error);
-            }
-          };
-
-          // Use onload event if available
-          if (printWindow.document.readyState === 'complete') {
-            triggerPrint();
-          } else {
-            printWindow.onload = triggerPrint;
-            // Fallback timeout in case onload doesn't fire
-            setTimeout(triggerPrint, 500);
-          }
-        } else {
-          // If popup blocked, use direct window.print
-          window.print();
-        }
-        
-        setAlert({ 
-          type: 'warning', 
-          message: 'Print API unavailable. Using browser print dialog instead.' 
-        });
-        setIsPrinting(false);
-        return;
-      }
-
-      if (printResult.success && printResult.data) {
-        const response = printResult.data;
-        
-        if (response.success === true) {
-          // Show success message with printer info
-          const printerNames = response.printers || ['Default Printers'];
-          setAlert({ 
-            type: 'success', 
-            message: `Receipt sent to ${printerNames.join(' and ')} successfully` 
-          });
-          
-          // If bill is unpaid, update status based on payment method (Credit or Bill Generated)
-          if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
-            try {
-              const orderIdValue = generatedBill.order_id;
-              const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
-              
-              // Determine status: 'Credit' for credit bills, 'Bill Generated' for others
-              const isCredit = generatedBill.payment_method === 'Credit' || 
-                               generatedBill.payment_mode === 'Credit' || 
-                               generatedBill.payment_status === 'Credit' ||
-                               generatedBill.is_credit === true;
-              const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
-              
-              const statusPayload = { 
-                status: orderStatus,
-                order_id: orderIdValue,
-                orderid: orderidValue
-              };
-              
-              await apiPost('api/chnageorder_status.php', statusPayload);
-              fetchOrders(); // Refresh orders list
-            } catch (error) {
-              console.error('Error updating order status on print:', error);
-            }
-          }
-        } else {
-          // API returned but with error, fallback to window.print
-          console.warn('Print API returned error, using fallback');
-          const printWindow = window.open('', '_blank');
-          if (printWindow) {
-            printWindow.document.open();
-            printWindow.document.write(`
-              <!DOCTYPE html>
-              <html>
-                <head>
-                  <title>Receipt - Restaurant Khas</title>
-                  <meta charset="UTF-8">
-                  <style>
-                    * {
-                      margin: 0;
-                      padding: 0;
-                      box-sizing: border-box;
-                    }
-                    
-                    html, body {
-                      margin: 0;
-                      padding: 0;
-                      width: 80mm;
-                      max-width: 80mm;
-                      height: auto;
-                      min-height: auto;
-                      background: white;
-                      font-family: 'Courier New', monospace;
-                      font-size: 11px;
-                      line-height: 1.4;
-                      color: #000;
-                      overflow: visible;
-                    }
-                    
-                    @media print {
-                      @page {
-                        size: 80mm auto;
-                        margin: 0;
-                        padding: 0;
-                      }
-                      
-                      html, body {
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        width: 80mm !important;
-                        max-width: 80mm !important;
-                        height: auto !important;
-                        min-height: auto !important;
-                        overflow: visible !important;
-                      }
-                      
-                      body > *:not(.receipt-content) {
-                        display: none !important;
-                      }
-                      
-                      .no-print {
-                        display: none !important;
-                      }
-                      
-                      .receipt-content {
-                        display: block !important;
-                        visibility: visible !important;
-                        width: 80mm !important;
-                        max-width: 80mm !important;
-                        margin: 0 !important;
-                        padding: 5mm 4mm !important;
-                        page-break-after: avoid;
-                        page-break-inside: avoid;
-                        break-inside: avoid;
-                      }
-                      
-                      .receipt-content * {
-                        page-break-inside: avoid;
-                        break-inside: avoid;
-                      }
-                    }
-                    
-                    @media screen {
-                      body {
-                        padding: 10px;
-                      }
-                      
-                      .no-print {
-                        display: block;
-                        margin-top: 20px;
-                        padding: 10px;
-                        background: #f0f0f0;
-                        border-radius: 5px;
-                        text-align: center;
-                      }
-                    }
-                    
-                    .receipt-content {
-                      width: 80mm;
-                      max-width: 80mm;
-                      margin: 0 auto;
-                      padding: 5mm 4mm;
-                      background: white;
-                    }
-                  </style>
-                </head>
-                <body>
-                  <div class="receipt-content">
-                    ${receiptHTML}
-                  </div>
-                  <div class="no-print">
-                    <p><strong>Print Preview</strong></p>
-                    <p>Click the Print button or press Ctrl+P to print this receipt.</p>
-                  </div>
-                  <script>
-                    window.onload = function() {
-                      setTimeout(function() {
-                        const receiptContent = document.querySelector('.receipt-content');
-                        if (receiptContent) {
-                          receiptContent.style.display = 'block';
-                          receiptContent.style.visibility = 'visible';
-                        }
-                        window.focus();
-                      }, 100);
-                    };
-                  </script>
-                </body>
-              </html>
-            `);
-            printWindow.document.close();
-            
-            // Wait for content to fully load before printing
-            printWindow.onload = function() {
-              setTimeout(() => {
-                try {
-                  printWindow.focus();
-                  printWindow.print();
-                } catch (error) {
-                  console.error('Error triggering print:', error);
-                }
-              }, 500);
-            };
-            
-            // Fallback: if onload doesn't fire, try after a delay
-            setTimeout(() => {
-              if (printWindow && !printWindow.closed) {
-                try {
-                  printWindow.focus();
-                  printWindow.print();
-                } catch (error) {
-                  console.error('Error triggering print (fallback):', error);
-                }
-              }
-            }, 1000);
-          } else {
-            window.print();
-          }
-          
-          setAlert({ 
-            type: 'warning', 
-            message: response.message || 'Print API unavailable. Using browser print dialog instead.' 
-          });
-        }
-      } else {
-        // API call failed, fallback to window.print
-        console.warn('Print API failed, using fallback');
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          const fallbackPrintHTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Receipt - Restaurant Khas</title>
-<style>
-* { 
-  margin: 0; 
-  padding: 0; 
-  box-sizing: border-box; 
-}
-html, body { 
-  margin: 0; 
-  padding: 0; 
-  width: 80mm; 
-  height: auto;
-  min-height: auto;
-  font-family: 'Courier New', monospace; 
-  font-size: 11px; 
-  line-height: 1.4; 
-  background: white; 
-  color: #000;
-  overflow: visible;
-}
-@media print {
-  @page { 
-    size: 80mm auto; 
-    margin: 0; 
-    padding: 0;
-  }
-  html, body { 
-    width: 80mm !important; 
-    max-width: 80mm !important;
-    margin: 0 !important; 
-    padding: 0 !important; 
-    height: auto !important;
-    min-height: auto !important;
-    overflow: visible !important;
-  }
-  .no-print { 
-    display: none !important; 
-  }
-  .receipt-wrapper {
-    width: 80mm !important;
-    max-width: 80mm !important;
-    margin: 0 auto !important;
-    padding: 5mm 4mm !important;
-    background: white !important;
-    page-break-after: avoid !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-    position: relative !important;
-  }
-  .receipt-wrapper * {
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-  .receipt-wrapper,
-  .receipt-wrapper * {
-    visibility: visible !important;
-    display: block !important;
-  }
-  table {
-    display: table !important;
-  }
-  tr {
-    display: table-row !important;
-  }
-  td, th {
-    display: table-cell !important;
-  }
-}
-.receipt-wrapper {
-  width: 80mm;
-  max-width: 80mm;
-  margin: 0 auto;
-  padding: 5mm 4mm;
-  background: white;
-  position: relative;
-}
-.no-print {
-  display: none;
-}
-@media screen {
-  body { 
-    padding: 20px; 
-    background: #f5f5f5; 
-  }
-  .no-print { 
-    display: block; 
-    margin-top: 20px; 
-    padding: 15px; 
-    background: #f0f0f0; 
-    border-radius: 5px; 
-    text-align: center; 
-    font-size: 12px;
-  }
-  .receipt-wrapper {
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  }
-}
-</style>
-</head>
-<body>
-<div class="receipt-wrapper">${receiptHTML}</div>
-<div class="no-print">
-<p><strong>Print Preview</strong></p>
-<p>Press Ctrl+P to print or click the Print button.</p>
-</div>
-<script>
-(function() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-      setTimeout(function() {
-        window.focus();
-        window.print();
-      }, 300);
-    });
-  } else {
-    setTimeout(function() {
-      window.focus();
-      window.print();
-    }, 300);
-  }
-})();
-</script>
-</body>
-</html>`;
-          printWindow.document.open();
-          printWindow.document.write(fallbackPrintHTML);
-          printWindow.document.close();
-          
-          // Wait for window to fully load, then trigger print automatically
-          const triggerPrint = () => {
-            try {
-              if (printWindow && !printWindow.closed) {
-                printWindow.focus();
-                // Small delay to ensure content is rendered
-                setTimeout(() => {
-                  if (printWindow && !printWindow.closed) {
-                    printWindow.print();
-                  }
-                }, 100);
-              }
-            } catch (error) {
-              console.error('Error triggering print:', error);
-            }
-          };
-
-          // Use onload event if available
-          if (printWindow.document.readyState === 'complete') {
-            triggerPrint();
-          } else {
-            printWindow.onload = triggerPrint;
-            // Fallback timeout in case onload doesn't fire
-            setTimeout(triggerPrint, 500);
-          }
-        } else {
-          window.print();
-        }
-        
-        setAlert({ 
-          type: 'warning', 
-          message: 'Print API unavailable. Using browser print dialog instead.' 
-        });
-      }
-    } catch (error) {
-      console.error('Error printing receipt:', error);
-      
-      // Fallback to window.print on any error
-      try {
-        // Generate receipt HTML from generatedBill if available
-        let receiptHTML = '';
-        if (generatedBill) {
-          receiptHTML = generateReceiptHTML(generatedBill);
-        }
-        
-        // Fallback to DOM if HTML generation failed
-        if (!receiptHTML || receiptHTML.trim().length === 0) {
-          const printContent = document.getElementById('receipt-print-area');
-          if (printContent) {
-            receiptHTML = printContent.innerHTML;
-          }
-        }
-        
-        if (!receiptHTML || receiptHTML.trim().length === 0) {
-          setAlert({ type: 'error', message: 'Receipt content is empty. Please regenerate the bill.' });
-          setIsPrinting(false);
-          return;
-        }
-        
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          const errorFallbackPrintHTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Receipt - Restaurant Khas</title>
-<style>
-* { 
-  margin: 0; 
-  padding: 0; 
-  box-sizing: border-box; 
-}
-html, body { 
-  margin: 0; 
-  padding: 0; 
-  width: 80mm; 
   height: auto;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 11px; 
-  line-height: 1.4; 
-  background: white; 
+  font-size: 11px;
+  line-height: 1.4;
+  background: white;
   color: #000;
 }
 .receipt-container {
@@ -3141,14 +2601,31 @@ html, body {
   max-width: 80mm;
   min-width: 80mm;
   margin: 0 auto;
-  padding: 8mm 5mm;
+  padding: 5mm 4mm;
   background: white;
   box-sizing: border-box;
+}
+.receipt-container img {
+  max-width: 60mm;
+  max-height: 30mm;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+.no-print {
+  display: none;
 }
 @media print {
   @page {
     size: 80mm auto;
     margin: 0;
+    padding: 0;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   html, body {
     width: 80mm !important;
@@ -3156,33 +2633,35 @@ html, body {
     margin: 0 !important;
     padding: 0 !important;
     height: auto !important;
-  }
-  body * {
-    visibility: hidden;
-  }
-  .receipt-container,
-  .receipt-container * {
-    visibility: visible !important;
+    overflow: visible !important;
   }
   .receipt-container {
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 80mm !important;
     max-width: 80mm !important;
     min-width: 80mm !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     padding: 5mm 4mm !important;
-    page-break-after: avoid;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-container * {
     page-break-inside: avoid;
-    box-sizing: border-box;
+    break-inside: avoid;
   }
   .no-print {
     display: none !important;
   }
-}
-.no-print {
-  display: none;
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
 }
 @media screen {
   body {
@@ -3210,46 +2689,482 @@ html, body {
 <p><strong>Print Preview</strong></p>
 <p>Print dialog will open automatically...</p>
 </div>
+<script>
+(function() {
+  function triggerPrint() {
+    try {
+      window.focus();
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    triggerPrint();
+  } else {
+    document.addEventListener('DOMContentLoaded', triggerPrint);
+    window.addEventListener('load', triggerPrint);
+    setTimeout(triggerPrint, 1000);
+  }
+})();
+</script>
 </body>
 </html>`;
           printWindow.document.open();
-          printWindow.document.write(errorFallbackPrintHTML);
+          printWindow.document.write(printHTML);
           printWindow.document.close();
           
-          // Wait for window to fully load, then trigger print automatically
+          // Multiple triggers to ensure print dialog opens
           const triggerPrint = () => {
             try {
               if (printWindow && !printWindow.closed) {
                 printWindow.focus();
-                // Small delay to ensure content is rendered
                 setTimeout(() => {
                   if (printWindow && !printWindow.closed) {
                     printWindow.print();
                   }
-                }, 100);
+                }, 300);
               }
             } catch (error) {
               console.error('Error triggering print:', error);
             }
           };
 
-          // Use onload event if available
+          // Try multiple methods to ensure print opens
           if (printWindow.document.readyState === 'complete') {
             triggerPrint();
           } else {
             printWindow.onload = triggerPrint;
-            // Fallback timeout in case onload doesn't fire
+            printWindow.addEventListener('load', triggerPrint);
             setTimeout(triggerPrint, 500);
+            setTimeout(triggerPrint, 1000);
           }
         } else {
+          // If popup blocked, use direct window.print
           window.print();
         }
-      } catch (fallbackError) {
-        console.error('Fallback print also failed:', fallbackError);
+        
         setAlert({ 
-          type: 'error', 
-          message: 'Error printing receipt. Using browser print dialog instead.' 
+          type: 'warning', 
+          message: 'Print API unavailable. Using browser print dialog instead.' 
         });
+        setIsPrinting(false);
+        return;
+      }
+
+      // ALWAYS open browser print dialog for USB printers (even if API succeeds)
+      // This ensures users can print to USB printers regardless of API status
+      const openBrowserPrintDialog = () => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          setAlert({ 
+            type: 'error', 
+            message: 'Please allow popups to print receipts. Check your browser popup blocker settings.' 
+          });
+          return;
+        }
+
+        const printHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 80mm;
+  height: auto;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  background: white;
+  color: #000;
+}
+.receipt-container {
+  width: 80mm;
+  max-width: 80mm;
+  min-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  box-sizing: border-box;
+}
+.receipt-container img {
+  max-width: 60mm;
+  max-height: 30mm;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+.no-print {
+  display: none;
+}
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+    padding: 0;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .receipt-container {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    min-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-container * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .no-print {
+    display: none !important;
+  }
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+@media screen {
+  body {
+    padding: 20px;
+    background: #f5f5f5;
+  }
+  .no-print {
+    display: block;
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f0f0;
+    border-radius: 5px;
+    text-align: center;
+    font-size: 12px;
+  }
+  .receipt-container {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-container">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Print dialog will open automatically...</p>
+</div>
+<script>
+(function() {
+  function triggerPrint() {
+    try {
+      window.focus();
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    triggerPrint();
+  } else {
+    document.addEventListener('DOMContentLoaded', triggerPrint);
+    window.addEventListener('load', triggerPrint);
+    setTimeout(triggerPrint, 1000);
+  }
+})();
+</script>
+</body>
+</html>`;
+
+        printWindow.document.open();
+        printWindow.document.write(printHTML);
+        printWindow.document.close();
+        
+        // Multiple triggers to ensure print dialog opens
+        const triggerPrint = () => {
+          try {
+            if (printWindow && !printWindow.closed) {
+              printWindow.focus();
+              setTimeout(() => {
+                if (printWindow && !printWindow.closed) {
+                  printWindow.print();
+                }
+              }, 300);
+            }
+          } catch (error) {
+            console.error('Error triggering print:', error);
+          }
+        };
+
+        // Try multiple methods to ensure print opens
+        if (printWindow.document.readyState === 'complete') {
+          triggerPrint();
+        } else {
+          printWindow.onload = triggerPrint;
+          printWindow.addEventListener('load', triggerPrint);
+          setTimeout(triggerPrint, 500);
+          setTimeout(triggerPrint, 1000);
+        }
+      };
+
+      // Try API first (for network printers), but ALWAYS open browser dialog (for USB printers)
+      let apiSuccess = false;
+      if (printResult.success && printResult.data) {
+        const response = printResult.data;
+        
+        if (response.success === true) {
+          apiSuccess = true;
+          // Show success message with printer info
+          const printerNames = response.printers || ['Default Printers'];
+          setAlert({ 
+            type: 'success', 
+            message: `Receipt sent to ${printerNames.join(' and ')}. Browser print dialog opening for USB printers...` 
+          });
+          
+          // If bill is unpaid, update status based on payment method (Credit or Bill Generated)
+          if (generatedBill.payment_status !== 'Paid' && generatedBill.bill_id && generatedBill.order_id) {
+            try {
+              const orderIdValue = generatedBill.order_id;
+              const orderidValue = generatedBill.order_number || `ORD-${generatedBill.order_id}`;
+              
+              // Determine status: 'Credit' for credit bills, 'Bill Generated' for others
+              const isCredit = generatedBill.payment_method === 'Credit' || 
+                               generatedBill.payment_mode === 'Credit' || 
+                               generatedBill.payment_status === 'Credit' ||
+                               generatedBill.is_credit === true;
+              const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
+              
+              const statusPayload = { 
+                status: orderStatus,
+                order_id: orderIdValue,
+                orderid: orderidValue
+              };
+              
+              await apiPost('api/chnageorder_status.php', statusPayload);
+              fetchOrders(); // Refresh orders list
+            } catch (error) {
+              console.error('Error updating order status on print:', error);
+            }
+          }
+        }
+      }
+      
+      // ALWAYS open browser print dialog (for USB printers)
+      // Open after a short delay to allow API message to show (if API succeeded)
+      setTimeout(() => {
+        openBrowserPrintDialog();
+      }, apiSuccess ? 500 : 0);
+      
+      setIsPrinting(false);
+      return;
+    } catch (error) {
+      console.error('Error printing receipt:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Error printing receipt. Opening browser print dialog...' 
+      });
+      
+      // Fallback: Open browser print dialog even on error
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        const errorPrintHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receipt - Restaurant Khas</title>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 80mm;
+  height: auto;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  background: white;
+  color: #000;
+}
+.receipt-container {
+  width: 80mm;
+  max-width: 80mm;
+  min-width: 80mm;
+  margin: 0 auto;
+  padding: 5mm 4mm;
+  background: white;
+  box-sizing: border-box;
+}
+.receipt-container img {
+  max-width: 60mm;
+  max-height: 30mm;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+.no-print {
+  display: none;
+}
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+    padding: 0;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .receipt-container {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    min-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 5mm 4mm !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-container * {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .no-print {
+    display: none !important;
+  }
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+@media screen {
+  body {
+    padding: 20px;
+    background: #f5f5f5;
+  }
+  .no-print {
+    display: block;
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f0f0;
+    border-radius: 5px;
+    text-align: center;
+    font-size: 12px;
+  }
+  .receipt-container {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+}
+</style>
+</head>
+<body>
+<div class="receipt-container">${receiptHTML}</div>
+<div class="no-print">
+<p><strong>Print Preview</strong></p>
+<p>Print dialog will open automatically...</p>
+</div>
+<script>
+(function() {
+  function triggerPrint() {
+    try {
+      window.focus();
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    triggerPrint();
+  } else {
+    document.addEventListener('DOMContentLoaded', triggerPrint);
+    window.addEventListener('load', triggerPrint);
+    setTimeout(triggerPrint, 1000);
+  }
+})();
+</script>
+</body>
+</html>`;
+        printWindow.document.open();
+        printWindow.document.write(errorPrintHTML);
+        printWindow.document.close();
+        
+        // Multiple triggers to ensure print dialog opens
+        const triggerPrint = () => {
+          try {
+            if (printWindow && !printWindow.closed) {
+              printWindow.focus();
+              setTimeout(() => {
+                if (printWindow && !printWindow.closed) {
+                  printWindow.print();
+                }
+              }, 300);
+            }
+          } catch (error) {
+            console.error('Error triggering print:', error);
+          }
+        };
+
+        // Try multiple methods to ensure print opens
+        if (printWindow.document.readyState === 'complete') {
+          triggerPrint();
+        } else {
+          printWindow.onload = triggerPrint;
+          printWindow.addEventListener('load', triggerPrint);
+          setTimeout(triggerPrint, 500);
+          setTimeout(triggerPrint, 1000);
+        }
       }
     } finally {
       setIsPrinting(false);
@@ -3833,9 +3748,9 @@ html, body {
                     {orderItems.map((item, index) => (
                       <div key={index} className="flex justify-between items-center py-3 px-4 bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow duration-200">
                         <div className="flex-1">
-                          <p className="font-semibold text-gray-900 text-base">{item.title || item.dish_name || 'Item'}</p>
+                          <p className="font-semibold text-gray-900 text-base">{item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || 'Item'}</p>
                           <p className="text-sm text-gray-500 mt-0.5">
-                            {formatPKR(item.price || item.rate || 0)} × {item.quantity || item.qnty || 0}
+                            {formatPKR(item.price || item.rate || item.unit_price || 0)} × {item.quantity || item.qnty || item.qty || 0}
                           </p>
                         </div>
                         <p className="font-bold text-lg text-gray-900 ml-4">
@@ -4321,7 +4236,7 @@ html, body {
                   <h4 className="font-semibold text-gray-900 mb-2">Order Items</h4>
                   {orderItems.map((item, index) => (
                     <div key={index} className="flex justify-between text-sm py-1">
-                      <span className="text-gray-900">{item.title || item.dish_name || 'Item'}</span>
+                      <span className="text-gray-900">{item.dish_name || item.name || item.title || item.item_name || item.dishname || item.product_name || 'Item'}</span>
                       <span className="text-gray-900 font-medium">{formatPKR(item.total_amount || item.total || 0)}</span>
                     </div>
                   ))}

@@ -2654,10 +2654,11 @@ export default function OrderManagementPage() {
       }
     };
     const formattedDateFormatted = formatDateTime(orderDate);
+    const logoPath = typeof window !== 'undefined' ? `${window.location.origin}/assets/CHAIKHAS.PNG` : '/assets/CHAIKHAS.PNG';
     
     return `
       <div class="receipt-logo" style="text-align: center; margin-bottom: 10px;">
-        <img src="/assets/CHAIKHAS.PNG" alt="Restaurant Khas Logo" style="max-width: 60mm; max-height: 30mm; height: auto; width: auto; object-fit: contain; display: block; margin: 0 auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <img src="${logoPath}" alt="Restaurant Khas Logo" style="max-width: 60mm; max-height: 30mm; height: auto; width: auto; object-fit: contain; display: block; margin: 0 auto;" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
         <div style="display: none; font-family: 'Courier New', monospace; color: #000; text-align: center; padding: 5px 0;">
           <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 3px; text-transform: uppercase;">RESTAURANT</div>
           <div style="font-size: 22px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;">KHAS</div>
@@ -2833,27 +2834,28 @@ export default function OrderManagementPage() {
         return false;
       }
 
-        // Create print-ready HTML - MATCHES ThermalReceipt component design
+        // Create print-ready HTML - FIXED for reliable printing
       const printHTML = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Receipt - Order ${orderId}</title>
 <style>
-* { 
-  margin: 0; 
-  padding: 0; 
-  box-sizing: border-box; 
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
-html, body { 
-  margin: 0; 
-  padding: 0; 
-  width: 80mm; 
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 80mm;
   height: auto;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 11px; 
-  line-height: 1.4; 
-  background: white; 
+  font-size: 11px;
+  line-height: 1.4;
+  background: white;
   color: #000;
 }
 .receipt-container {
@@ -2861,14 +2863,31 @@ html, body {
   max-width: 80mm;
   min-width: 80mm;
   margin: 0 auto;
-  padding: 8mm 5mm;
+  padding: 5mm 4mm;
   background: white;
   box-sizing: border-box;
+}
+.receipt-container img {
+  max-width: 60mm;
+  max-height: 30mm;
+  height: auto;
+  width: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+.no-print {
+  display: none;
 }
 @media print {
   @page {
     size: 80mm auto;
     margin: 0;
+    padding: 0;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   html, body {
     width: 80mm !important;
@@ -2876,33 +2895,35 @@ html, body {
     margin: 0 !important;
     padding: 0 !important;
     height: auto !important;
-  }
-  body * {
-    visibility: hidden;
-  }
-  .receipt-container,
-  .receipt-container * {
-    visibility: visible !important;
+    overflow: visible !important;
   }
   .receipt-container {
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 80mm !important;
     max-width: 80mm !important;
     min-width: 80mm !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     padding: 5mm 4mm !important;
-    page-break-after: avoid;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+    position: relative !important;
+  }
+  .receipt-container * {
     page-break-inside: avoid;
-    box-sizing: border-box;
+    break-inside: avoid;
   }
   .no-print {
     display: none !important;
   }
-}
-.no-print {
-  display: none;
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
 }
 @media screen {
   body {
@@ -2930,6 +2951,27 @@ html, body {
 <p><strong>Print Preview</strong></p>
 <p>Print dialog will open automatically...</p>
 </div>
+<script>
+(function() {
+  function triggerPrint() {
+    try {
+      window.focus();
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    triggerPrint();
+  } else {
+    document.addEventListener('DOMContentLoaded', triggerPrint);
+    window.addEventListener('load', triggerPrint);
+    setTimeout(triggerPrint, 1000);
+  }
+})();
+</script>
 </body>
 </html>`;
 
@@ -2938,19 +2980,16 @@ html, body {
       printWindow.document.write(printHTML);
       printWindow.document.close();
 
-      // Wait for window to fully load, then trigger print automatically
+      // Multiple triggers to ensure print dialog opens
       const triggerPrint = () => {
         try {
           if (printWindow && !printWindow.closed) {
             printWindow.focus();
-            // Small delay to ensure content is rendered
             setTimeout(() => {
               if (printWindow && !printWindow.closed) {
                 printWindow.print();
-                // Close window after print dialog is shown (user can cancel)
-                // Don't close immediately - let user interact with print dialog
               }
-            }, 100);
+            }, 300);
           }
         } catch (error) {
           console.error('Error triggering print:', error);
@@ -2961,13 +3000,14 @@ html, body {
         }
       };
 
-      // Use onload event if available
+      // Try multiple methods to ensure print opens
       if (printWindow.document.readyState === 'complete') {
         triggerPrint();
       } else {
         printWindow.onload = triggerPrint;
-        // Fallback timeout in case onload doesn't fire
+        printWindow.addEventListener('load', triggerPrint);
         setTimeout(triggerPrint, 500);
+        setTimeout(triggerPrint, 1000);
       }
 
       // Show success notification
