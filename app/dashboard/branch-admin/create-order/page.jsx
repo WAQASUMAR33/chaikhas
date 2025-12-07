@@ -615,6 +615,21 @@ export default function CreateOrderPage() {
 
       const { subtotal } = calculateTotals();
 
+      // Get current timestamp in MySQL datetime format (YYYY-MM-DD HH:mm:ss)
+      // This ensures the order time matches the system time and prevents collisions
+      // Using local time to match the user's system time
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const orderDate = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      
+      // Also send ISO 8601 format with timezone for backend compatibility
+      const orderDateISO = now.toISOString();
+
       // Prepare order data matching database structure
       // Order status is "Running" to send to kitchen
       // Service charge and discount will be added when generating bill
@@ -632,6 +647,9 @@ export default function CreateOrderPage() {
         table_id: orderType === 'Dine In' ? parseInt(selectedTable) : 0,
         comments: comments,
         terminal: terminal,
+        order_date: orderDate, // Send timestamp in MySQL datetime format (YYYY-MM-DD HH:mm:ss)
+        created_at: orderDate, // Also send as created_at for compatibility
+        date: orderDateISO, // ISO 8601 format with timezone for backend timezone handling
         items: items,
       };
 
@@ -1553,6 +1571,18 @@ html, body {
       window.focus();
       setTimeout(function() {
         window.print();
+        // Auto-close window after print dialog closes
+        window.onafterprint = function() {
+          setTimeout(function() {
+            window.close();
+          }, 500);
+        };
+        // Fallback: close after timeout if onafterprint doesn't fire
+        setTimeout(function() {
+          if (!window.closed) {
+            window.close();
+          }
+        }, 3000);
       }, 250);
     } catch (e) {
       console.error('Print error:', e);
@@ -1573,6 +1603,21 @@ html, body {
                     printWindow.document.write(printHTML);
                     printWindow.document.close();
                     
+                    // Auto-close window after printing
+                    const closeAfterPrint = () => {
+                      try {
+                        if (printWindow && !printWindow.closed) {
+                          setTimeout(() => {
+                            if (printWindow && !printWindow.closed) {
+                              printWindow.close();
+                            }
+                          }, 500);
+                        }
+                      } catch (error) {
+                        console.error('Error closing print window:', error);
+                      }
+                    };
+
                     // Multiple triggers to ensure print dialog opens
                     const triggerPrint = () => {
                       try {
@@ -1581,6 +1626,10 @@ html, body {
                           setTimeout(() => {
                             if (printWindow && !printWindow.closed) {
                               printWindow.print();
+                              // Close window after print dialog closes (user prints or cancels)
+                              printWindow.onafterprint = closeAfterPrint;
+                              // Fallback: close after timeout if onafterprint doesn't fire
+                              setTimeout(closeAfterPrint, 3000);
                             }
                           }, 300);
                         }

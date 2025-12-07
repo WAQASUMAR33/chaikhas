@@ -2696,6 +2696,18 @@ html, body {
       window.focus();
       setTimeout(function() {
         window.print();
+        // Auto-close window after print dialog closes
+        window.onafterprint = function() {
+          setTimeout(function() {
+            window.close();
+          }, 500);
+        };
+        // Fallback: close after timeout if onafterprint doesn't fire
+        setTimeout(function() {
+          if (!window.closed) {
+            window.close();
+          }
+        }, 3000);
       }, 250);
     } catch (e) {
       console.error('Print error:', e);
@@ -2889,6 +2901,18 @@ html, body {
       window.focus();
       setTimeout(function() {
         window.print();
+        // Auto-close window after print dialog closes
+        window.onafterprint = function() {
+          setTimeout(function() {
+            window.close();
+          }, 500);
+        };
+        // Fallback: close after timeout if onafterprint doesn't fire
+        setTimeout(function() {
+          if (!window.closed) {
+            window.close();
+          }
+        }, 3000);
       }, 250);
     } catch (e) {
       console.error('Print error:', e);
@@ -2910,6 +2934,21 @@ html, body {
         printWindow.document.write(printHTML);
         printWindow.document.close();
         
+        // Auto-close window after printing
+        const closeAfterPrint = () => {
+          try {
+            if (printWindow && !printWindow.closed) {
+              setTimeout(() => {
+                if (printWindow && !printWindow.closed) {
+                  printWindow.close();
+                }
+              }, 500);
+            }
+          } catch (error) {
+            console.error('Error closing print window:', error);
+          }
+        };
+
         // Multiple triggers to ensure print dialog opens
         const triggerPrint = () => {
           try {
@@ -2918,6 +2957,10 @@ html, body {
               setTimeout(() => {
                 if (printWindow && !printWindow.closed) {
                   printWindow.print();
+                  // Close window after print dialog closes (user prints or cancels)
+                  printWindow.onafterprint = closeAfterPrint;
+                  // Fallback: close after timeout if onafterprint doesn't fire
+                  setTimeout(closeAfterPrint, 3000);
                 }
               }, 300);
             }
@@ -3120,6 +3163,18 @@ html, body {
       window.focus();
       setTimeout(function() {
         window.print();
+        // Auto-close window after print dialog closes
+        window.onafterprint = function() {
+          setTimeout(function() {
+            window.close();
+          }, 500);
+        };
+        // Fallback: close after timeout if onafterprint doesn't fire
+        setTimeout(function() {
+          if (!window.closed) {
+            window.close();
+          }
+        }, 3000);
       }, 250);
     } catch (e) {
       console.error('Print error:', e);
@@ -3140,6 +3195,21 @@ html, body {
         printWindow.document.write(errorPrintHTML);
         printWindow.document.close();
         
+        // Auto-close window after printing
+        const closeAfterPrint = () => {
+          try {
+            if (printWindow && !printWindow.closed) {
+              setTimeout(() => {
+                if (printWindow && !printWindow.closed) {
+                  printWindow.close();
+                }
+              }, 500);
+            }
+          } catch (error) {
+            console.error('Error closing print window:', error);
+          }
+        };
+
         // Multiple triggers to ensure print dialog opens
         const triggerPrint = () => {
           try {
@@ -3148,6 +3218,10 @@ html, body {
               setTimeout(() => {
                 if (printWindow && !printWindow.closed) {
                   printWindow.print();
+                  // Close window after print dialog closes (user prints or cancels)
+                  printWindow.onafterprint = closeAfterPrint;
+                  // Fallback: close after timeout if onafterprint doesn't fire
+                  setTimeout(closeAfterPrint, 3000);
                 }
               }, 300);
             }
