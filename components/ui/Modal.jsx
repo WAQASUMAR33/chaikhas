@@ -14,6 +14,7 @@ export default function Modal({
   children,
   size = 'md',
   showCloseButton = true,
+  className = '',
 }) {
   // Handle ESC key to close modal
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function Modal({
       {/* Modal Container with animation */}
       <div className="flex min-h-full items-center justify-center p-2 sm:p-4 relative z-50">
         <div
-          className={`relative bg-white rounded-lg sm:rounded-2xl shadow-2xl ${sizes[size]} w-full max-h-[95vh] sm:max-h-[90vh] overflow-hidden transform transition-all duration-300 z-50 scale-100 opacity-100 flex flex-col`}
+          className={`relative bg-white rounded-lg sm:rounded-2xl shadow-2xl ${sizes[size]} w-full max-h-[95vh] sm:max-h-[90vh] overflow-hidden transform transition-all duration-300 z-50 scale-100 opacity-100 flex flex-col ${className}`}
           onClick={(e) => e.stopPropagation()}
           style={{
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)',
