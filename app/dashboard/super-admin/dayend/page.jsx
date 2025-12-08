@@ -13,7 +13,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, apiGet, getTerminal } from '@/utils/api';
+import { apiPost, apiGet, getTerminal, getBranchId, getBranchName as getStoredBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { Calendar, Printer, CheckCircle, Search, X, Eye } from 'lucide-react';
 
@@ -157,12 +157,19 @@ export default function DayEndPage() {
     }
 
     setSelectedDayendId(dayend.id);
+    setSelectedDayend(dayend);
     setViewOrdersModal(true);
     setLoadingOrders(true);
     setDayendOrders([]);
 
     try {
-      const result = await apiPost('api/get_sales_by_shift.php', { dayend_id: dayend.id });
+      // Use GET API endpoint to get orders by sts, branch_id and dayend_id
+      const branchId = dayend.branch_id || dayend.branchId;
+      const result = await apiGet('api/get_sales_by_shift.php', { 
+        sts: 0,
+        branch_id: branchId,
+        dayend_id: dayend.id
+      });
 
       if (result.success && result.data) {
         let ordersData = [];
@@ -456,8 +463,9 @@ export default function DayEndPage() {
             setSelectedDayendId(null);
           }}
           title={`Orders for Dayend #${selectedDayendId || ''}`}
-          size="lg"
+          size="xl"
           showCloseButton={true}
+          className="min-w-[800px]"
         >
           {loadingOrders ? (
             <div className="py-8 text-center">
@@ -472,18 +480,143 @@ export default function DayEndPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="text-sm text-gray-600 mb-4">
-                Total Orders: <span className="font-semibold">{dayendOrders.length}</span>
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm text-gray-600">
+                  Total Orders: <span className="font-semibold">{dayendOrders.length}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const branchName = selectedDayend ? getBranchName(selectedDayend.branch_id || selectedDayend.branchId) : 'Branch';
+                    const printWindow = window.open('', '_blank');
+                    printWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>Orders Report - ${branchName}</title>
+                          <style>
+                            body { font-family: Arial, sans-serif; padding: 20px; margin: 0; }
+                            .print-header { 
+                              text-align: center; 
+                              border-bottom: 2px solid #000; 
+                              padding-bottom: 15px; 
+                              margin-bottom: 20px; 
+                            }
+                            .print-header h1 { 
+                              font-size: 24px; 
+                              margin: 0 0 5px 0; 
+                              color: #FF5F15; 
+                            }
+                            .print-header h2 { 
+                              font-size: 18px; 
+                              margin: 0 0 10px 0; 
+                              font-weight: normal;
+                            }
+                            .print-header .report-title {
+                              font-size: 16px;
+                              font-weight: bold;
+                              margin: 10px 0 5px 0;
+                            }
+                            .print-header .info-row {
+                              display: flex;
+                              justify-content: center;
+                              gap: 30px;
+                              font-size: 12px;
+                              color: #666;
+                            }
+                            table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
+                            th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+                            th { background-color: #f5f5f5; font-weight: bold; }
+                            .text-right { text-align: right; }
+                            .total-row { background-color: #f5f5f5; font-weight: bold; }
+                            .grand-total { color: #FF5F15; }
+                            .footer { 
+                              margin-top: 20px; 
+                              padding-top: 10px;
+                              border-top: 1px solid #ddd;
+                              font-size: 10px; 
+                              color: #666; 
+                              text-align: center; 
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          <div class="print-header">
+                            <h1>${branchName}</h1>
+                            <div class="report-title">Orders Report - Dayend #${selectedDayendId}</div>
+                            <div class="info-row">
+                              <span>Total Orders: <strong>${dayendOrders.length}</strong></span>
+                              <span>Grand Total: <strong>${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.g_total_amount) || 0), 0))}</strong></span>
+                              <span>Net Total: <strong>${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.net_total_amount) || 0), 0))}</strong></span>
+                            </div>
+                            <div class="info-row" style="margin-top: 5px;">
+                              <span>Printed on: ${new Date().toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Order ID</th>
+                                <th>Type</th>
+                                <th>Payment</th>
+                                <th class="text-right">Grand Total</th>
+                                <th class="text-right">Discount</th>
+                                <th class="text-right">Service</th>
+                                <th class="text-right">Net Total</th>
+                                <th>Created At</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${dayendOrders.map(order => `
+                                <tr>
+                                  <td>${order.order_id}</td>
+                                  <td>${order.order_type || 'N/A'}</td>
+                                  <td>${order.payment_mode || 'N/A'}</td>
+                                  <td class="text-right">${formatPKR(order.g_total_amount || 0)}</td>
+                                  <td class="text-right">${formatPKR(order.discount_amount || 0)}</td>
+                                  <td class="text-right">${formatPKR(order.service_charge || 0)}</td>
+                                  <td class="text-right">${formatPKR(order.net_total_amount || 0)}</td>
+                                  <td>${formatDateTime(order.created_at)}</td>
+                                </tr>
+                              `).join('')}
+                            </tbody>
+                            <tfoot>
+                              <tr class="total-row">
+                                <td colspan="3" class="text-right">Total:</td>
+                                <td class="text-right">${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.g_total_amount) || 0), 0))}</td>
+                                <td class="text-right">${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.discount_amount) || 0), 0))}</td>
+                                <td class="text-right">${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.service_charge) || 0), 0))}</td>
+                                <td class="text-right grand-total">${formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.net_total_amount) || 0), 0))}</td>
+                                <td></td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                          <div class="footer">
+                            <p>Generated on ${new Date().toLocaleDateString('en-GB')} at ${new Date().toLocaleTimeString('en-GB')}</p>
+                          </div>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                    printWindow.print();
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Orders</span>
+                </Button>
               </div>
-              <div className="overflow-x-auto max-h-96">
+              <div id="orders-print-content" className="overflow-x-auto max-h-96">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Order ID</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Type</th>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Status</th>
-                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Total</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Payment</th>
                       <th className="px-3 py-2 text-right font-semibold text-gray-700">Grand Total</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Discount</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Service</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Net Total</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Created At</th>
                     </tr>
                   </thead>
@@ -494,17 +627,19 @@ export default function DayEndPage() {
                         <td className="px-3 py-2 text-gray-700">{order.order_type || 'N/A'}</td>
                         <td className="px-3 py-2">
                           <span className={`px-2 py-1 rounded-full text-xs ${
-                            order.order_status?.toLowerCase() === 'complete' || order.order_status?.toLowerCase() === 'completed'
+                            order.payment_mode?.toLowerCase() === 'cash'
                               ? 'bg-green-100 text-green-800'
-                              : order.order_status?.toLowerCase() === 'pending'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-gray-100 text-gray-800'
+                              : order.payment_mode?.toLowerCase() === 'credit'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-blue-100 text-blue-800'
                           }`}>
-                            {order.order_status || 'N/A'}
+                            {order.payment_mode || 'N/A'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right text-gray-900">{formatPKR(order.total || 0)}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatPKR(order.grand_total || 0)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatPKR(order.g_total_amount || 0)}</td>
+                        <td className="px-3 py-2 text-right text-red-600">{formatPKR(order.discount_amount || 0)}</td>
+                        <td className="px-3 py-2 text-right text-gray-900">{formatPKR(order.service_charge || 0)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-[#FF5F15]">{formatPKR(order.net_total_amount || 0)}</td>
                         <td className="px-3 py-2 text-gray-600 text-xs">{formatDateTime(order.created_at)}</td>
                       </tr>
                     ))}
@@ -513,10 +648,16 @@ export default function DayEndPage() {
                     <tr>
                       <td colSpan={3} className="px-3 py-2 text-right font-semibold text-gray-700">Total:</td>
                       <td className="px-3 py-2 text-right font-semibold text-gray-900">
-                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.total) || 0), 0))}
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.g_total_amount) || 0), 0))}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-red-600">
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.discount_amount) || 0), 0))}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-gray-900">
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.service_charge) || 0), 0))}
                       </td>
                       <td className="px-3 py-2 text-right font-semibold text-[#FF5F15]">
-                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.grand_total) || 0), 0))}
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.net_total_amount) || 0), 0))}
                       </td>
                       <td></td>
                     </tr>
