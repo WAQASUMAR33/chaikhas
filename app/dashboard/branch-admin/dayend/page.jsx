@@ -16,7 +16,7 @@ import Alert from '@/components/ui/Alert';
 import { apiPost, apiGet, getBranchId, getFullname, getUsername, getTerminal } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { isCreditPayment } from '@/utils/payment';
-import { Calendar, Printer, CheckCircle, DollarSign, Search, X } from 'lucide-react';
+import { Calendar, Printer, CheckCircle, DollarSign, Search, X, Eye } from 'lucide-react';
 
 export default function DayEndPage() {
   const [dayends, setDayends] = useState([]);
@@ -52,6 +52,10 @@ export default function DayEndPage() {
     credit_sales: 0,
   });
   const [selectedDayend, setSelectedDayend] = useState(null);
+  const [viewOrdersModal, setViewOrdersModal] = useState(false);
+  const [dayendOrders, setDayendOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [selectedDayendId, setSelectedDayendId] = useState(null);
   const printRef = useRef(null);
 
   useEffect(() => {
@@ -617,6 +621,49 @@ export default function DayEndPage() {
   };
 
   /**
+   * View orders for a specific dayend
+   */
+  const handleViewOrders = async (dayend) => {
+    if (!dayend || !dayend.id) {
+      setAlert({ type: 'error', message: 'Invalid day-end record' });
+      return;
+    }
+
+    setSelectedDayendId(dayend.id);
+    setViewOrdersModal(true);
+    setLoadingOrders(true);
+    setDayendOrders([]);
+
+    try {
+      // Use the API endpoint to get orders by dayend_id
+      const result = await apiPost('api/get_sales_by_shift.php', { dayend_id: dayend.id });
+
+      if (result.success && result.data) {
+        let ordersData = [];
+        
+        if (Array.isArray(result.data)) {
+          ordersData = result.data;
+        } else if (result.data.data && Array.isArray(result.data.data)) {
+          ordersData = result.data.data;
+        } else if (result.data.orders && Array.isArray(result.data.orders)) {
+          ordersData = result.data.orders;
+        }
+
+        setDayendOrders(ordersData);
+      } else {
+        setAlert({ type: 'error', message: result.data?.message || 'Failed to load orders' });
+        setDayendOrders([]);
+      }
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      setAlert({ type: 'error', message: 'Failed to load orders: ' + (error.message || 'Network error') });
+      setDayendOrders([]);
+    } finally {
+      setLoadingOrders(false);
+    }
+  };
+
+  /**
    * Apply date filter
    */
   const applyDateFilter = () => {
@@ -710,10 +757,19 @@ export default function DayEndPage() {
   ];
 
   /**
-   * Table actions (Print button)
+   * Table actions (View and Print buttons)
    */
   const actions = (row) => (
     <div className="flex items-center justify-end gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => handleViewOrders(row)}
+        className="flex items-center gap-1"
+      >
+        <Eye className="w-4 h-4" />
+        <span className="hidden sm:inline">View</span>
+      </Button>
       <Button
         variant="outline"
         size="sm"
@@ -1012,6 +1068,86 @@ export default function DayEndPage() {
               </Button>
             </div>
           </form>
+        </Modal>
+
+        {/* View Orders Modal */}
+        <Modal
+          isOpen={viewOrdersModal}
+          onClose={() => {
+            setViewOrdersModal(false);
+            setDayendOrders([]);
+            setSelectedDayendId(null);
+          }}
+          title={`Orders for Dayend #${selectedDayendId || ''}`}
+          size="lg"
+          showCloseButton={true}
+        >
+          {loadingOrders ? (
+            <div className="py-8 text-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-4 border-[#FF5F15] border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-gray-500">Loading orders...</p>
+              </div>
+            </div>
+          ) : dayendOrders.length === 0 ? (
+            <div className="py-8 text-center">
+              <p className="text-gray-500">No orders found for this dayend.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600 mb-4">
+                Total Orders: <span className="font-semibold">{dayendOrders.length}</span>
+              </div>
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Order ID</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Type</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Status</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Total</th>
+                      <th className="px-3 py-2 text-right font-semibold text-gray-700">Grand Total</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Created At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {dayendOrders.map((order) => (
+                      <tr key={order.order_id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-gray-900 font-medium">{order.order_id}</td>
+                        <td className="px-3 py-2 text-gray-700">{order.order_type || 'N/A'}</td>
+                        <td className="px-3 py-2">
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            order.order_status?.toLowerCase() === 'complete' || order.order_status?.toLowerCase() === 'completed'
+                              ? 'bg-green-100 text-green-800'
+                              : order.order_status?.toLowerCase() === 'pending'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {order.order_status || 'N/A'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-gray-900">{formatPKR(order.total || 0)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatPKR(order.grand_total || 0)}</td>
+                        <td className="px-3 py-2 text-gray-600 text-xs">{formatDateTime(order.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 sticky bottom-0">
+                    <tr>
+                      <td colSpan={3} className="px-3 py-2 text-right font-semibold text-gray-700">Total:</td>
+                      <td className="px-3 py-2 text-right font-semibold text-gray-900">
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.total) || 0), 0))}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold text-[#FF5F15]">
+                        {formatPKR(dayendOrders.reduce((sum, o) => sum + (parseFloat(o.grand_total) || 0), 0))}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
         </Modal>
 
         {/* Print View - Hidden until print */}

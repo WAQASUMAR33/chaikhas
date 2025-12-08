@@ -79,17 +79,7 @@ POST /api/get_menu_sales.php
 ```
 
 ---
-
-### 3. API: `api/get_sales_report.php`
-**Current Behavior:** May accept `period` parameter (daily/weekly/monthly/custom/all) and optional date parameters.
-
-**Required Changes:**
-- **Remove dependency on `period` parameter** - The frontend will no longer send `period`.
-- **Always require `start_date` and `end_date` parameters** - These will always be sent by the frontend.
-- Filter sales report data (bills/orders) to include only records where the order/bill date is between `start_date` and `end_date` (inclusive).
-- If `branch_id` is provided, filter by that branch as well.
-- Include credit sales when `include_credit` parameter is set to `true`.
-
+n
 **Example Request:**
 ```json
 POST /api/get_sales_report.php

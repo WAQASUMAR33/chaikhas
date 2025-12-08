@@ -30,7 +30,8 @@ import {
   ShoppingCart,
   Network,
   Settings,
-  FileBarChart
+  FileBarChart,
+  Clock
 } from 'lucide-react';
 import { getToken, getRole, getFullname, getUsername, clearAuth } from '@/utils/api';
 
@@ -51,6 +52,7 @@ const menuItems = [
   { icon: FileBarChart, label: 'Sales Report', path: '/dashboard/super-admin/sales-report' },
   { icon: BarChart3, label: 'Menu Sales', path: '/dashboard/super-admin/menu-sales' },
   { icon: Receipt, label: 'Expenses', path: '/dashboard/super-admin/expenses' },
+  { icon: Clock, label: 'Day End', path: '/dashboard/super-admin/dayend' },
   { icon: Building2, label: 'Halls', path: '/dashboard/super-admin/halls' },
   { icon: Table2, label: 'Tables', path: '/dashboard/super-admin/tables' },
   { icon: Users, label: 'Customers', path: '/dashboard/super-admin/customers' },
