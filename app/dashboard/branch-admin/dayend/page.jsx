@@ -635,12 +635,10 @@ export default function DayEndPage() {
     setDayendOrders([]);
 
     try {
-      // Use GET API endpoint to get orders by sts, branch_id and dayend_id
-      const branchId = getBranchId();
+      // Use GET API endpoint to get orders by sts (sts equals dayend id)
+      // API: api/get_sales_by_shift.php?sts={dayend_id}
       const result = await apiGet('api/get_sales_by_shift.php', { 
-        sts: 0,
-        branch_id: branchId,
-        dayend_id: dayend.id
+        sts: dayend.id
       });
 
       if (result.success && result.data) {
