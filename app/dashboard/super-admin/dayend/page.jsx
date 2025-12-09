@@ -386,7 +386,7 @@ export default function DayEndPage() {
                 ))}
               </select>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 max-w-[300px]">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Start Date
               </label>
@@ -400,7 +400,7 @@ export default function DayEndPage() {
                 />
               </div>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 max-w-[300px]">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 End Date
               </label>
@@ -444,7 +444,7 @@ export default function DayEndPage() {
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="bg-white rounded-lg shadow overflow-hidden max-w-[1200px]">
             <Table
               columns={columns}
               data={filteredDayends}
