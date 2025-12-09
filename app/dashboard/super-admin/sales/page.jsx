@@ -12,7 +12,7 @@
  * - Responsive design
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
@@ -87,6 +87,7 @@ export default function SalesListPage() {
   };
   
   const [dateRange, setDateRange] = useState(getDefaultDateRange());
+  const fetchingRef = useRef(false);
 
   // Fetch branches for filter dropdown
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function SalesListPage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branches.length, selectedBranchId]);
+  }, [branches.length, selectedBranchId, dateRange.fromDate, dateRange.toDate]);
 
 
   /**
@@ -149,6 +150,13 @@ export default function SalesListPage() {
    * Expected response: Array of sales data or { success: true, data: [...] }
    */
   const fetchSales = useCallback(async (showRefreshing = false) => {
+    // Prevent multiple simultaneous calls
+    if (fetchingRef.current) {
+      return;
+    }
+    
+    fetchingRef.current = true;
+    
     if (showRefreshing) {
       setRefreshing(true);
     } else {
@@ -599,6 +607,7 @@ export default function SalesListPage() {
       setSales([]);
       setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
     } finally {
+      fetchingRef.current = false;
       if (showRefreshing) {
         setRefreshing(false);
       } else {
@@ -620,7 +629,7 @@ export default function SalesListPage() {
       fetchSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranchId, branches.length]);
+  }, [selectedBranchId, branches.length, dateRange.fromDate, dateRange.toDate]);
   
   // Handle date range changes
   const handleDateRangeChange = (field, value) => {
