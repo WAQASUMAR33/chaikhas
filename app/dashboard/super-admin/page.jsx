@@ -249,6 +249,18 @@ export default function SuperAdminDashboardPage() {
         return;
       }
       
+      // Immediately show branches with loading state
+      const loadingStats = branches.map(branch => ({
+        branch_id: branch.branch_id || branch.id,
+        branch_name: branch.branch_name || branch.name || 'Unknown Branch',
+        daily_sales: 0,
+        running_orders: 0,
+        complete_bills: 0,
+        loading: true,
+      }));
+      setBranchStats(loadingStats);
+      console.log('📊 Set loading state for', loadingStats.length, 'branches');
+      
       const terminal = getTerminal();
       const today = getTodayDate(); // Always get current date - ensures reset at day end
       
@@ -324,9 +336,20 @@ export default function SuperAdminDashboardPage() {
       setBranchStats(validStats);
       console.log('✅ Branch statistics loaded via individual calls:', validStats.length, 'branches');
     } catch (error) {
-      console.error('Error fetching branch statistics:', error);
+      console.error('❌ Error fetching branch statistics:', error);
       setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection.');
-      setBranchStats([]);
+      
+      // Even on error, show branches with zero values so table is visible
+      const fallbackStats = branches.map(branch => ({
+        branch_id: branch.branch_id || branch.id,
+        branch_name: branch.branch_name || branch.name || 'Unknown Branch',
+        daily_sales: 0,
+        running_orders: 0,
+        complete_bills: 0,
+        error: true,
+      }));
+      console.log('📊 Using fallback stats due to error:', fallbackStats.length, 'branches');
+      setBranchStats(fallbackStats);
     } finally {
       setBranchStatsLoading(false);
     }
@@ -1103,10 +1126,20 @@ export default function SuperAdminDashboardPage() {
                 Retry
               </button>
             </div>
+          ) : branchStats.length === 0 && branches.length > 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-500 mb-2">Loading branch statistics...</p>
+              <p className="text-gray-400 text-sm mb-4">Branches loaded: {branches.length}</p>
+              <button
+                onClick={fetchBranchStatistics}
+                className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
+              >
+                Load Statistics
+              </button>
+            </div>
           ) : branchStats.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-gray-500 mb-2">No branch statistics available</p>
-              <p className="text-gray-400 text-sm mb-4">Branches loaded: {branches.length}</p>
               <button
                 onClick={fetchBranchStatistics}
                 className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
