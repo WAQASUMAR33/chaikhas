@@ -531,8 +531,17 @@ export default function SuperAdminDashboardPage() {
           }
           
           console.log(`📊 Branch ${branchName} - Found ${billsData.length} bills from API`);
+          if (billsData.length > 0) {
+            console.log(`📊 Sample bill structure:`, {
+              bill_id: billsData[0].bill_id || billsData[0].id,
+              branch_id: billsData[0].branch_id,
+              status: billsData[0].order_status || billsData[0].status,
+              amount: billsData[0].grand_total || billsData[0].net_total || billsData[0].total,
+              date: billsData[0].created_at || billsData[0].bill_date || billsData[0].date
+            });
+          }
           
-          // STRICT FILTERING: Filter bills by date, dayend, and payment status
+          // Filter bills by date, dayend, and payment status
           // Backend logic: Only count 'Bill Generated' or 'Complete' status, exclude 'Customer Registration' and 'Customer Created'
           const validBills = billsData.filter(bill => {
             if (!bill) return false;
@@ -576,35 +585,30 @@ export default function SuperAdminDashboardPage() {
               }
             }
             
-            // Check order status - only 'Bill Generated' or 'Complete'
-            // Exclude 'Customer Registration' and 'Customer Created'
+            // Check order status - exclude 'Customer Registration' and 'Customer Created'
+            // But be more lenient with other statuses - if it has an amount, count it
             const orderStatus = (bill.order_status || bill.status || '').toLowerCase().trim();
-            const excludedStatuses = ['customer registration', 'customer created'];
+            const excludedStatuses = ['customer registration', 'customer created', 'cancelled', 'canceled'];
             if (excludedStatuses.includes(orderStatus)) {
+              console.log(`📅 Excluding bill with excluded status:`, orderStatus);
               return false;
             }
             
-            const validStatuses = ['bill generated', 'complete', 'completed'];
-            const hasValidStatus = validStatuses.includes(orderStatus);
-            
-            // Check payment status
-            const billPaymentStatus = (bill.payment_status || bill.paymentStatus || '').toLowerCase().trim();
-            const isPaid = billPaymentStatus === 'paid' || billPaymentStatus === 'complete' || billPaymentStatus === 'completed';
-            
-            // Must have amount > 0
-            const amount = parseFloat(bill.grand_total || bill.net_total || bill.total || bill.net_total_amount || 0);
+            // Must have amount > 0 to be considered a valid bill
+            const amount = parseFloat(bill.grand_total || bill.net_total || bill.total || bill.net_total_amount || bill.amount || 0);
             const hasAmount = amount > 0;
             
-            const isValid = (hasValidStatus || isPaid) && hasAmount;
+            // If it has an amount and is not in excluded statuses, count it
+            // This is more lenient - we count any bill with amount > 0 that's not explicitly excluded
+            const isValid = hasAmount;
             
-            if (isValid) {
-              console.log(`✅ Valid bill found (after dayend):`, {
+            if (!isValid) {
+              console.log(`❌ Bill excluded:`, {
                 bill_id: bill.bill_id || bill.id,
                 order_status: orderStatus,
-                payment_status: billPaymentStatus,
                 amount: amount,
                 date: billDate,
-                date_after_dayend: lastDayendTime ? billDateTime > cutoffDateTime : billDateTime.toISOString().split('T')[0] === today
+                reason: !hasAmount ? 'No amount' : 'Unknown reason'
               });
             }
             
@@ -612,7 +616,10 @@ export default function SuperAdminDashboardPage() {
           });
           
           completeBillsCount = validBills.length;
-          console.log(`📊 Branch ${branchName} - ${completeBillsCount} valid bills after strict filtering (after dayend)`);
+          console.log(`📊 Branch ${branchName} - ${completeBillsCount} valid bills after filtering (from ${billsData.length} total bills)`);
+          if (completeBillsCount === 0 && billsData.length > 0) {
+            console.warn(`⚠️ All ${billsData.length} bills were filtered out for branch ${branchName}. Check filtering criteria.`);
+          }
         }
       } catch (billsError) {
         console.warn(`⚠️ Error fetching bills for branch ${branchName}:`, billsError);
@@ -801,6 +808,7 @@ export default function SuperAdminDashboardPage() {
       }
       
       // Additional validation: If we got a count from dashboard stats, verify it matches our bills count
+      // Use dashboard stats as fallback if bills count is 0 (bills API might be too strict or not returning data)
       if (dashboardStatsResult.success && dashboardStatsResult.data) {
         let statsData = dashboardStatsResult.data;
         if (statsData.data) {
@@ -808,8 +816,13 @@ export default function SuperAdminDashboardPage() {
         }
         const dashboardCount = parseInt(statsData.totalOrders || statsData.total_orders || 0);
         if (dashboardCount !== completeBillsCount) {
-          console.warn(`⚠️ Dashboard stats count (${dashboardCount}) doesn't match bills count (${completeBillsCount}), using bills count`);
-          // Use bills count as it's more accurate (directly filtered)
+          if (completeBillsCount === 0 && dashboardCount > 0) {
+            // Bills count is 0 but dashboard shows orders - use dashboard count as fallback
+            console.log(`ℹ️ Bills count is 0 but dashboard shows ${dashboardCount} orders, using dashboard count as fallback`);
+            completeBillsCount = dashboardCount;
+          } else {
+            console.warn(`⚠️ Dashboard stats count (${dashboardCount}) doesn't match bills count (${completeBillsCount}), using bills count`);
+          }
         }
       }
       
