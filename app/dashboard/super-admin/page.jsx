@@ -117,12 +117,15 @@ export default function SuperAdminDashboardPage() {
     try {
       const terminal = getTerminal();
       const today = getTodayDate();
-      const params = { terminal, date: today };
+      // Use branch_id format: "0" for all branches, or specific branch_id
+      const params = { 
+        terminal, 
+        date: today,
+        branch_id: selectedBranchId && selectedBranchId !== 'all' ? selectedBranchId : '0'
+      };
       
-      // Add branch_id filter if specific branch is selected
+      // Add dayend filter if specific branch is selected
       if (selectedBranchId && selectedBranchId !== 'all') {
-        params.branch_id = selectedBranchId;
-        
         // Get dayend for the selected branch to ensure accurate daily stats
         const lastDayendTime = await fetchLastDayendForBranch(selectedBranchId);
         if (lastDayendTime) {
@@ -380,13 +383,9 @@ export default function SuperAdminDashboardPage() {
       }
       
       // Fetch daily sales for this branch
+      // API expects: { "branch_id": "0" } format (use "0" for all, or specific branch_id)
       const salesParams = {
-        terminal,
-        branch_id: branchId,
-        period: 'daily',
-        from_date: today,
-        to_date: today,
-        after_closing_date: lastDayendTime || null, // Pass dayend time to backend
+        branch_id: branchId || '0'
       };
       
       console.log(`📊 Fetching sales for branch ${branchName} (${branchId}):`, salesParams);
@@ -400,35 +399,36 @@ export default function SuperAdminDashboardPage() {
         salesResult = { success: false, data: [] };
       }
       
-      // Calculate daily sales from sales data - only count sales after dayend
+      // Calculate daily sales from sales data
+      // New API response structure: { success: true, data: [{ date, total, total_amount, net_total, grand_total, amount, cash_sales, branch_id, branch_name, ... }], count, message }
       let dailySales = 0;
       if (salesResult.success && salesResult.data) {
         let salesData = [];
         
-        // Handle multiple response structures
+        // Handle new response structure: data is an array of daily sales objects
         if (Array.isArray(salesResult.data)) {
           salesData = salesResult.data;
         } else if (salesResult.data.data && Array.isArray(salesResult.data.data)) {
           salesData = salesResult.data.data;
-        } else if (salesResult.data.sales && Array.isArray(salesResult.data.sales)) {
-          salesData = salesResult.data.sales;
-        } else if (salesResult.data.orders && Array.isArray(salesResult.data.orders)) {
-          salesData = salesResult.data.orders;
-        } else if (salesResult.data.bills && Array.isArray(salesResult.data.bills)) {
-          // If API returns bills, use bills for calculation
-          salesData = salesResult.data.bills;
         }
         
-        console.log(`📊 Branch ${branchName} - Found ${salesData.length} sales/bills records from API`);
+        console.log(`📊 Branch ${branchName} - Found ${salesData.length} daily sales records from API`);
         
-        // Filter sales to only include those created after the last dayend
+        // Filter sales to only include those for this branch and matching date/dayend criteria
         const validSales = salesData.filter(sale => {
           if (!sale) return false;
           
-          // Try multiple date fields
+          // Check branch_id matches
+          const saleBranchId = String(sale.branch_id || '').trim();
+          const currentBranchIdStr = String(branchId).trim();
+          if (saleBranchId && saleBranchId !== currentBranchIdStr) {
+            return false;
+          }
+          
+          // Check date matches today or is after dayend
           const saleDate = sale.date || sale.created_at || sale.order_date || sale.bill_date || sale.bill_created_at || sale.created_date;
           if (!saleDate) {
-            console.warn(`⚠️ Sale/bill missing date field, excluding:`, sale);
+            console.warn(`⚠️ Sale missing date field, excluding:`, sale);
             return false;
           }
           
@@ -459,14 +459,16 @@ export default function SuperAdminDashboardPage() {
         
         console.log(`📊 Branch ${branchName} - ${validSales.length} valid sales after filtering`);
         
-        // Sum up total sales after dayend - try multiple amount fields
+        // Sum up total sales after dayend
+        // New API response structure has: total, total_amount, net_total, grand_total, amount, cash_sales
         dailySales = validSales.reduce((sum, sale) => {
-          // Try multiple field names for the total amount
-          const total = sale.grand_total || 
-                       sale.net_total || 
+          // Use cash_sales if available (actual cash received), otherwise use total/net_total/grand_total
+          const total = sale.cash_sales || 
                        sale.total || 
-                       sale.amount || 
                        sale.total_amount ||
+                       sale.net_total || 
+                       sale.grand_total || 
+                       sale.amount || 
                        sale.total_sales ||
                        sale.bill_amount ||
                        sale.paid_amount ||
