@@ -29,6 +29,7 @@ export default function SuperAdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
   const [branchStatsLoading, setBranchStatsLoading] = useState(false);
+  const [branchStatsError, setBranchStatsError] = useState(null);
 
   // Check authentication first
   useEffect(() => {
@@ -70,6 +71,7 @@ export default function SuperAdminDashboardPage() {
       fetchDashboardStats();
       fetchBranchStatistics();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranchId, authChecked, branches.length]);
 
   // Auto-refresh branch statistics periodically and when page becomes visible
@@ -228,11 +230,18 @@ export default function SuperAdminDashboardPage() {
    */
   const fetchBranchStatistics = async () => {
     setBranchStatsLoading(true);
+    setBranchStatsError(null);
     try {
+      if (branches.length === 0) {
+        console.warn('No branches available to fetch statistics');
+        setBranchStats([]);
+        return;
+      }
+      
       const terminal = getTerminal();
       const today = getTodayDate(); // Always get current date - ensures reset at day end
       
-      console.log('Fetching branch statistics for today:', today);
+      console.log('Fetching branch statistics for today:', today, 'Branches:', branches.length);
       
       // Always use individual API calls for accurate daily sales calculation
       // This ensures we get the correct daily sales from the sales API
@@ -244,6 +253,7 @@ export default function SuperAdminDashboardPage() {
       console.log('✅ Branch statistics loaded via individual calls:', stats.length);
     } catch (error) {
       console.error('Error fetching branch statistics:', error);
+      setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection.');
       setBranchStats([]);
     } finally {
       setBranchStatsLoading(false);
@@ -285,8 +295,15 @@ export default function SuperAdminDashboardPage() {
       };
       
       console.log(`📊 Fetching sales for branch ${branchName} (${branchId}):`, salesParams);
-      const salesResult = await apiPost('/api/get_sales.php', salesParams);
-      console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
+      let salesResult;
+      try {
+        salesResult = await apiPost('/api/get_sales.php', salesParams);
+        console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
+      } catch (salesError) {
+        console.error(`❌ Error fetching sales for branch ${branchName}:`, salesError);
+        // If sales API fails, continue with 0 sales but log the error
+        salesResult = { success: false, data: [] };
+      }
       
       // Calculate daily sales from sales data - only count sales after dayend
       let dailySales = 0;
@@ -437,8 +454,14 @@ export default function SuperAdminDashboardPage() {
       };
       
       console.log(`📊 Fetching dashboard stats for branch ${branchName} (${branchId}):`, dashboardStatsParams);
-      const dashboardStatsResult = await apiPost('/get_dashboard_stats.php', dashboardStatsParams);
-      console.log(`📊 Dashboard stats response for branch ${branchName}:`, dashboardStatsResult);
+      let dashboardStatsResult;
+      try {
+        dashboardStatsResult = await apiPost('/get_dashboard_stats.php', dashboardStatsParams);
+        console.log(`📊 Dashboard stats response for branch ${branchName}:`, dashboardStatsResult);
+      } catch (statsError) {
+        console.error(`❌ Error fetching dashboard stats for branch ${branchName}:`, statsError);
+        dashboardStatsResult = { success: false, data: {} };
+      }
       
       // Always fetch and validate bills directly to ensure accurate count after dayend
       // Don't rely solely on dashboard stats - validate with actual bills data
@@ -455,7 +478,13 @@ export default function SuperAdminDashboardPage() {
         };
         
         console.log(`📊 Fetching bills for complete count - branch ${branchName} (${branchId}):`, billsParams);
-        const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+        let billsResult;
+        try {
+          billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+        } catch (billsError) {
+          console.error(`❌ Error fetching bills for branch ${branchName}:`, billsError);
+          billsResult = { success: false, data: [] };
+        }
         
         if (billsResult.success && billsResult.data) {
           let billsData = [];
@@ -578,7 +607,12 @@ export default function SuperAdminDashboardPage() {
         ordersResult = await apiPost('api/order_management.php', ordersParams);
       } catch (postError) {
         console.warn(`⚠️ POST failed for orders, trying GET:`, postError);
-        ordersResult = await apiGet('api/order_management.php', ordersParams);
+        try {
+          ordersResult = await apiGet('api/order_management.php', ordersParams);
+        } catch (getError) {
+          console.error(`❌ Both POST and GET failed for orders for branch ${branchName}:`, getError);
+          ordersResult = { success: false, data: [] };
+        }
       }
       
       let ordersData = [];
@@ -969,9 +1003,31 @@ export default function SuperAdminDashboardPage() {
             </button>
           </div>
           {branchStatsLoading && branchStats.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">Loading branch statistics...</p>
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-[#FF5F15] border-t-transparent mb-2"></div>
+              <p className="text-gray-500">Loading branch statistics...</p>
+            </div>
+          ) : branchStatsError ? (
+            <div className="text-center py-8">
+              <p className="text-red-600 font-medium mb-2">Error loading branch statistics</p>
+              <p className="text-gray-500 text-sm">{branchStatsError}</p>
+              <button
+                onClick={fetchBranchStatistics}
+                className="mt-4 px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
+              >
+                Retry
+              </button>
+            </div>
           ) : branchStats.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No branch statistics available</p>
+            <div className="text-center py-8">
+              <p className="text-gray-500 mb-2">No branch statistics available</p>
+              <button
+                onClick={fetchBranchStatistics}
+                className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
+              >
+                Refresh
+              </button>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
