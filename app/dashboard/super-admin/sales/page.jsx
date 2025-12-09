@@ -192,15 +192,6 @@ export default function SalesListPage() {
         // Single branch selected
         const apiParams = { ...baseParams, branch_id: selectedBranchId };
         
-        // Note: Date range filtering is handled by API parameters
-        if (period === 'daily') {
-          const lastDayendTime = await fetchLastDayendForBranch(selectedBranchId);
-          if (lastDayendTime) {
-            apiParams.after_closing_date = lastDayendTime;
-            console.log('📅 Filtering daily sales after dayend for branch:', selectedBranchId, lastDayendTime);
-          }
-        }
-        
         console.log('Fetching sales data with params:', apiParams);
         result = await apiPost('api/get_sales.php', apiParams);
       } else {
@@ -1115,15 +1106,7 @@ export default function SalesListPage() {
             <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
             <p className="text-gray-500 text-lg font-medium">No sales data found</p>
             <p className="text-gray-400 text-sm mt-1">
-              {period === 'daily' 
-                ? 'No sales recorded for the selected date range' 
-                : period === 'weekly'
-                ? 'No weekly sales data available'
-                : period === 'monthly'
-                ? 'No monthly sales data available'
-                : period === 'custom'
-                ? 'No sales data found for the selected date range'
-                : 'No sales data available'}
+              No sales data found for the selected date range. Try selecting a different date range.
             </p>
           </div>
         ) : (
