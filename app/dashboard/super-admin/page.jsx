@@ -67,12 +67,21 @@ export default function SuperAdminDashboardPage() {
 
   // Refetch data when branch filter changes or branches are loaded
   useEffect(() => {
+    console.log('🔄 Dashboard useEffect triggered', { authChecked, branchesLength: branches.length, selectedBranchId });
     if (authChecked && branches.length > 0) {
+      console.log('✅ Conditions met, fetching dashboard stats and branch statistics');
       fetchDashboardStats();
       fetchBranchStatistics();
+    } else {
+      console.log('⏳ Waiting for conditions:', { authChecked, branchesLength: branches.length });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranchId, authChecked, branches.length]);
+
+  // Debug: Log when branchStats changes
+  useEffect(() => {
+    console.log('📊 branchStats state updated:', branchStats.length, 'branches', branchStats);
+  }, [branchStats]);
 
   // Auto-refresh branch statistics periodically and when page becomes visible
   // This ensures daily sales reset is reflected when date changes (day end)
@@ -229,28 +238,53 @@ export default function SuperAdminDashboardPage() {
    * If no dayend exists, shows only today's sales - resets at day end
    */
   const fetchBranchStatistics = async () => {
+    console.log('🔄 fetchBranchStatistics called', { branchesCount: branches.length, authChecked });
     setBranchStatsLoading(true);
     setBranchStatsError(null);
     try {
       if (branches.length === 0) {
-        console.warn('No branches available to fetch statistics');
+        console.warn('⚠️ No branches available to fetch statistics');
         setBranchStats([]);
+        setBranchStatsLoading(false);
         return;
       }
       
       const terminal = getTerminal();
       const today = getTodayDate(); // Always get current date - ensures reset at day end
       
-      console.log('Fetching branch statistics for today:', today, 'Branches:', branches.length);
+      console.log('📊 Fetching branch statistics for today:', today, 'Branches:', branches.length);
       
       // Always use individual API calls for accurate daily sales calculation
       // This ensures we get the correct daily sales from the sales API
+      // Use Promise.allSettled to ensure all branches are processed even if some fail
       const branchStatsPromises = branches.map(branch => 
-        fetchBranchStatsIndividual(branch, terminal, today)
+        fetchBranchStatsIndividual(branch, terminal, today).catch(error => {
+          console.error(`Error fetching stats for branch ${branch.branch_name || branch.branch_id}:`, error);
+          return {
+            branch_id: branch.branch_id || branch.id,
+            branch_name: branch.branch_name || branch.name || 'Unknown Branch',
+            daily_sales: 0,
+            running_orders: 0,
+            complete_bills: 0,
+            error: true,
+          };
+        })
       );
-      const stats = await Promise.all(branchStatsPromises);
+      const results = await Promise.allSettled(branchStatsPromises);
+      const stats = results.map(result => 
+        result.status === 'fulfilled' ? result.value : {
+          branch_id: 'unknown',
+          branch_name: 'Unknown Branch',
+          daily_sales: 0,
+          running_orders: 0,
+          complete_bills: 0,
+          error: true,
+        }
+      );
+      console.log('📊 Branch statistics results:', stats);
       setBranchStats(stats);
-      console.log('✅ Branch statistics loaded via individual calls:', stats.length);
+      console.log('✅ Branch statistics loaded via individual calls:', stats.length, 'branches');
+      console.log('📊 Sample stats:', stats.length > 0 ? stats[0] : 'No stats');
     } catch (error) {
       console.error('Error fetching branch statistics:', error);
       setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection.');
@@ -297,7 +331,7 @@ export default function SuperAdminDashboardPage() {
       console.log(`📊 Fetching sales for branch ${branchName} (${branchId}):`, salesParams);
       let salesResult;
       try {
-        salesResult = await apiPost('/api/get_sales.php', salesParams);
+        salesResult = await apiPost('api/get_sales.php', salesParams);
         console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
       } catch (salesError) {
         console.error(`❌ Error fetching sales for branch ${branchName}:`, salesError);
@@ -403,7 +437,7 @@ export default function SuperAdminDashboardPage() {
             after_closing_date: lastDayendTime || null,
           };
           
-          const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+          const billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
           if (billsResult.success && billsResult.data) {
             let billsData = [];
             if (Array.isArray(billsResult.data)) {
@@ -480,7 +514,7 @@ export default function SuperAdminDashboardPage() {
         console.log(`📊 Fetching bills for complete count - branch ${branchName} (${branchId}):`, billsParams);
         let billsResult;
         try {
-          billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+          billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
         } catch (billsError) {
           console.error(`❌ Error fetching bills for branch ${branchName}:`, billsError);
           billsResult = { success: false, data: [] };
