@@ -271,20 +271,58 @@ export default function SuperAdminDashboardPage() {
         })
       );
       const results = await Promise.allSettled(branchStatsPromises);
-      const stats = results.map(result => 
-        result.status === 'fulfilled' ? result.value : {
-          branch_id: 'unknown',
-          branch_name: 'Unknown Branch',
-          daily_sales: 0,
-          running_orders: 0,
-          complete_bills: 0,
-          error: true,
+      const stats = results.map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        } else {
+          // If promise was rejected, use the branch info to create a default entry
+          const branch = branches[index];
+          console.error(`❌ Promise rejected for branch ${branch?.branch_name || index}:`, result.reason);
+          return {
+            branch_id: branch?.branch_id || branch?.id || 'unknown',
+            branch_name: branch?.branch_name || branch?.name || 'Unknown Branch',
+            daily_sales: 0,
+            running_orders: 0,
+            complete_bills: 0,
+            error: true,
+          };
         }
-      );
-      console.log('📊 Branch statistics results:', stats);
-      setBranchStats(stats);
-      console.log('✅ Branch statistics loaded via individual calls:', stats.length, 'branches');
-      console.log('📊 Sample stats:', stats.length > 0 ? stats[0] : 'No stats');
+      });
+      
+      // Filter out any null/undefined entries and ensure we have data for all branches
+      let validStats = stats.filter(stat => stat && stat.branch_id);
+      
+      // If we have fewer stats than branches, add missing branches with zero values
+      if (validStats.length < branches.length) {
+        console.warn(`⚠️ Only ${validStats.length} branches returned stats out of ${branches.length} branches`);
+        const existingBranchIds = new Set(validStats.map(s => String(s.branch_id)));
+        branches.forEach(branch => {
+          const branchId = String(branch.branch_id || branch.id);
+          if (!existingBranchIds.has(branchId)) {
+            validStats.push({
+              branch_id: branch.branch_id || branch.id,
+              branch_name: branch.branch_name || branch.name || 'Unknown Branch',
+              daily_sales: 0,
+              running_orders: 0,
+              complete_bills: 0,
+              error: true,
+            });
+          }
+        });
+      }
+      
+      console.log('📊 Branch statistics results:', validStats);
+      console.log('📊 Total branches processed:', validStats.length, 'out of', branches.length);
+      if (validStats.length > 0) {
+        console.log('📊 Sample stats entry:', validStats[0]);
+        console.log('📊 All branch IDs:', validStats.map(s => s.branch_id));
+        console.log('📊 All branch names:', validStats.map(s => s.branch_name));
+      } else {
+        console.error('❌ No valid stats returned! Stats array:', stats);
+      }
+      
+      setBranchStats(validStats);
+      console.log('✅ Branch statistics loaded via individual calls:', validStats.length, 'branches');
     } catch (error) {
       console.error('Error fetching branch statistics:', error);
       setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection.');
@@ -1068,6 +1106,7 @@ export default function SuperAdminDashboardPage() {
           ) : branchStats.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-gray-500 mb-2">No branch statistics available</p>
+              <p className="text-gray-400 text-sm mb-4">Branches loaded: {branches.length}</p>
               <button
                 onClick={fetchBranchStatistics}
                 className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
