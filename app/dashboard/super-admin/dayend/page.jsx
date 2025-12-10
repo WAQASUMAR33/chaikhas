@@ -480,8 +480,8 @@ export default function DayEndPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-4">
                 <div className="text-sm text-gray-600">
-                  Total Orders: <span className="font-semibold">{dayendOrders.length}</span>
-                </div>
+                Total Orders: <span className="font-semibold">{dayendOrders.length}</span>
+              </div>
                 <Button
                   variant="outline"
                   size="sm"
