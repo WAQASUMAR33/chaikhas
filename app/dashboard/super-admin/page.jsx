@@ -68,12 +68,16 @@ export default function SuperAdminDashboardPage() {
   // Refetch data when branch filter changes or branches are loaded
   useEffect(() => {
     console.log('🔄 Dashboard useEffect triggered', { authChecked, branchesLength: branches.length, selectedBranchId });
-    if (authChecked && branches.length > 0) {
-      console.log('✅ Conditions met, fetching dashboard stats and branch statistics');
+    if (authChecked) {
+      if (branches.length > 0) {
+        console.log('✅ Conditions met, fetching dashboard stats and branch statistics');
       fetchDashboardStats();
       fetchBranchStatistics();
+      } else {
+        console.log('⏳ Waiting for branches to load...');
+    }
     } else {
-      console.log('⏳ Waiting for conditions:', { authChecked, branchesLength: branches.length });
+      console.log('⏳ Waiting for auth check...');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranchId, authChecked, branches.length]);
@@ -120,28 +124,61 @@ export default function SuperAdminDashboardPage() {
       console.log('Fetching dashboard stats for branch:', branchId);
       
       // Always use get_sales.php API
-      const salesResult = await apiPost('api/get_sales.php', { branch_id: branchId });
-      
-      console.log('Sales API response:', salesResult);
+      console.log('📡 Calling get_sales.php with params:', { branch_id: branchId });
+      let salesResult;
+      try {
+        salesResult = await apiPost('api/get_sales.php', { branch_id: branchId });
+        console.log('✅ Sales API response:', salesResult);
+      } catch (error) {
+        console.error('❌ Error calling get_sales.php:', error);
+        salesResult = { success: false, data: [], error: error.message };
+      }
       
       // Transform get_sales.php response to dashboard stats format
       let result;
-      if (salesResult.success && salesResult.data && Array.isArray(salesResult.data)) {
-        const salesData = salesResult.data;
-        const totalSales = salesData.reduce((sum, sale) => sum + (parseFloat(sale.cash_sales || sale.total || sale.total_amount || sale.net_total || sale.grand_total || sale.amount || 0)), 0);
-        const totalOrders = salesData.reduce((sum, sale) => sum + (parseInt(sale.total_orders || 0)), 0);
+      if (salesResult.success && salesResult.data) {
+        let salesData = [];
         
-        result = {
-          success: true,
-          data: {
-            totalOrders: totalOrders,
-            totalSales: totalSales,
-            totalMenuItems: stats.totalMenuItems || 0,
-            totalCategories: stats.totalCategories || 0,
-            totalBranches: branches.length || 0,
-          }
-        };
+        // Handle different response structures
+        if (Array.isArray(salesResult.data)) {
+          salesData = salesResult.data;
+        } else if (salesResult.data.data && Array.isArray(salesResult.data.data)) {
+          salesData = salesResult.data.data;
+        }
+        
+        console.log('📊 Sales data array length:', salesData.length);
+        
+        if (salesData.length > 0) {
+          const totalSales = salesData.reduce((sum, sale) => sum + (parseFloat(sale.cash_sales || sale.total || sale.total_amount || sale.net_total || sale.grand_total || sale.amount || 0)), 0);
+          const totalOrders = salesData.reduce((sum, sale) => sum + (parseInt(sale.total_orders || 0)), 0);
+          
+          console.log('📊 Calculated totals:', { totalSales, totalOrders });
+          
+          result = {
+            success: true,
+            data: {
+              totalOrders: totalOrders,
+              totalSales: totalSales,
+              totalMenuItems: stats.totalMenuItems || 0,
+              totalCategories: stats.totalCategories || 0,
+              totalBranches: branches.length || 0,
+            }
+          };
+        } else {
+          console.warn('⚠️ No sales data found in response');
+          result = {
+            success: true,
+            data: {
+              totalOrders: 0,
+              totalSales: 0,
+              totalMenuItems: stats.totalMenuItems || 0,
+              totalCategories: stats.totalCategories || 0,
+              totalBranches: branches.length || 0,
+            }
+          };
+        }
       } else {
+        console.warn('⚠️ Sales API returned error or no data:', salesResult);
         // Fallback: return zero values
         result = {
           success: true,
@@ -158,26 +195,14 @@ export default function SuperAdminDashboardPage() {
       console.log('Dashboard stats result:', result);
       
       if (result.success && result.data) {
-        // Handle different response structures
-        let statsData = {};
-        
-        // Check if data is nested
-        if (result.data.success && result.data.data) {
-          statsData = {
-            totalOrders: result.data.data.totalOrders || result.data.data.total_orders || 0,
-            totalSales: result.data.data.totalSales || result.data.data.total_sales || 0,
-            totalMenuItems: result.data.data.totalMenuItems || result.data.data.total_menu_items || 0,
-            totalCategories: result.data.data.totalCategories || result.data.data.total_categories || 0,
-          };
-        } else {
-          // Direct data structure
-          statsData = {
-            totalOrders: result.data.totalOrders || result.data.total_orders || 0,
-            totalSales: result.data.totalSales || result.data.total_sales || 0,
-            totalMenuItems: result.data.totalMenuItems || result.data.total_menu_items || 0,
-            totalCategories: result.data.totalCategories || result.data.total_categories || 0,
-          };
-        }
+        // Use the data we already transformed
+        const statsData = {
+          totalOrders: result.data.totalOrders || 0,
+          totalSales: result.data.totalSales || 0,
+          totalMenuItems: result.data.totalMenuItems || stats.totalMenuItems || 0,
+          totalCategories: result.data.totalCategories || stats.totalCategories || 0,
+          totalBranches: result.data.totalBranches || branches.length || 0,
+        };
         
         setStats(prev => ({
           ...prev,
@@ -354,7 +379,7 @@ export default function SuperAdminDashboardPage() {
       let salesResult;
       try {
         salesResult = await apiPost('api/get_sales.php', salesParams);
-        console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
+      console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
       } catch (salesError) {
         console.error(`❌ Error fetching sales for branch ${branchName}:`, salesError);
         salesResult = { success: false, data: [] };
@@ -385,8 +410,8 @@ export default function SuperAdminDashboardPage() {
         // Sum up total orders
         totalOrders = branchSales.reduce((sum, sale) => {
           return sum + (parseInt(sale.total_orders || 0));
-        }, 0);
-        
+            }, 0);
+            
         console.log(`📊 Branch ${branchName} - Daily sales: ${dailySales}, Total orders: ${totalOrders}`);
       }
       
@@ -395,33 +420,33 @@ export default function SuperAdminDashboardPage() {
       let runningOrders = [];
       
       try {
-        let ordersResult;
-        try {
-          ordersResult = await apiPost('api/order_management.php', ordersParams);
-        } catch (postError) {
-          ordersResult = await apiGet('api/order_management.php', ordersParams);
-        }
-        
-        let ordersData = [];
-        if (ordersResult.data && Array.isArray(ordersResult.data)) {
-          ordersData = ordersResult.data;
+      let ordersResult;
+      try {
+        ordersResult = await apiPost('api/order_management.php', ordersParams);
+      } catch (postError) {
+        ordersResult = await apiGet('api/order_management.php', ordersParams);
+      }
+      
+      let ordersData = [];
+      if (ordersResult.data && Array.isArray(ordersResult.data)) {
+        ordersData = ordersResult.data;
         } else if (ordersResult.data?.data && Array.isArray(ordersResult.data.data)) {
-          ordersData = ordersResult.data.data;
+        ordersData = ordersResult.data.data;
         } else if (ordersResult.data?.orders && Array.isArray(ordersResult.data.orders)) {
-          ordersData = ordersResult.data.orders;
-        }
-        
+        ordersData = ordersResult.data.orders;
+      }
+      
         // Filter running orders (active orders)
         runningOrders = ordersData.filter(order => {
-          if (!order) return false;
+        if (!order) return false;
           const orderBranchId = String(order.branch_id || order.branchId || '').trim();
           const currentBranchIdStr = String(branchId).trim();
           if (orderBranchId && orderBranchId !== currentBranchIdStr) return false;
-          
-          const status = (order.status || order.order_status || '').toLowerCase().trim();
-          return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
-        });
         
+        const status = (order.status || order.order_status || '').toLowerCase().trim();
+        return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
+      });
+      
         console.log(`📊 Branch ${branchName} - Running orders: ${runningOrders.length}`);
       } catch (ordersError) {
         console.error(`❌ Error fetching orders for branch ${branchName}:`, ordersError);
