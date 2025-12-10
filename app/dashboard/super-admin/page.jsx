@@ -129,7 +129,7 @@ export default function SuperAdminDashboardPage() {
       try {
         salesResult = await apiPost('api/get_sales.php', { branch_id: branchId });
         console.log('✅ Sales API response:', salesResult);
-      } catch (error) {
+    } catch (error) {
         console.error('❌ Error calling get_sales.php:', error);
         salesResult = { success: false, data: [], error: error.message };
       }
@@ -164,7 +164,7 @@ export default function SuperAdminDashboardPage() {
               totalBranches: branches.length || 0,
             }
           };
-        } else {
+          } else {
           console.warn('⚠️ No sales data found in response');
           result = {
             success: true,
@@ -177,7 +177,7 @@ export default function SuperAdminDashboardPage() {
             }
           };
         }
-      } else {
+              } else {
         console.warn('⚠️ Sales API returned error or no data:', salesResult);
         // Fallback: return zero values
         result = {
@@ -210,7 +210,7 @@ export default function SuperAdminDashboardPage() {
         }));
         
         console.log('✅ Dashboard stats loaded:', statsData);
-      } else {
+            } else {
         console.warn('⚠️ Dashboard stats API returned no data or error:', result);
       }
     } catch (error) {
@@ -221,259 +221,109 @@ export default function SuperAdminDashboardPage() {
   };
 
   /**
-   * Get today's date in YYYY-MM-DD format
-   * Ensures daily sales reset at day end by always using current date
-   */
-  const getTodayDate = () => {
-    const now = new Date();
-    // Use local date to match server timezone if needed, or UTC
-    // Format: YYYY-MM-DD
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-
-  /**
-   * Fetch branch statistics (daily sales, running orders, complete bills) for each branch
-   * Uses the new consolidated endpoint api/get_branch_daily_stats.php if available
-   * Falls back to individual API calls if the consolidated endpoint is not available
-   * Daily sales are filtered to only show orders/sales created after the last dayend closing_date_time
-   * If no dayend exists, shows only today's sales - resets at day end
+   * Fetch branch statistics from get_branch_statistics.php API
+   * API: api/get_branch_statistics.php (GET)
+   * Expected Response: { status: "success", data: [{ branch_id, branch_name, total_complete_orders, total_running_orders, total_completed_sales }] }
+   * Also handles nested structure: { success: true, data: { status: "success", data: [...] } }
    */
   const fetchBranchStatistics = async () => {
-    console.log('🔄 fetchBranchStatistics called', { branchesCount: branches.length, authChecked });
+    console.log('🔄 fetchBranchStatistics called');
     setBranchStatsLoading(true);
     setBranchStatsError(null);
+    
     try {
-      if (branches.length === 0) {
-        console.warn('⚠️ No branches available to fetch statistics');
+      console.log('📡 Calling get_branch_statistics.php (GET)');
+      
+      // Call the API using GET method
+      const result = await apiGet('api/get_branch_statistics.php');
+      
+      console.log('✅ Branch statistics API response:', result);
+      console.log('Full response:', JSON.stringify(result, null, 2));
+      
+      // Validate response structure
+      if (!result) {
+        throw new Error('No response from API');
+      }
+      
+      // Handle response structure: { status: "success", data: [...] }
+      // Also handle nested structure: { success: true, data: { status: "success", data: [...] } }
+      let branchStatsData = [];
+      
+      // Priority 1: Check for nested structure: { success: true, data: { status: "success", data: [...] } }
+      // This is what the API wrapper returns
+      if (result.success === true && result.data && result.data.status === 'success' && Array.isArray(result.data.data)) {
+        branchStatsData = result.data.data;
+        console.log('✅ Found branch statistics in nested structure (result.data.data):', branchStatsData.length, 'branches');
+      }
+      // Priority 2: Check for direct structure: { status: "success", data: [...] }
+      else if (result.status === 'success' && Array.isArray(result.data)) {
+        branchStatsData = result.data;
+        console.log('✅ Found branch statistics in direct structure (result.data):', branchStatsData.length, 'branches');
+      }
+      // Priority 3: Check if result.data is directly an array (fallback)
+      else if (Array.isArray(result.data)) {
+        branchStatsData = result.data;
+        console.log('✅ Found branch statistics as direct array (result.data):', branchStatsData.length, 'branches');
+      }
+      else {
+        console.warn('⚠️ Unexpected API response structure:', result);
+        console.warn('Received structure:', {
+          hasStatus: !!result.status,
+          status: result.status,
+          hasSuccess: !!result.success,
+          success: result.success,
+          hasData: !!result.data,
+          dataType: typeof result.data,
+          dataIsArray: Array.isArray(result.data),
+          dataHasStatus: result.data && result.data.status,
+          dataStatus: result.data && result.data.status,
+          dataDataIsArray: result.data && result.data.data && Array.isArray(result.data.data)
+        });
+        throw new Error(`Unexpected response format. Expected { status: "success", data: [...] }, but got: ${JSON.stringify(result)}`);
+      }
+      
+      if (branchStatsData.length === 0) {
+        console.warn('⚠️ No branch statistics data found in response');
         setBranchStats([]);
+        setBranchStatsError('No data returned from API');
         setBranchStatsLoading(false);
         return;
       }
       
-      // Immediately show branches with loading state
-      const loadingStats = branches.map(branch => ({
-        branch_id: branch.branch_id || branch.id,
-        branch_name: branch.branch_name || branch.name || 'Unknown Branch',
-        daily_sales: 0,
-        running_orders: 0,
-        complete_bills: 0,
-        loading: true,
-      }));
-      setBranchStats(loadingStats);
-      console.log('📊 Set loading state for', loadingStats.length, 'branches');
-      
-      const terminal = getTerminal();
-      const today = getTodayDate(); // Always get current date - ensures reset at day end
-      
-      console.log('📊 Fetching branch statistics for today:', today, 'Branches:', branches.length);
-      
-      // Always use individual API calls for accurate daily sales calculation
-      // This ensures we get the correct daily sales from the sales API
-      // Use Promise.allSettled to ensure all branches are processed even if some fail
-      const branchStatsPromises = branches.map(branch => 
-        fetchBranchStatsIndividual(branch, terminal, today).catch(error => {
-          console.error(`Error fetching stats for branch ${branch.branch_name || branch.branch_id}:`, error);
-          return {
-            branch_id: branch.branch_id || branch.id,
-            branch_name: branch.branch_name || branch.name || 'Unknown Branch',
-            daily_sales: 0,
-            running_orders: 0,
-            complete_bills: 0,
-            error: true,
-          };
-        })
-      );
-      const results = await Promise.allSettled(branchStatsPromises);
-      const stats = results.map((result, index) => {
-        if (result.status === 'fulfilled') {
-          return result.value;
-        } else {
-          // If promise was rejected, use the branch info to create a default entry
-          const branch = branches[index];
-          console.error(`❌ Promise rejected for branch ${branch?.branch_name || index}:`, result.reason);
-          return {
-            branch_id: branch?.branch_id || branch?.id || 'unknown',
-            branch_name: branch?.branch_name || branch?.name || 'Unknown Branch',
-            daily_sales: 0,
-            running_orders: 0,
-            complete_bills: 0,
-            error: true,
-          };
-        }
+      // Map API response to display format
+      // API fields: branch_id, branch_name, total_complete_orders, total_running_orders, total_completed_sales
+      const mappedStats = branchStatsData.map((item) => {
+        const mapped = {
+          branch_id: item.branch_id || item.id || 'unknown',
+          branch_name: item.branch_name || item.name || 'Unknown Branch',
+          daily_sales: parseFloat(item.total_completed_sales || 0),
+          running_orders: parseInt(item.total_running_orders || 0),
+          complete_bills: parseInt(item.total_complete_orders || 0),
+        };
+        console.log('📊 Mapped item:', item, '→', mapped);
+        return mapped;
       });
       
-      // Filter out any null/undefined entries and ensure we have data for all branches
-      let validStats = stats.filter(stat => stat && stat.branch_id);
+      console.log('📊 All mapped branch statistics:', mappedStats);
       
-      // If we have fewer stats than branches, add missing branches with zero values
-      if (validStats.length < branches.length) {
-        console.warn(`⚠️ Only ${validStats.length} branches returned stats out of ${branches.length} branches`);
-        const existingBranchIds = new Set(validStats.map(s => String(s.branch_id)));
-        branches.forEach(branch => {
-          const branchId = String(branch.branch_id || branch.id);
-          if (!existingBranchIds.has(branchId)) {
-            validStats.push({
-              branch_id: branch.branch_id || branch.id,
-              branch_name: branch.branch_name || branch.name || 'Unknown Branch',
-              daily_sales: 0,
-              running_orders: 0,
-              complete_bills: 0,
-              error: true,
-            });
-          }
-        });
-      }
+      setBranchStats(mappedStats);
+      setBranchStatsError(null);
+      console.log('✅ Branch statistics loaded successfully:', mappedStats.length, 'branches');
       
-      console.log('📊 Branch statistics results:', validStats);
-      console.log('📊 Total branches processed:', validStats.length, 'out of', branches.length);
-      if (validStats.length > 0) {
-        console.log('📊 Sample stats entry:', validStats[0]);
-        console.log('📊 All branch IDs:', validStats.map(s => s.branch_id));
-        console.log('📊 All branch names:', validStats.map(s => s.branch_name));
-      } else {
-        console.error('❌ No valid stats returned! Stats array:', stats);
-      }
-      
-      setBranchStats(validStats);
-      console.log('✅ Branch statistics loaded via individual calls:', validStats.length, 'branches');
     } catch (error) {
       console.error('❌ Error fetching branch statistics:', error);
-      setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection.');
-      
-      // Even on error, show branches with zero values so table is visible
-      const fallbackStats = branches.map(branch => ({
-        branch_id: branch.branch_id || branch.id,
-        branch_name: branch.branch_name || branch.name || 'Unknown Branch',
-        daily_sales: 0,
-        running_orders: 0,
-        complete_bills: 0,
-        error: true,
-      }));
-      console.log('📊 Using fallback stats due to error:', fallbackStats.length, 'branches');
-      setBranchStats(fallbackStats);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      setBranchStatsError(error.message || 'Failed to load branch statistics. Please check your connection and try again.');
+      setBranchStats([]);
     } finally {
       setBranchStatsLoading(false);
     }
   };
 
-  /**
-   * Fetch branch statistics using get_sales.php API
-   * Simplified version without dayend or date filtering
-   */
-  const fetchBranchStatsIndividual = async (branch, terminal, today) => {
-    const branchId = branch.branch_id || branch.id;
-    const branchName = branch.branch_name || branch.name || 'Unknown Branch';
-    
-    try {
-      
-      // Fetch sales data for this branch using get_sales.php
-      const salesParams = {
-        branch_id: branchId
-      };
-      
-      console.log(`📊 Fetching sales for branch ${branchName} (${branchId}):`, salesParams);
-      let salesResult;
-      try {
-        salesResult = await apiPost('api/get_sales.php', salesParams);
-      console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
-      } catch (salesError) {
-        console.error(`❌ Error fetching sales for branch ${branchName}:`, salesError);
-        salesResult = { success: false, data: [] };
-      }
-      
-      // Calculate daily sales from sales data
-      // API response: { success: true, data: [{ total, total_amount, net_total, grand_total, amount, cash_sales, total_orders, ... }], count, message }
-      let dailySales = 0;
-      let totalOrders = 0;
-      
-      if (salesResult.success && salesResult.data && Array.isArray(salesResult.data)) {
-        const salesData = salesResult.data;
-        
-        // Filter by branch_id if needed (API should already filter, but double-check)
-        const branchSales = salesData.filter(sale => {
-          if (!sale) return false;
-          const saleBranchId = String(sale.branch_id || '').trim();
-          const currentBranchIdStr = String(branchId).trim();
-          return !saleBranchId || saleBranchId === currentBranchIdStr;
-        });
-        
-        // Sum up total sales
-        dailySales = branchSales.reduce((sum, sale) => {
-          const total = sale.cash_sales || sale.total || sale.total_amount || sale.net_total || sale.grand_total || sale.amount || 0;
-          return sum + (parseFloat(total) || 0);
-        }, 0);
-        
-        // Sum up total orders
-        totalOrders = branchSales.reduce((sum, sale) => {
-          return sum + (parseInt(sale.total_orders || 0));
-            }, 0);
-            
-        console.log(`📊 Branch ${branchName} - Daily sales: ${dailySales}, Total orders: ${totalOrders}`);
-      }
-      
-      // Fetch running orders (active orders)
-      const ordersParams = { branch_id: branchId };
-      let runningOrders = [];
-      
-      try {
-      let ordersResult;
-      try {
-        ordersResult = await apiPost('api/order_management.php', ordersParams);
-      } catch (postError) {
-        ordersResult = await apiGet('api/order_management.php', ordersParams);
-      }
-      
-      let ordersData = [];
-      if (ordersResult.data && Array.isArray(ordersResult.data)) {
-        ordersData = ordersResult.data;
-        } else if (ordersResult.data?.data && Array.isArray(ordersResult.data.data)) {
-        ordersData = ordersResult.data.data;
-        } else if (ordersResult.data?.orders && Array.isArray(ordersResult.data.orders)) {
-        ordersData = ordersResult.data.orders;
-      }
-      
-        // Filter running orders (active orders)
-        runningOrders = ordersData.filter(order => {
-        if (!order) return false;
-          const orderBranchId = String(order.branch_id || order.branchId || '').trim();
-          const currentBranchIdStr = String(branchId).trim();
-          if (orderBranchId && orderBranchId !== currentBranchIdStr) return false;
-        
-        const status = (order.status || order.order_status || '').toLowerCase().trim();
-        return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
-      });
-      
-        console.log(`📊 Branch ${branchName} - Running orders: ${runningOrders.length}`);
-      } catch (ordersError) {
-        console.error(`❌ Error fetching orders for branch ${branchName}:`, ordersError);
-      }
-      
-      // Use total_orders from sales API as complete bills count
-      const completeBillsCount = totalOrders || 0;
-      
-      return {
-        branch_id: branchId,
-        branch_name: branchName,
-        daily_sales: dailySales,
-        running_orders: runningOrders.length,
-        complete_bills: completeBillsCount,
-      };
-    } catch (error) {
-      console.error(`Error fetching stats for branch ${branchName}:`, error);
-      return {
-        branch_id: branchId,
-        branch_name: branchName,
-        daily_sales: 0,
-        running_orders: 0,
-        complete_bills: 0,
-        error: true,
-      };
-    }
-  };
 
   /**
    * Fetch branches list for filter dropdown
