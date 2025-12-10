@@ -109,36 +109,53 @@ export default function SuperAdminDashboardPage() {
 
   /**
    * Fetch dashboard statistics from API
-   * Supports branch filtering for super admin
-   * Now includes date and dayend filtering for accurate daily orders and sales
+   * Uses get_sales.php for all branch selections
    */
   const fetchDashboardStats = async () => {
     setLoading(true);
     try {
-      const terminal = getTerminal();
-      const today = getTodayDate();
       // Use branch_id format: "0" for all branches, or specific branch_id
-      const params = { 
-        terminal, 
-        date: today,
-        branch_id: selectedBranchId && selectedBranchId !== 'all' ? selectedBranchId : '0'
-      };
+      const branchId = selectedBranchId && selectedBranchId !== 'all' ? selectedBranchId : '0';
       
-      // Add dayend filter if specific branch is selected
-      if (selectedBranchId && selectedBranchId !== 'all') {
-        // Get dayend for the selected branch to ensure accurate daily stats
-        const lastDayendTime = await fetchLastDayendForBranch(selectedBranchId);
-        if (lastDayendTime) {
-          params.after_closing_date = lastDayendTime;
-        }
+      console.log('Fetching dashboard stats for branch:', branchId);
+      
+      // Always use get_sales.php API
+      const salesResult = await apiPost('api/get_sales.php', { branch_id: branchId });
+      
+      console.log('Sales API response:', salesResult);
+      
+      // Transform get_sales.php response to dashboard stats format
+      let result;
+      if (salesResult.success && salesResult.data && Array.isArray(salesResult.data)) {
+        const salesData = salesResult.data;
+        const totalSales = salesData.reduce((sum, sale) => sum + (parseFloat(sale.cash_sales || sale.total || sale.total_amount || sale.net_total || sale.grand_total || sale.amount || 0)), 0);
+        const totalOrders = salesData.reduce((sum, sale) => sum + (parseInt(sale.total_orders || 0)), 0);
+        
+        result = {
+          success: true,
+          data: {
+            totalOrders: totalOrders,
+            totalSales: totalSales,
+            totalMenuItems: stats.totalMenuItems || 0,
+            totalCategories: stats.totalCategories || 0,
+            totalBranches: branches.length || 0,
+          }
+        };
+      } else {
+        // Fallback: return zero values
+        result = {
+          success: true,
+          data: {
+            totalOrders: 0,
+            totalSales: 0,
+            totalMenuItems: stats.totalMenuItems || 0,
+            totalCategories: stats.totalCategories || 0,
+            totalBranches: branches.length || 0,
+          }
+        };
       }
       
-      console.log('Fetching dashboard stats with params:', params);
-      
-      // Use POST instead of GET for better compatibility
-      const result = await apiPost('/get_dashboard_stats.php', params);
-      
-      console.log('Dashboard stats API response:', result);
+      console.log('Dashboard stats result:', result);
       
       if (result.success && result.data) {
         // Handle different response structures
@@ -192,46 +209,6 @@ export default function SuperAdminDashboardPage() {
     return `${year}-${month}-${day}`;
   };
 
-  /**
-   * Fetch the last dayend closing_date_time for a branch
-   * Returns the closing_date_time if dayend exists, null otherwise
-   */
-  const fetchLastDayendForBranch = async (branchId) => {
-    try {
-      const terminal = getTerminal();
-      const result = await apiPost('api/get_dayend.php', {
-        terminal,
-        branch_id: branchId,
-      });
-
-      if (result.success && result.data) {
-        let dayendData = [];
-        if (Array.isArray(result.data)) {
-          dayendData = result.data;
-        } else if (result.data.data && Array.isArray(result.data.data)) {
-          dayendData = result.data.data;
-        }
-
-        if (dayendData.length > 0) {
-          // Sort by closing_date_time descending and get the most recent
-          const sortedDayends = [...dayendData].sort((a, b) => {
-            const dateA = new Date(a.closing_date_time || a.created_at || 0);
-            const dateB = new Date(b.closing_date_time || b.created_at || 0);
-            return dateB - dateA;
-          });
-
-          const lastDayend = sortedDayends[0];
-          if (lastDayend && lastDayend.closing_date_time) {
-            return lastDayend.closing_date_time;
-          }
-        }
-      }
-      return null; // No dayend found
-    } catch (error) {
-      console.error(`Error fetching dayend for branch ${branchId}:`, error);
-      return null;
-    }
-  };
 
   /**
    * Fetch branch statistics (daily sales, running orders, complete bills) for each branch
@@ -359,33 +336,18 @@ export default function SuperAdminDashboardPage() {
   };
 
   /**
-   * Fallback function to fetch branch statistics using individual API calls
-   * Used when the consolidated endpoint is not available
-   * Filters sales to only show orders/sales created after the last dayend closing_date_time
-   * If no dayend exists, shows only today's sales
+   * Fetch branch statistics using get_sales.php API
+   * Simplified version without dayend or date filtering
    */
   const fetchBranchStatsIndividual = async (branch, terminal, today) => {
     const branchId = branch.branch_id || branch.id;
     const branchName = branch.branch_name || branch.name || 'Unknown Branch';
     
     try {
-      // Get the last dayend closing_date_time for this branch
-      const lastDayendTime = await fetchLastDayendForBranch(branchId);
       
-      // Determine the cutoff date/time for filtering
-      // If dayend exists, use closing_date_time; otherwise, use start of today
-      let cutoffDateTime = null;
-      if (lastDayendTime) {
-        cutoffDateTime = new Date(lastDayendTime);
-      } else {
-        // No dayend exists, use start of today
-        cutoffDateTime = new Date(today + 'T00:00:00');
-      }
-      
-      // Fetch daily sales for this branch
-      // API expects: { "branch_id": "0" } format (use "0" for all, or specific branch_id)
+      // Fetch sales data for this branch using get_sales.php
       const salesParams = {
-        branch_id: branchId || '0'
+        branch_id: branchId
       };
       
       console.log(`📊 Fetching sales for branch ${branchName} (${branchId}):`, salesParams);
@@ -395,529 +357,85 @@ export default function SuperAdminDashboardPage() {
         console.log(`📊 Sales API response for branch ${branchName}:`, salesResult);
       } catch (salesError) {
         console.error(`❌ Error fetching sales for branch ${branchName}:`, salesError);
-        // If sales API fails, continue with 0 sales but log the error
         salesResult = { success: false, data: [] };
       }
       
       // Calculate daily sales from sales data
-      // New API response structure: { success: true, data: [{ date, total, total_amount, net_total, grand_total, amount, cash_sales, branch_id, branch_name, ... }], count, message }
+      // API response: { success: true, data: [{ total, total_amount, net_total, grand_total, amount, cash_sales, total_orders, ... }], count, message }
       let dailySales = 0;
-      if (salesResult.success && salesResult.data) {
-        let salesData = [];
+      let totalOrders = 0;
+      
+      if (salesResult.success && salesResult.data && Array.isArray(salesResult.data)) {
+        const salesData = salesResult.data;
         
-        // Handle new response structure: data is an array of daily sales objects
-        if (Array.isArray(salesResult.data)) {
-          salesData = salesResult.data;
-        } else if (salesResult.data.data && Array.isArray(salesResult.data.data)) {
-          salesData = salesResult.data.data;
-        }
-        
-        console.log(`📊 Branch ${branchName} - Found ${salesData.length} daily sales records from API`);
-        
-        // Filter sales to only include those for this branch and matching date/dayend criteria
-        const validSales = salesData.filter(sale => {
+        // Filter by branch_id if needed (API should already filter, but double-check)
+        const branchSales = salesData.filter(sale => {
           if (!sale) return false;
-          
-          // Check branch_id matches
           const saleBranchId = String(sale.branch_id || '').trim();
           const currentBranchIdStr = String(branchId).trim();
-          if (saleBranchId && saleBranchId !== currentBranchIdStr) {
-            return false;
-          }
-          
-          // Check date matches today or is after dayend
-          const saleDate = sale.date || sale.created_at || sale.order_date || sale.bill_date || sale.bill_created_at || sale.created_date;
-          if (!saleDate) {
-            console.warn(`⚠️ Sale missing date field, excluding:`, sale);
-            return false;
-          }
-          
-          const saleDateTime = new Date(saleDate);
-          if (isNaN(saleDateTime.getTime())) {
-            console.warn(`⚠️ Invalid date format, excluding:`, saleDate);
-            return false;
-          }
-          
-          // Only include sales created after the last dayend closing time
-          // If no dayend, only include today's sales
-          if (lastDayendTime) {
-            const isValid = saleDateTime > cutoffDateTime;
-            if (!isValid) {
-              console.log(`📅 Excluding sale before dayend:`, saleDate, 'cutoff:', cutoffDateTime.toISOString());
-            }
-            return isValid;
-          } else {
-            // No dayend exists, filter by today's date only
-            const saleDateStr = saleDateTime.toISOString().split('T')[0];
-            const isValid = saleDateStr === today;
-            if (!isValid) {
-              console.log(`📅 Excluding sale not from today:`, saleDateStr, 'today:', today);
-            }
-            return isValid;
-          }
+          return !saleBranchId || saleBranchId === currentBranchIdStr;
         });
         
-        console.log(`📊 Branch ${branchName} - ${validSales.length} valid sales after filtering`);
-        
-        // Sum up total sales after dayend
-        // New API response structure has: total, total_amount, net_total, grand_total, amount, cash_sales
-        dailySales = validSales.reduce((sum, sale) => {
-          // Use cash_sales if available (actual cash received), otherwise use total/net_total/grand_total
-          const total = sale.cash_sales || 
-                       sale.total || 
-                       sale.total_amount ||
-                       sale.net_total || 
-                       sale.grand_total || 
-                       sale.amount || 
-                       sale.total_sales ||
-                       sale.bill_amount ||
-                       sale.paid_amount ||
-                       0;
-          const saleAmount = parseFloat(total) || 0;
-          
-          if (saleAmount > 0) {
-            console.log(`💰 Sale amount:`, saleAmount, 'from sale:', {
-              id: sale.bill_id || sale.order_id || sale.id,
-              date: sale.date || sale.created_at,
-              total: sale.grand_total || sale.net_total || sale.total
-            });
-          }
-          
-          return sum + saleAmount;
+        // Sum up total sales
+        dailySales = branchSales.reduce((sum, sale) => {
+          const total = sale.cash_sales || sale.total || sale.total_amount || sale.net_total || sale.grand_total || sale.amount || 0;
+          return sum + (parseFloat(total) || 0);
         }, 0);
         
-        console.log(`📊 Branch ${branchName} - Calculated daily sales from ${validSales.length} sales:`, dailySales);
-      } else {
-        console.warn(`⚠️ Branch ${branchName} - Sales API returned no data or error:`, salesResult);
+        // Sum up total orders
+        totalOrders = branchSales.reduce((sum, sale) => {
+          return sum + (parseInt(sale.total_orders || 0));
+        }, 0);
         
-        // If sales API fails, try to calculate from orders/bills directly
-        console.log(`📊 Branch ${branchName} - Attempting to calculate from orders/bills as fallback`);
-        try {
-          const billsParams = {
-            terminal,
-            branch_id: branchId,
-            date: today,
-            after_closing_date: lastDayendTime || null,
-          };
-          
-          const billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
-          if (billsResult.success && billsResult.data) {
-            let billsData = [];
-            if (Array.isArray(billsResult.data)) {
-              billsData = billsResult.data;
-            } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
-              billsData = billsResult.data.data;
-            } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
-              billsData = billsResult.data.bills;
-            }
-            
-            // Filter bills by date and dayend
-            const validBills = billsData.filter(bill => {
-              const billDate = bill.created_at || bill.bill_date || bill.date;
-              if (!billDate) return false;
-              
-              const billDateTime = new Date(billDate);
-              if (lastDayendTime) {
-                return billDateTime > cutoffDateTime;
-              } else {
-                const billDateStr = billDateTime.toISOString().split('T')[0];
-                return billDateStr === today;
-              }
-            });
-            
-            dailySales = validBills.reduce((sum, bill) => {
-              const total = bill.grand_total || bill.net_total || bill.total || bill.amount || 0;
-              return sum + (parseFloat(total) || 0);
-            }, 0);
-            
-            console.log(`📊 Branch ${branchName} - Calculated daily sales from ${validBills.length} bills:`, dailySales);
-          }
-        } catch (billsError) {
-          console.error(`❌ Error calculating from bills for branch ${branchName}:`, billsError);
-        }
+        console.log(`📊 Branch ${branchName} - Daily sales: ${dailySales}, Total orders: ${totalOrders}`);
       }
       
-      // Ensure daily sales is 0 if no sales after dayend (ensures reset at day end)
-      dailySales = dailySales || 0;
-      console.log(`📊 Branch ${branchName} - Final daily sales:`, dailySales);
+      // Fetch running orders (active orders)
+      const ordersParams = { branch_id: branchId };
+      let runningOrders = [];
       
-      // Fetch dashboard stats for this branch to get accurate orders count
-      // The backend now calculates orders using the same logic as sales (after dayend or today)
-      const dashboardStatsParams = {
-        terminal,
-        branch_id: branchId,
-        date: today,
-        after_closing_date: lastDayendTime || null, // Pass dayend time to backend
-      };
-      
-      console.log(`📊 Fetching dashboard stats for branch ${branchName} (${branchId}):`, dashboardStatsParams);
-      let dashboardStatsResult;
       try {
-        dashboardStatsResult = await apiPost('/get_dashboard_stats.php', dashboardStatsParams);
-        console.log(`📊 Dashboard stats response for branch ${branchName}:`, dashboardStatsResult);
-      } catch (statsError) {
-        console.error(`❌ Error fetching dashboard stats for branch ${branchName}:`, statsError);
-        dashboardStatsResult = { success: false, data: {} };
-      }
-      
-      // Always fetch and validate bills directly to ensure accurate count after dayend
-      // Don't rely solely on dashboard stats - validate with actual bills data
-      let completeBillsCount = 0;
-      
-      // Fetch bills directly to get accurate count (after dayend filtering)
-      try {
-        const billsParams = {
-          terminal,
-          branch_id: branchId,
-          from_date: today,
-          to_date: today,
-          after_closing_date: lastDayendTime || null,
-        };
-        
-        console.log(`📊 Fetching bills for complete count - branch ${branchName} (${branchId}):`, billsParams);
-        let billsResult;
+        let ordersResult;
         try {
-          billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
-        } catch (billsError) {
-          console.error(`❌ Error fetching bills for branch ${branchName}:`, billsError);
-          billsResult = { success: false, data: [] };
-        }
-        
-        if (billsResult.success && billsResult.data) {
-          let billsData = [];
-          if (Array.isArray(billsResult.data)) {
-            billsData = billsResult.data;
-          } else if (billsResult.data.data && Array.isArray(billsResult.data.data)) {
-            billsData = billsResult.data.data;
-          } else if (billsResult.data.bills && Array.isArray(billsResult.data.bills)) {
-            billsData = billsResult.data.bills;
-          }
-          
-          console.log(`📊 Branch ${branchName} - Found ${billsData.length} bills from API`);
-          if (billsData.length > 0) {
-            console.log(`📊 Sample bill structure:`, {
-              bill_id: billsData[0].bill_id || billsData[0].id,
-              branch_id: billsData[0].branch_id,
-              status: billsData[0].order_status || billsData[0].status,
-              amount: billsData[0].grand_total || billsData[0].net_total || billsData[0].total,
-              date: billsData[0].created_at || billsData[0].bill_date || billsData[0].date
-            });
-          }
-          
-          // Filter bills by date, dayend, and payment status
-          // Backend logic: Only count 'Bill Generated' or 'Complete' status, exclude 'Customer Registration' and 'Customer Created'
-          const validBills = billsData.filter(bill => {
-            if (!bill) return false;
-            
-            // Verify branch ID matches
-            const billBranchId = bill.branch_id || bill.branchId || bill.branch_ID || bill.BranchID || bill.order_branch_id;
-            if (billBranchId) {
-              const billBranchIdStr = String(billBranchId).trim();
-              const currentBranchIdStr = String(branchId).trim();
-              if (billBranchIdStr !== currentBranchIdStr) {
-                return false;
-              }
-            }
-            
-            // STRICT DATE FILTERING: Must have date and must be after dayend
-            const billDate = bill.created_at || bill.bill_date || bill.date || bill.created_date || bill.bill_created_at;
-            if (!billDate) {
-              console.warn(`⚠️ Bill missing date, excluding:`, bill.bill_id || bill.id);
-              return false; // Exclude bills without date
-            }
-            
-            const billDateTime = new Date(billDate);
-            if (isNaN(billDateTime.getTime())) {
-              console.warn(`⚠️ Invalid date format, excluding:`, billDate);
-              return false; // Exclude bills with invalid date
-            }
-            
-            // CRITICAL: Only include bills created after the last dayend closing time
-            // If no dayend, only include today's bills
-            if (lastDayendTime) {
-              if (billDateTime <= cutoffDateTime) {
-                console.log(`📅 Excluding bill before dayend:`, billDate, 'cutoff:', cutoffDateTime.toISOString());
-                return false; // Before dayend - exclude
-              }
-            } else {
-              // No dayend exists, filter by today's date only
-              const billDateStr = billDateTime.toISOString().split('T')[0];
-              if (billDateStr !== today) {
-                console.log(`📅 Excluding bill not from today:`, billDateStr, 'today:', today);
-                return false; // Not from today - exclude
-              }
-            }
-            
-            // Check order status - exclude 'Customer Registration' and 'Customer Created'
-            // But be more lenient with other statuses - if it has an amount, count it
-            const orderStatus = (bill.order_status || bill.status || '').toLowerCase().trim();
-            const excludedStatuses = ['customer registration', 'customer created', 'cancelled', 'canceled'];
-            if (excludedStatuses.includes(orderStatus)) {
-              console.log(`📅 Excluding bill with excluded status:`, orderStatus);
-              return false;
-            }
-            
-            // Must have amount > 0 to be considered a valid bill
-            const amount = parseFloat(bill.grand_total || bill.net_total || bill.total || bill.net_total_amount || bill.amount || 0);
-            const hasAmount = amount > 0;
-            
-            // If it has an amount and is not in excluded statuses, count it
-            // This is more lenient - we count any bill with amount > 0 that's not explicitly excluded
-            const isValid = hasAmount;
-            
-            if (!isValid) {
-              console.log(`❌ Bill excluded:`, {
-                bill_id: bill.bill_id || bill.id,
-                order_status: orderStatus,
-                amount: amount,
-                date: billDate,
-                reason: !hasAmount ? 'No amount' : 'Unknown reason'
-              });
-            }
-            
-            return isValid;
-          });
-          
-          completeBillsCount = validBills.length;
-          console.log(`📊 Branch ${branchName} - ${completeBillsCount} valid bills after filtering (from ${billsData.length} total bills)`);
-          if (completeBillsCount === 0 && billsData.length > 0) {
-            console.warn(`⚠️ All ${billsData.length} bills were filtered out for branch ${branchName}. Check filtering criteria.`);
-          }
-        }
-      } catch (billsError) {
-        console.warn(`⚠️ Error fetching bills for branch ${branchName}:`, billsError);
-        // Fallback: Try to get count from dashboard stats
-        if (dashboardStatsResult.success && dashboardStatsResult.data) {
-          let statsData = dashboardStatsResult.data;
-          if (statsData.data) {
-            statsData = statsData.data;
-          }
-          completeBillsCount = parseInt(statsData.totalOrders || statsData.total_orders || 0);
-          console.log(`📊 Branch ${branchName} - Using dashboard stats as fallback: ${completeBillsCount}`);
-        }
-      }
-      
-      // Fetch orders for running orders count (active orders regardless of date)
-      const ordersParams = {
-        terminal,
-        branch_id: branchId,
-      };
-      
-      console.log(`📊 Fetching orders for running count - branch ${branchName} (${branchId}):`, ordersParams);
-      
-      // Try POST first (better for complex parameters), fallback to GET
-      let ordersResult;
-      try {
-        ordersResult = await apiPost('api/order_management.php', ordersParams);
-      } catch (postError) {
-        console.warn(`⚠️ POST failed for orders, trying GET:`, postError);
-        try {
-          ordersResult = await apiGet('api/order_management.php', ordersParams);
-        } catch (getError) {
-          console.error(`❌ Both POST and GET failed for orders for branch ${branchName}:`, getError);
-          ordersResult = { success: false, data: [] };
-        }
-      }
-      
-      let ordersData = [];
-      if (ordersResult.data && Array.isArray(ordersResult.data)) {
-        ordersData = ordersResult.data;
-      } else if (ordersResult.data && ordersResult.data.data && Array.isArray(ordersResult.data.data)) {
-        ordersData = ordersResult.data.data;
-      } else if (ordersResult.data && ordersResult.data.orders && Array.isArray(ordersResult.data.orders)) {
-        ordersData = ordersResult.data.orders;
-      }
-      
-      // Filter running orders (all active orders regardless of date - operationally useful)
-      const runningOrders = ordersData.filter(order => {
-        if (!order) return false;
-        
-        // Verify branch ID matches
-        const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-        if (orderBranchId) {
-          const orderBranchIdStr = String(orderBranchId).trim();
-          const currentBranchIdStr = String(branchId).trim();
-          if (orderBranchIdStr !== currentBranchIdStr) {
-            return false;
-          }
-        }
-        
-        const status = (order.status || order.order_status || '').toLowerCase().trim();
-        return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
-      });
-      
-      console.log(`📊 Branch ${branchName} - ${runningOrders.length} running orders`);
-      
-      // Fetch today's orders count (filtered by date and dayend)
-      let todaysOrdersCount = 0;
-      try {
-        // Fetch orders with date filter for today
-        const todaysOrdersParams = {
-          terminal,
-          branch_id: branchId,
-          date: today,
-          from_date: today,
-          to_date: today,
-        };
-        
-        // Add dayend filter if available
-        if (lastDayendTime) {
-          todaysOrdersParams.after_closing_date = lastDayendTime;
-        }
-        
-        console.log(`📊 Fetching today's orders - branch ${branchName} (${branchId}):`, todaysOrdersParams);
-        
-        let todaysOrdersResult;
-        try {
-          todaysOrdersResult = await apiPost('api/order_management.php', todaysOrdersParams);
+          ordersResult = await apiPost('api/order_management.php', ordersParams);
         } catch (postError) {
-          console.warn(`⚠️ POST failed for today's orders, trying GET:`, postError);
-          try {
-            todaysOrdersResult = await apiGet('api/order_management.php', todaysOrdersParams);
-          } catch (getError) {
-            console.warn(`⚠️ GET also failed for today's orders:`, getError);
-            // Will use fallback logic below
-            throw new Error('Both POST and GET failed for today\'s orders');
-          }
+          ordersResult = await apiGet('api/order_management.php', ordersParams);
         }
         
-        let todaysOrdersData = [];
-        if (todaysOrdersResult && todaysOrdersResult.success !== false) {
-          if (todaysOrdersResult.data) {
-            if (Array.isArray(todaysOrdersResult.data)) {
-              todaysOrdersData = todaysOrdersResult.data;
-            } else if (todaysOrdersResult.data.data && Array.isArray(todaysOrdersResult.data.data)) {
-              todaysOrdersData = todaysOrdersResult.data.data;
-            } else if (todaysOrdersResult.data.orders && Array.isArray(todaysOrdersResult.data.orders)) {
-              todaysOrdersData = todaysOrdersResult.data.orders;
-            }
-          } else if (Array.isArray(todaysOrdersResult)) {
-            todaysOrdersData = todaysOrdersResult;
-          }
+        let ordersData = [];
+        if (ordersResult.data && Array.isArray(ordersResult.data)) {
+          ordersData = ordersResult.data;
+        } else if (ordersResult.data?.data && Array.isArray(ordersResult.data.data)) {
+          ordersData = ordersResult.data.data;
+        } else if (ordersResult.data?.orders && Array.isArray(ordersResult.data.orders)) {
+          ordersData = ordersResult.data.orders;
         }
         
-        // Filter today's orders by date and dayend
-        const todaysOrders = todaysOrdersData.filter(order => {
+        // Filter running orders (active orders)
+        runningOrders = ordersData.filter(order => {
           if (!order) return false;
+          const orderBranchId = String(order.branch_id || order.branchId || '').trim();
+          const currentBranchIdStr = String(branchId).trim();
+          if (orderBranchId && orderBranchId !== currentBranchIdStr) return false;
           
-          // Verify branch ID matches
-          const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-          if (orderBranchId) {
-            const orderBranchIdStr = String(orderBranchId).trim();
-            const currentBranchIdStr = String(branchId).trim();
-            if (orderBranchIdStr !== currentBranchIdStr) {
-              return false;
-            }
-          }
-          
-          // Filter by date - must be today or after dayend
-          const orderDate = order.created_at || order.date || order.order_date || order.created_date;
-          if (!orderDate) {
-            return false;
-          }
-          
-          const orderDateTime = new Date(orderDate);
-          if (isNaN(orderDateTime.getTime())) {
-            return false;
-          }
-          
-          // If dayend exists, only include orders after dayend
-          if (lastDayendTime) {
-            return orderDateTime > cutoffDateTime;
-          } else {
-            // No dayend, only include today's orders
-            const orderDateStr = orderDateTime.toISOString().split('T')[0];
-            return orderDateStr === today;
-          }
+          const status = (order.status || order.order_status || '').toLowerCase().trim();
+          return status === 'pending' || status === 'preparing' || status === 'ready' || status === 'confirmed';
         });
         
-        todaysOrdersCount = todaysOrders.length;
-        console.log(`📊 Branch ${branchName} - ${todaysOrdersCount} today's orders (after dayend filtering)`);
-      } catch (todaysOrdersError) {
-        console.error(`❌ Error fetching today's orders for branch ${branchName}:`, todaysOrdersError);
-        // Fallback: try to count from all orders data we already fetched
-        const todaysOrdersFromAll = ordersData.filter(order => {
-          if (!order) return false;
-          
-          const orderBranchId = order.branch_id || order.branchId || order.branch_ID || order.BranchID;
-          if (orderBranchId) {
-            const orderBranchIdStr = String(orderBranchId).trim();
-            const currentBranchIdStr = String(branchId).trim();
-            if (orderBranchIdStr !== currentBranchIdStr) {
-              return false;
-            }
-          }
-          
-          const orderDate = order.created_at || order.date || order.order_date || order.created_date;
-          if (!orderDate) {
-            return false;
-          }
-          
-          const orderDateTime = new Date(orderDate);
-          if (isNaN(orderDateTime.getTime())) {
-            return false;
-          }
-          
-          if (lastDayendTime) {
-            return orderDateTime > cutoffDateTime;
-          } else {
-            const orderDateStr = orderDateTime.toISOString().split('T')[0];
-            return orderDateStr === today;
-          }
-        });
-        
-        todaysOrdersCount = todaysOrdersFromAll.length;
-        console.log(`📊 Branch ${branchName} - Fallback: ${todaysOrdersCount} today's orders (from all orders)`);
+        console.log(`📊 Branch ${branchName} - Running orders: ${runningOrders.length}`);
+      } catch (ordersError) {
+        console.error(`❌ Error fetching orders for branch ${branchName}:`, ordersError);
       }
       
-      // Additional validation: If we got a count from dashboard stats, verify it matches our bills count
-      // Use dashboard stats as fallback if bills count is 0 (bills API might be too strict or not returning data)
-      if (dashboardStatsResult.success && dashboardStatsResult.data) {
-        let statsData = dashboardStatsResult.data;
-        if (statsData.data) {
-          statsData = statsData.data;
-        }
-        const dashboardCount = parseInt(statsData.totalOrders || statsData.total_orders || 0);
-        if (dashboardCount !== completeBillsCount) {
-          if (completeBillsCount === 0 && dashboardCount > 0) {
-            // Bills count is 0 but dashboard shows orders - use dashboard count as fallback
-            console.log(`ℹ️ Bills count is 0 but dashboard shows ${dashboardCount} orders, using dashboard count as fallback`);
-            completeBillsCount = dashboardCount;
-          } else {
-            console.warn(`⚠️ Dashboard stats count (${dashboardCount}) doesn't match bills count (${completeBillsCount}), using bills count`);
-          }
-        }
-      }
-      
-      // Final validation: If dayend exists and no bills after dayend, count must be 0
-      if (lastDayendTime && completeBillsCount > 0) {
-        // Double-check: ensure all counted bills are actually after dayend
-        // This is already done in the filter, but we log it for verification
-        console.log(`📊 Branch ${branchName} - Verified ${completeBillsCount} bills are after dayend (${lastDayendTime})`);
-      }
-      
-      // If no dayend and count > 0, ensure all bills are from today
-      if (!lastDayendTime && completeBillsCount > 0) {
-        console.log(`📊 Branch ${branchName} - Verified ${completeBillsCount} bills are from today (${today})`);
-      }
-      
-      
-      console.log(`📊 Branch ${branchName} - Final complete bills count: ${completeBillsCount}`);
-      
-      // Use today's orders count if it's available and more accurate
-      // If complete_bills is 0 but we have today's orders, use today's orders count
-      // This ensures we show today's orders even if bills haven't been generated yet
-      const finalOrdersCount = todaysOrdersCount > 0 ? todaysOrdersCount : completeBillsCount;
-      
-      console.log(`📊 Branch ${branchName} - Today's orders: ${todaysOrdersCount}, Complete bills: ${completeBillsCount}, Final count: ${finalOrdersCount}`);
+      // Use total_orders from sales API as complete bills count
+      const completeBillsCount = totalOrders || 0;
       
       return {
         branch_id: branchId,
         branch_name: branchName,
         daily_sales: dailySales,
         running_orders: runningOrders.length,
-        complete_bills: finalOrdersCount,
-        todays_orders: todaysOrdersCount, // Also include separate field for today's orders
+        complete_bills: completeBillsCount,
       };
     } catch (error) {
       console.error(`Error fetching stats for branch ${branchName}:`, error);
