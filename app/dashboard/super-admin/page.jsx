@@ -671,28 +671,7 @@ export default function SuperAdminDashboardPage() {
                 Retry
               </button>
             </div>
-          ) : branchStats.length === 0 && branches.length > 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-500 mb-2">Loading branch statistics...</p>
-              <p className="text-gray-400 text-sm mb-4">Branches loaded: {branches.length}</p>
-              <button
-                onClick={fetchBranchStatistics}
-                className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
-              >
-                Load Statistics
-              </button>
-            </div>
-          ) : branchStats.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-500 mb-2">No branch statistics available</p>
-              <button
-                onClick={fetchBranchStatistics}
-                className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
-              >
-                Refresh
-              </button>
-            </div>
-          ) : (
+          ) : branchStats.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -748,6 +727,17 @@ export default function SuperAdminDashboardPage() {
                   </tr>
                 </tfoot>
               </table>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500 mb-2">No branch statistics available</p>
+              <p className="text-gray-400 text-sm mb-4">Branches loaded: {branches.length}</p>
+              <button
+                onClick={fetchBranchStatistics}
+                className="px-4 py-2 bg-[#FF5F15] text-white rounded-lg hover:bg-[#FF8C42] transition"
+              >
+                Load Statistics
+              </button>
             </div>
           )}
         </div>
