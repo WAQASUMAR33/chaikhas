@@ -11,30 +11,18 @@ import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getBranchId, getBranchName } from '@/utils/api';
+import { apiGet, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { BarChart3, Printer } from 'lucide-react';
 
 export default function MenuSalesListPage() {
   const [menuSales, setMenuSales] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [branchInfo, setBranchInfo] = useState(null);
   const [reportNumber, setReportNumber] = useState('');
+  const [dayendId, setDayendId] = useState(''); // Dayend ID (STS) input
   const printRef = useRef(null);
-  
-  // Date range filter state - default to last 30 days
-  const getDefaultDateRange = () => {
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    return {
-      fromDate: thirtyDaysAgo.toISOString().split('T')[0],
-      toDate: today.toISOString().split('T')[0],
-    };
-  };
-  
-  const [dateRange, setDateRange] = useState(getDefaultDateRange());
 
   useEffect(() => {
     fetchBranchInfo();
@@ -44,13 +32,6 @@ export default function MenuSalesListPage() {
     const reportNum = `MSR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
     setReportNumber(reportNum);
   }, []);
-  
-  useEffect(() => {
-    if (dateRange.fromDate && dateRange.toDate) {
-      fetchMenuSales();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange]);
 
   /**
    * Fetch branch information
@@ -73,137 +54,67 @@ export default function MenuSalesListPage() {
 
   /**
    * Fetch menu sales data from API
-   * API: api/get_menu_sales.php (POST with terminal, period, and branch_id)
+   * API: api/get_menu_sales.php?sts={dayendId} (GET with dayend ID/STS)
    * Shows only menu sales for the current branch
    */
   const fetchMenuSales = async () => {
+    // Validate dayend ID input
+    if (!dayendId || dayendId.trim() === '') {
+      setAlert({ type: 'error', message: 'Please enter Dayend ID (STS) first' });
+      return;
+    }
+    
     setLoading(true);
     setAlert({ type: '', message: '' });
+    
     try {
-      const terminal = getTerminal();
-      const branchId = getBranchId();
-      
-      if (!branchId) {
-        setAlert({ type: 'error', message: 'Branch ID not found. Please login again.' });
-        setLoading(false);
-        setMenuSales([]);
-        return;
-      }
-      
-      // Build API params with date range
+      // Build API params for GET request
       const apiParams = { 
-        terminal, 
-        branch_id: branchId,
-        from_date: dateRange.fromDate,
-        to_date: dateRange.toDate
+        sts: dayendId.trim()
       };
       
-      // Validate date range
-      if (!dateRange.fromDate || !dateRange.toDate) {
-        setAlert({ 
-          type: 'error', 
-          message: 'Please select both start and end dates' 
-        });
-        setMenuSales([]);
-        setLoading(false);
-        return;
-      }
+      console.log('Fetching menu sales with dayend ID:', apiParams.sts);
       
-      console.log('📅 Fetching menu sales for date range:', apiParams.from_date, 'to', apiParams.to_date);
-      
-      console.log('Fetching menu sales with:', apiParams);
-      
-      const result = await apiPost('api/get_menu_sales.php', apiParams);
+      const result = await apiGet('api/get_menu_sales.php', apiParams);
       
       console.log('Menu sales API result:', result);
       console.log('Full API response structure:', JSON.stringify(result, null, 2));
       
-      // Handle different response structures - be very thorough
+      // Handle API response structure
+      // API returns: { success: true, sts: 408, count: 23, data: [...] }
+      // After apiGet wraps it: { success: true, data: { success: true, sts: 408, count: 23, data: [...] }, status: 200 }
       let menuSalesData = [];
       
-      // First, check if result itself is an array
-      if (Array.isArray(result)) {
-        menuSalesData = result;
-        console.log('✅ Found menu sales in result (direct array), count:', menuSalesData.length);
+      // Check if result.data.data is an array (most likely scenario)
+      if (result && result.data && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data (array), count:', menuSalesData.length);
+        console.log('✅ STS:', result.data.sts, 'Total count:', result.data.count);
       }
-      // Check if result.success and result.data is an array
-      else if (result && result.success && result.data && Array.isArray(result.data)) {
-        menuSalesData = result.data;
-        console.log('✅ Found menu sales in result.success.data (array), count:', menuSalesData.length);
+      // Check if result.data is the actual API response object with data array
+      else if (result && result.data && result.data.success && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data, count:', menuSalesData.length);
       }
-      // Check if result.data is an array directly (without success field)
+      // Check if result.data is an array directly (edge case)
       else if (result && result.data && Array.isArray(result.data)) {
         menuSalesData = result.data;
-        console.log('✅ Found menu sales in result.data (array), count:', menuSalesData.length);
-      }
-      // Check if data is nested (result.data.data)
-      else if (result && result.data && result.data.data && Array.isArray(result.data.data)) {
-        menuSalesData = result.data.data;
-        console.log('✅ Found menu sales in result.data.data (nested array), count:', menuSalesData.length);
-      }
-      // Check if result.data.menu_sales is an array
-      else if (result && result.data && result.data.menu_sales && Array.isArray(result.data.menu_sales)) {
-        menuSalesData = result.data.menu_sales;
-        console.log('✅ Found menu sales in result.data.menu_sales, count:', menuSalesData.length);
-      }
-      // Check if result.data.sales is an array
-      else if (result && result.data && result.data.sales && Array.isArray(result.data.sales)) {
-        menuSalesData = result.data.sales;
-        console.log('✅ Found menu sales in result.data.sales, count:', menuSalesData.length);
-      }
-      // Check if result.data.items is an array (common pattern)
-      else if (result && result.data && result.data.items && Array.isArray(result.data.items)) {
-        menuSalesData = result.data.items;
-        console.log('✅ Found menu sales in result.data.items, count:', menuSalesData.length);
-      }
-      // Check if result.data.result is an array
-      else if (result && result.data && result.data.result && Array.isArray(result.data.result)) {
-        menuSalesData = result.data.result;
-        console.log('✅ Found menu sales in result.data.result, count:', menuSalesData.length);
+        console.log('✅ Found menu sales in result.data (direct array), count:', menuSalesData.length);
       }
       // Check for error in response
       else if (result && result.data && result.data.success === false) {
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load menu sales data' });
+        const errorMsg = result.data.message || result.data.error || 'Failed to load menu sales data';
+        setAlert({ type: 'error', message: errorMsg });
         setMenuSales([]);
         setLoading(false);
         return;
-      }
-      // Try to find any array in result.data object (deep search)
-      else if (result && result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
-        // First level search
-        for (const key in result.data) {
-          if (Array.isArray(result.data[key]) && result.data[key].length > 0) {
-            menuSalesData = result.data[key];
-            console.log(`✅ Found menu sales in result.data.${key}, count:`, menuSalesData.length);
-            break;
-          }
-        }
-        // If still no data, try nested objects
-        if (menuSalesData.length === 0) {
-          for (const key in result.data) {
-            if (result.data[key] && typeof result.data[key] === 'object' && !Array.isArray(result.data[key])) {
-              for (const nestedKey in result.data[key]) {
-                if (Array.isArray(result.data[key][nestedKey]) && result.data[key][nestedKey].length > 0) {
-                  menuSalesData = result.data[key][nestedKey];
-                  console.log(`✅ Found menu sales in result.data.${key}.${nestedKey}, count:`, menuSalesData.length);
-                  break;
-                }
-              }
-              if (menuSalesData.length > 0) break;
-            }
-          }
-        }
-      }
-      
-      // If still no data found, check if result itself has any arrays
-      if (menuSalesData.length === 0 && result && typeof result === 'object' && !Array.isArray(result)) {
-        for (const key in result) {
-          if (Array.isArray(result[key]) && result[key].length > 0) {
-            menuSalesData = result[key];
-            console.log(`✅ Found menu sales in result.${key}, count:`, menuSalesData.length);
-            break;
-          }
-        }
+      } 
+      else if (result && !result.success) {
+        const errorMsg = result.data?.message || result.data?.error || 'Failed to load menu sales data. Please check your connection.';
+        setAlert({ type: 'error', message: errorMsg });
+        setMenuSales([]);
+        setLoading(false);
+        return;
       }
       
       // Debug: Log sample menu sale from API
@@ -212,20 +123,14 @@ export default function MenuSalesListPage() {
       } else {
         console.warn('⚠️ No menu sales found in API response');
         console.warn('Response structure:', {
-          success: result.success,
-          hasData: !!result.data,
-          dataType: typeof result.data,
-          dataKeys: result.data ? Object.keys(result.data) : [],
-          fullResponse: result
+          resultSuccess: result?.success,
+          hasResultData: !!result?.data,
+          resultDataSuccess: result?.data?.success,
+          resultDataSts: result?.data?.sts,
+          resultDataCount: result?.data?.count,
+          resultDataType: typeof result?.data,
+          resultDataKeys: result?.data ? Object.keys(result.data) : [],
         });
-        
-        // Check if API returned an error message
-        if (result.data && result.data.message) {
-          console.warn('API error message:', result.data.message);
-        }
-        if (result.data && result.data.error) {
-          console.warn('API error:', result.data.error);
-        }
       }
       
       // Map API response to consistent format
@@ -247,28 +152,14 @@ export default function MenuSalesListPage() {
         // Check if there's an explicit error message
         if (result && result.data && result.data.message) {
           const errorMsg = result.data.message;
-          // Check for database column errors
-          if (errorMsg.toLowerCase().includes("unknown column") || 
-              errorMsg.toLowerCase().includes("orders.sts") ||
-              errorMsg.toLowerCase().includes("column 'sts'")) {
-            setAlert({ 
-              type: 'error', 
-              message: `Database Column Error: The API is trying to use column 'orders.sts' which doesn't exist. Please update api/get_menu_sales.php to use 'order_status' instead of 'sts'. Error: ${errorMsg}` 
-            });
-          } else {
-            setAlert({ type: 'error', message: errorMsg });
-          }
+          setAlert({ type: 'error', message: errorMsg });
         } else if (result && result.data && result.data.success === false) {
           setAlert({ type: 'error', message: result.data.message || result.data.error || 'Failed to load menu sales data' });
         } else if (result && !result.success) {
           setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
         } else if (result && result.success && result.data) {
           // API returned success but no data
-          const dateRangeText = dateRange.fromDate && dateRange.toDate 
-            ? `${new Date(dateRange.fromDate).toLocaleDateString()} to ${new Date(dateRange.toDate).toLocaleDateString()}`
-            : 'the selected date range';
-          
-          const message = `No menu sales data found for ${dateRangeText}. Try selecting a different date range or check if there are any completed orders with bills generated.`;
+          const message = `No menu sales data found for Dayend ID (STS) ${dayendId}. Please verify the Dayend ID is correct.`;
           
           setAlert({ type: 'info', message });
         } else {
@@ -298,20 +189,6 @@ export default function MenuSalesListPage() {
     return acc;
   }, { totalQuantity: 0, totalRevenue: 0 });
 
-  /**
-   * Get date range display name
-   */
-  const getDateRangeDisplayName = () => {
-    if (dateRange.fromDate && dateRange.toDate) {
-      const fromDate = new Date(dateRange.fromDate);
-      const toDate = new Date(dateRange.toDate);
-      if (fromDate.toDateString() === toDate.toDateString()) {
-        return fromDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-      }
-      return `${fromDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - ${toDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
-    }
-    return 'Date Range';
-  };
 
   /**
    * Print report
@@ -397,60 +274,47 @@ export default function MenuSalesListPage() {
           />
         )}
 
-        {/* Date Range Selector and Print Button */}
-        <div className="flex flex-col gap-4 bg-white rounded-lg shadow p-4">
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1">
-              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                From Date:
+        {/* Dayend ID (STS) Input and Fetch Button */}
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Dayend ID (STS) <span className="text-red-500">*</span>
               </label>
               <input
-                type="date"
-                value={dateRange.fromDate}
-                onChange={(e) => setDateRange(prev => ({ ...prev, fromDate: e.target.value }))}
-                max={dateRange.toDate || new Date().toISOString().split('T')[0]}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                type="text"
+                value={dayendId}
+                onChange={(e) => setDayendId(e.target.value)}
+                placeholder="Enter Dayend ID / STS"
+                className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
+                required
               />
+              <p className="text-xs text-gray-500 mt-1">Enter the Dayend ID (STS number) to fetch menu sales</p>
             </div>
-            
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 flex-1">
-              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                To Date:
-              </label>
-              <input
-                type="date"
-                value={dateRange.toDate}
-                onChange={(e) => setDateRange(prev => ({ ...prev, toDate: e.target.value }))}
-                min={dateRange.fromDate}
-                max={new Date().toISOString().split('T')[0]}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
-              />
-            </div>
-            
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setDateRange(getDefaultDateRange())}
-              className="flex items-center gap-2"
-            >
-              <span>Reset</span>
-            </Button>
-            
-            {!loading && menuSales.length > 0 && (
+            <div className="flex gap-2">
               <Button
-                onClick={handlePrint}
-                variant="outline"
-                className="flex items-center gap-2"
+                onClick={fetchMenuSales}
+                variant="primary"
+                className="whitespace-nowrap"
+                disabled={loading || !dayendId}
               >
-                <Printer className="w-4 h-4" />
-                <span>Print Report</span>
+                {loading ? 'Loading...' : 'Fetch Menu Sales'}
               </Button>
-            )}
+              {!loading && menuSales.length > 0 && (
+                <Button
+                  onClick={handlePrint}
+                  variant="outline"
+                  className="flex items-center gap-2 whitespace-nowrap"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print</span>
+                </Button>
+              )}
+            </div>
           </div>
-          
-          {dateRange.fromDate && dateRange.toDate && (
-            <p className="text-sm text-gray-600">
-              Showing menu sales from <span className="font-semibold">{new Date(dateRange.fromDate).toLocaleDateString()}</span> to <span className="font-semibold">{new Date(dateRange.toDate).toLocaleDateString()}</span>
+          {!dayendId && (
+            <p className="text-xs text-gray-500 mt-2">
+              Please enter a Dayend ID (STS) to fetch menu sales data
             </p>
           )}
         </div>
@@ -480,7 +344,9 @@ export default function MenuSalesListPage() {
             <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-600 font-medium text-lg mb-2">No menu sales data found</p>
             <p className="text-gray-500 text-sm">
-              No menu sales found for the selected date range. Try selecting a different date range or check if there are any completed orders.
+              {!dayendId 
+                ? 'Please enter a Dayend ID (STS) and click "Fetch Menu Sales" to load data.'
+                : `No menu sales found for Dayend ID ${dayendId}. Please verify the Dayend ID is correct.`}
             </p>
           </div>
         ) : (
@@ -554,8 +420,13 @@ export default function MenuSalesListPage() {
                       </p>
                     )}
                     <p style={{ margin: '8px 0 0 0', fontSize: '16px', fontWeight: 'bold' }}>
-                      Menu Sales Report - {getDateRangeDisplayName()}
+                      Menu Sales Report
                     </p>
+                    {dayendId && (
+                      <p style={{ margin: '5px 0 0 0', fontSize: '12px' }}>
+                        Dayend ID (STS): {dayendId}
+                      </p>
+                    )}
                   </div>
                   <div style={{ width: '15%', textAlign: 'right', fontSize: '11px' }}>
                     <p style={{ margin: '0 0 5px 0', fontWeight: 'bold' }}>

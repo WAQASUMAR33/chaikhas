@@ -11,7 +11,7 @@ import SuperAdminLayout from '@/components/super-admin/SuperAdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiGet, apiPost } from '@/utils/api';
+import { apiGet } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { BarChart3, Printer } from 'lucide-react';
 
@@ -20,14 +20,10 @@ export default function MenuSalesListPage() {
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [reportNumber, setReportNumber] = useState('');
-  const [branches, setBranches] = useState([]);
-  const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
-  const [dayendId, setDayendId] = useState(''); // Dayend ID input
+  const [dayendId, setDayendId] = useState(''); // Dayend ID (STS) input
   const printRef = useRef(null);
 
   useEffect(() => {
-    fetchBranches();
-    
     // Generate report number
     const now = new Date();
     const reportNum = `MSR-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${Date.now().toString().slice(-6)}`;
@@ -35,44 +31,13 @@ export default function MenuSalesListPage() {
   }, []);
 
   /**
-   * Fetch branches for super admin
-   */
-  const fetchBranches = async () => {
-    try {
-      console.log('=== Fetching Branches (Super Admin - Menu Sales) ===');
-      const result = await apiPost('/branch_management.php', { action: 'get' });
-      console.log('Branches API response:', result);
-      
-      let branchesData = [];
-      if (result.data && Array.isArray(result.data)) {
-        branchesData = result.data;
-      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        branchesData = result.data.data;
-      } else if (result.data && Array.isArray(result.data.branches)) {
-        branchesData = result.data.branches;
-      }
-      
-      console.log(`Total branches found: ${branchesData.length}`);
-      setBranches(branchesData);
-    } catch (error) {
-      console.error('Error fetching branches:', error);
-      setBranches([]);
-    }
-  };
-
-  /**
    * Fetch menu sales data from API
-   * API: pos/getsaledetails.php (GET with branch_id and sts)
+   * API: api/get_menu_sales.php?sts={dayendId} (GET with dayend ID/STS)
    */
   const fetchMenuSales = async () => {
-    // Validate inputs - STS first
+    // Validate dayend ID input
     if (!dayendId || dayendId.trim() === '') {
-      setAlert({ type: 'error', message: 'Please enter STS (Dayend ID) first' });
-      return;
-    }
-    
-    if (!selectedBranchFilter) {
-      setAlert({ type: 'error', message: 'Please select a branch' });
+      setAlert({ type: 'error', message: 'Please enter Dayend ID (STS) first' });
       return;
     }
     
@@ -80,59 +45,108 @@ export default function MenuSalesListPage() {
     setAlert({ type: '', message: '' });
     
     try {
-      // Build params for GET request
-      const params = {
-        branch_id: selectedBranchFilter,
+      // Build API params for GET request
+      const apiParams = { 
         sts: dayendId.trim()
       };
       
-      console.log('Fetching menu sales with:', params);
+      console.log('Fetching menu sales with dayend ID:', apiParams.sts);
       
-      // Use apiGet for GET request
-      const result = await apiGet('pos/getsaledetails.php', params);
+      const result = await apiGet('api/get_menu_sales.php', apiParams);
       
       console.log('Menu sales API result:', result);
+      console.log('Full API response structure:', JSON.stringify(result, null, 2));
       
-      // Handle response - API returns array directly
+      // Handle API response structure
+      // API returns: { success: true, sts: 408, count: 23, data: [...] }
+      // After apiGet wraps it: { success: true, data: { success: true, sts: 408, count: 23, data: [...] }, status: 200 }
       let menuSalesData = [];
       
-      if (Array.isArray(result)) {
-        menuSalesData = result;
-        console.log('✅ Found menu sales in result (direct array), count:', menuSalesData.length);
-      } else if (result && result.data && Array.isArray(result.data)) {
+      // Check if result.data.data is an array (most likely scenario)
+      if (result && result.data && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data (array), count:', menuSalesData.length);
+        console.log('✅ STS:', result.data.sts, 'Total count:', result.data.count);
+      }
+      // Check if result.data is the actual API response object with data array
+      else if (result && result.data && result.data.success && Array.isArray(result.data.data)) {
+        menuSalesData = result.data.data;
+        console.log('✅ Found menu sales in result.data.data, count:', menuSalesData.length);
+      }
+      // Check if result.data is an array directly (edge case)
+      else if (result && result.data && Array.isArray(result.data)) {
         menuSalesData = result.data;
-        console.log('✅ Found menu sales in result.data (array), count:', menuSalesData.length);
-      } else if (result && result.success && result.data && Array.isArray(result.data)) {
-        menuSalesData = result.data;
-        console.log('✅ Found menu sales in result.success.data (array), count:', menuSalesData.length);
-      } else {
-        console.warn('⚠️ No menu sales found in API response');
-        console.warn('Response structure:', result);
+        console.log('✅ Found menu sales in result.data (direct array), count:', menuSalesData.length);
+      }
+      // Check for error in response
+      else if (result && result.data && result.data.success === false) {
+        const errorMsg = result.data.message || result.data.error || 'Failed to load menu sales data';
+        setAlert({ type: 'error', message: errorMsg });
+        setMenuSales([]);
+        setLoading(false);
+        return;
+      } 
+      else if (result && !result.success) {
+        const errorMsg = result.data?.message || result.data?.error || 'Failed to load menu sales data. Please check your connection.';
+        setAlert({ type: 'error', message: errorMsg });
+        setMenuSales([]);
+        setLoading(false);
+        return;
       }
       
-      // Map API response to display format
+      // Debug: Log sample menu sale from API
+      if (menuSalesData.length > 0) {
+        console.log('✅ Sample menu sale from API:', JSON.stringify(menuSalesData[0], null, 2));
+      } else {
+        console.warn('⚠️ No menu sales found in API response');
+        console.warn('Response structure:', {
+          resultSuccess: result?.success,
+          hasResultData: !!result?.data,
+          resultDataSuccess: result?.data?.success,
+          resultDataSts: result?.data?.sts,
+          resultDataCount: result?.data?.count,
+          resultDataType: typeof result?.data,
+          resultDataKeys: result?.data ? Object.keys(result.data) : [],
+        });
+      }
+      
+      // Map API response to consistent format
       if (menuSalesData.length > 0) {
         const mappedSales = menuSalesData.map((item) => ({
-          dish_id: item.dish_id || item.id || 'N/A',
-          item_id: item.item_id || 'N/A',
-          title: item.title || '-',
-          name: item.name || '-',
-          catname: item.catname || item.category || '-',
-          order_id: item.order_id || 'N/A',
-          tnc: parseInt(item.tnc || 0), // quantity (non-credit)
-          tc: parseInt(item.tc || 0), // credit quantity
-          tnc_total: parseFloat(item.tnc_total || 0), // total for non-credit
-          tc_total: parseFloat(item.tc_total || 0), // total for credit
-          price: parseFloat(item.price || 0),
-          created_at: item.created_at || '-',
-          updated_at: item.updated_at || '-',
+          id: item.dish_id || item.id || item.menu_id,
+          dish_id: item.dish_id || item.id || item.menu_id,
+          name: item.name || item.dish_name || item.menu_name || item.title || '-',
+          category: item.category || item.category_name || item.category_title || '-',
+          quantity_sold: parseInt(item.quantity_sold || item.quantity || item.qty || item.sold_quantity || 0),
+          total_revenue: parseFloat(item.total_revenue || item.revenue || item.amount || item.total_amount || item.sales_amount || 0),
         }));
         setMenuSales(mappedSales);
         console.log('✅ Mapped menu sales:', mappedSales.length, 'items');
         setAlert({ type: '', message: '' }); // Clear any previous errors
       } else {
         setMenuSales([]);
-        setAlert({ type: 'info', message: 'No menu sales data found for the selected branch and dayend ID.' });
+        
+        // Check if there's an explicit error message
+        if (result && result.data && result.data.message) {
+          const errorMsg = result.data.message;
+          setAlert({ type: 'error', message: errorMsg });
+        } else if (result && result.data && result.data.success === false) {
+          setAlert({ type: 'error', message: result.data.message || result.data.error || 'Failed to load menu sales data' });
+        } else if (result && !result.success) {
+          setAlert({ type: 'error', message: result.message || 'Failed to load menu sales data. Please check your connection and try again.' });
+        } else if (result && result.success && result.data) {
+          // API returned success but no data
+          const message = `No menu sales data found for Dayend ID (STS) ${dayendId}. Please verify the Dayend ID is correct.`;
+          
+          setAlert({ type: 'info', message });
+        } else {
+          // Unknown response structure - log full response for debugging
+          console.error('❌ Unknown API response structure:', result);
+          setAlert({ 
+            type: 'warning', 
+            message: 'API returned an unexpected response format. Check browser console (F12) for details. The API might need to be updated to return data in the expected format: { success: true, data: [...] }' 
+          });
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -147,8 +161,8 @@ export default function MenuSalesListPage() {
    * Calculate totals for menu sales
    */
   const totals = menuSales.reduce((acc, item) => {
-    acc.totalQuantity += parseInt(item.tnc || 0) + parseInt(item.tc || 0);
-    acc.totalRevenue += parseFloat(item.tnc_total || 0) + parseFloat(item.tc_total || 0);
+    acc.totalQuantity += parseInt(item.quantity_sold || 0);
+    acc.totalRevenue += parseFloat(item.total_revenue || 0);
     return acc;
   }, { totalQuantity: 0, totalRevenue: 0 });
 
@@ -187,54 +201,30 @@ export default function MenuSalesListPage() {
    */
   const columns = [
     { 
-      header: 'Dish ID', 
+      header: 'ID', 
       accessor: 'dish_id',
       className: 'w-20',
       wrap: false,
     },
     { 
-      header: 'Item Name', 
+      header: 'Menu Item', 
       accessor: 'name',
-      className: 'min-w-[150px]',
+      className: 'min-w-[200px]',
     },
     { 
       header: 'Category', 
-      accessor: 'catname',
-      className: 'min-w-[120px]',
+      accessor: 'category',
+      className: 'min-w-[150px]',
     },
     { 
-      header: 'Quantity (TNC)', 
-      accessor: 'tnc',
-      className: 'w-28',
-      wrap: false,
-    },
-    { 
-      header: 'Quantity (TC)', 
-      accessor: 'tc',
-      className: 'w-28',
-      wrap: false,
-    },
-    {
-      header: 'Price',
-      accessor: (row) => <span>{formatPKR(row.price || 0)}</span>,
+      header: 'Quantity Sold', 
+      accessor: 'quantity_sold',
       className: 'w-32',
       wrap: false,
     },
     {
-      header: 'Total (TNC)',
-      accessor: (row) => <span className="font-semibold">{formatPKR(row.tnc_total || 0)}</span>,
-      className: 'w-32',
-      wrap: false,
-    },
-    {
-      header: 'Total (TC)',
-      accessor: (row) => <span className="font-semibold">{formatPKR(row.tc_total || 0)}</span>,
-      className: 'w-32',
-      wrap: false,
-    },
-    {
-      header: 'Created At',
-      accessor: 'created_at',
+      header: 'Total Revenue',
+      accessor: (row) => <span className="font-semibold">{formatPKR(row.total_revenue || 0)}</span>,
       className: 'w-40',
       wrap: false,
     },
@@ -261,72 +251,50 @@ export default function MenuSalesListPage() {
           />
         )}
 
-        {/* STS and Branch Input */}
+        {/* Dayend ID (STS) Input and Fetch Button */}
         <div className="bg-white rounded-lg shadow p-4 mb-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+            <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                STS (Dayend ID) <span className="text-red-500">*</span>
+                Dayend ID (STS) <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={dayendId}
                 onChange={(e) => setDayendId(e.target.value)}
-                placeholder="Enter STS / Dayend ID"
+                placeholder="Enter Dayend ID / STS"
                 className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1">Enter the Dayend ID (STS number)</p>
+              <p className="text-xs text-gray-500 mt-1">Enter the Dayend ID (STS number) to fetch menu sales</p>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Branch <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={selectedBranchFilter}
-                onChange={(e) => setSelectedBranchFilter(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition"
-                required
+            <div className="flex gap-2">
+              <Button
+                onClick={fetchMenuSales}
+                variant="primary"
+                className="whitespace-nowrap"
+                disabled={loading || !dayendId}
               >
-                <option value="">Select Branch</option>
-                {branches.map((branch) => (
-                  <option key={branch.branch_id || branch.id || branch.ID} value={branch.branch_id || branch.id || branch.ID}>
-                    {branch.name || branch.branch_name || branch.title || `Branch ${branch.branch_id || branch.id}`}
-                  </option>
-                ))}
-              </select>
+                {loading ? 'Loading...' : 'Fetch Menu Sales'}
+              </Button>
+              {!loading && menuSales.length > 0 && (
+                <Button
+                  onClick={handlePrint}
+                  variant="outline"
+                  className="flex items-center gap-2 whitespace-nowrap"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print</span>
+                </Button>
+              )}
             </div>
           </div>
-          <div className="mt-4">
-            <Button
-              onClick={fetchMenuSales}
-              variant="primary"
-              className="w-full sm:w-auto"
-              disabled={loading || !dayendId || !selectedBranchFilter}
-            >
-              {loading ? 'Loading...' : 'Fetch Menu Sales'}
-            </Button>
-            {(!dayendId || !selectedBranchFilter) && (
-              <p className="text-xs text-gray-500 mt-2">
-                Please enter STS (Dayend ID) and select a branch to fetch data
-              </p>
-            )}
-          </div>
+          {!dayendId && (
+            <p className="text-xs text-gray-500 mt-2">
+              Please enter a Dayend ID (STS) to fetch menu sales data
+            </p>
+          )}
         </div>
-
-        {/* Print Button */}
-        {menuSales.length > 0 && (
-          <div className="flex justify-end">
-            <Button
-              onClick={handlePrint}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Print Report</span>
-            </Button>
-          </div>
-        )}
 
         {/* Summary Cards */}
         {!loading && menuSales.length > 0 && (
@@ -353,9 +321,9 @@ export default function MenuSalesListPage() {
             <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-600 font-medium text-lg mb-2">No menu sales data found</p>
             <p className="text-gray-500 text-sm">
-              {!dayendId || !selectedBranchFilter
-                ? 'Please enter STS (Dayend ID) and select a branch, then click "Fetch Menu Sales" to load data.'
-                : 'No menu sales data found for the entered STS and selected branch. Please verify the STS (Dayend ID) is correct.'}
+              {!dayendId 
+                ? 'Please enter a Dayend ID (STS) and click "Fetch Menu Sales" to load data.'
+                : `No menu sales found for Dayend ID ${dayendId}. Please verify the Dayend ID is correct.`}
             </p>
           </div>
         ) : (
@@ -428,12 +396,7 @@ export default function MenuSalesListPage() {
                     </p>
                     {dayendId && (
                       <p style={{ margin: '5px 0 0 0', fontSize: '12px' }}>
-                        STS (Dayend ID): {dayendId}
-                      </p>
-                    )}
-                    {selectedBranchFilter && (
-                      <p style={{ margin: '5px 0 0 0', fontSize: '12px' }}>
-                        Branch: {branches.find(b => (b.branch_id || b.id) == selectedBranchFilter)?.branch_name || branches.find(b => (b.branch_id || b.id) == selectedBranchFilter)?.name || 'Selected Branch'}
+                        Dayend ID (STS): {dayendId}
                       </p>
                     )}
                   </div>
@@ -452,29 +415,21 @@ export default function MenuSalesListPage() {
               <table className="print-table">
                 <thead>
                   <tr>
-                    <th>Dish ID</th>
-                    <th>Item Name</th>
+                    <th>ID</th>
+                    <th>Menu Item</th>
                     <th>Category</th>
-                    <th>Qty (TNC)</th>
-                    <th>Qty (TC)</th>
-                    <th>Price</th>
-                    <th>Total (TNC)</th>
-                    <th>Total (TC)</th>
-                    <th>Created At</th>
+                    <th>Quantity Sold</th>
+                    <th>Total Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
                   {menuSales.map((item, index) => (
-                    <tr key={item.dish_id || index}>
-                      <td>{item.dish_id || 'N/A'}</td>
+                    <tr key={item.id || index}>
+                      <td>{item.dish_id || item.id || 'N/A'}</td>
                       <td>{item.name || 'N/A'}</td>
-                      <td>{item.catname || 'N/A'}</td>
-                      <td style={{ textAlign: 'right' }}>{item.tnc || 0}</td>
-                      <td style={{ textAlign: 'right' }}>{item.tc || 0}</td>
-                      <td style={{ textAlign: 'right' }}>{formatPKR(item.price || 0)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatPKR(item.tnc_total || 0)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatPKR(item.tc_total || 0)}</td>
-                      <td>{item.created_at || 'N/A'}</td>
+                      <td>{item.category || 'N/A'}</td>
+                      <td style={{ textAlign: 'right' }}>{item.quantity_sold || 0}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(item.total_revenue || 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -482,11 +437,7 @@ export default function MenuSalesListPage() {
                   <tr style={{ backgroundColor: '#f3f4f6', borderTop: '2px solid #000', fontWeight: 'bold' }}>
                     <td colSpan="3" style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>Totals:</td>
                     <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>{totals.totalQuantity}</td>
-                    <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>-</td>
-                    <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>-</td>
                     <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>{formatPKR(totals.totalRevenue)}</td>
-                    <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>-</td>
-                    <td style={{ padding: '8px 4px', border: '1px solid #000', textAlign: 'right', fontWeight: 'bold' }}>-</td>
                   </tr>
                 </tfoot>
               </table>
