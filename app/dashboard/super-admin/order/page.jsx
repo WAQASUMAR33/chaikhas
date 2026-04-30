@@ -16,8 +16,26 @@ import Modal from '@/components/ui/Modal';
 import { apiGet, apiPost, apiDelete, getTerminal, getBranchId, getBranchName } from '@/utils/api';
 import { formatPKR, formatDateTime } from '@/utils/format';
 import { isCreditPayment as checkCreditPayment } from '@/utils/payment';
+import { computeBillBreakdown, isDineInOrderType } from '@/utils/billTotals';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
-import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
+import { listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
+
+/** Local calendar date YYYY-MM-DD (for “today” scope without UTC drift). */
+function getLocalTodayYMD() {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+
+function filterOrdersByLocalDate(rows, ymd) {
+  return rows.filter((order) => {
+    const raw = order.created_at || order.date || '';
+    if (!raw) return false;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return false;
+    const rowYmd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return rowYmd === ymd;
+  });
+}
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -26,7 +44,9 @@ export default function OrderManagementPage() {
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
   const [branches, setBranches] = useState([]);
   const [selectedBranchFilter, setSelectedBranchFilter] = useState(''); // Filter by branch
+  const [dateFilter, setDateFilter] = useState('today'); // today | all — default: today only
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false); // background reload (no full-page spinner)
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
   const [searchOrderId, setSearchOrderId] = useState(''); // Search by order ID
   const [alert, setAlert] = useState({ type: '', message: '' });
@@ -206,127 +226,98 @@ export default function OrderManagementPage() {
 
   /**
    * Fetch orders from API
-   * API: order_management.php (GET with terminal and optional status)
+   * @param {boolean} silent - If true, no full-page spinner (smooth background refresh).
+   * API: order_management.php — defaults to today's date for lighter payloads.
    */
-  const fetchOrders = async () => {
-    setLoading(true);
-    try {
-      const terminal = getTerminal();
-      
-      // Build params - include branch_id only if filtering by branch
-      const params = { terminal };
-      if (selectedBranchFilter) {
-        params.branch_id = selectedBranchFilter;
-      }
-      // If selectedBranchFilter is empty, don't include branch_id - API will return all
-      
-      if (filter !== 'all') {
-        params.status = filter;
-      }
-      
-      console.log('=== Fetching Orders (Super Admin) ===');
-      console.log('Params:', params);
-      
-      // Use GET method for fetching orders list
-      const result = await apiGet('api/order_management.php', params);
-      
-      console.log('getOrders.php response:', result);
-      console.log('Full API response structure:', JSON.stringify(result, null, 2));
-      
-      // Handle multiple possible response structures
-      let ordersData = [];
-      
-      // Check if result.data is an array directly
-      if (result.data && Array.isArray(result.data)) {
-        ordersData = result.data;
-        console.log('✅ Found orders in result.data (array), count:', ordersData.length);
-      }
-      // Check if result.data.data is an array (nested structure)
-      else if (result.data && result.data.data && Array.isArray(result.data.data)) {
-        ordersData = result.data.data;
-        console.log('✅ Found orders in result.data.data (nested array), count:', ordersData.length);
-      }
-      // Check if result.data.orders is an array
-      else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
-        ordersData = result.data.orders;
-        console.log('✅ Found orders in result.data.orders, count:', ordersData.length);
-      }
-      // Check if result.data.success and result.data.data is an array
-      else if (result.data && result.data.success && Array.isArray(result.data.data)) {
-        ordersData = result.data.data;
-        console.log('✅ Found orders in result.data.success.data, count:', ordersData.length);
-      }
-      // Check if result is an array directly
-      else if (Array.isArray(result)) {
-        ordersData = result;
-        console.log('✅ Found orders in result (direct array), count:', ordersData.length);
-      }
-      // Check if result.success and result.data is an array
-      else if (result.success && result.data && Array.isArray(result.data)) {
-        ordersData = result.data;
-        console.log('✅ Found orders in result.success.data, count:', ordersData.length);
-      }
-      // Try to find any array in result.data object
-      else if (result.data && typeof result.data === 'object') {
-        for (const key in result.data) {
-          if (Array.isArray(result.data[key])) {
-            ordersData = result.data[key];
-            console.log(`✅ Found orders in result.data.${key}, count:`, ordersData.length);
-            break;
+  const fetchOrders = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      else setRefreshing(true);
+      try {
+        const terminal = getTerminal();
+        const params = { terminal };
+
+        if (selectedBranchFilter) {
+          params.branch_id = selectedBranchFilter;
+        }
+        if (filter !== 'all') {
+          params.status = filter;
+        }
+
+        const todayYmd = getLocalTodayYMD();
+        if (dateFilter === 'today') {
+          params.from_date = todayYmd;
+          params.to_date = todayYmd;
+        }
+
+        const result = await apiGet('api/order_management.php', params);
+
+        let ordersData = [];
+
+        if (result.data && Array.isArray(result.data)) {
+          ordersData = result.data;
+        } else if (result.data && result.data.data && Array.isArray(result.data.data)) {
+          ordersData = result.data.data;
+        } else if (result.data && result.data.orders && Array.isArray(result.data.orders)) {
+          ordersData = result.data.orders;
+        } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+          ordersData = result.data.data;
+        } else if (Array.isArray(result)) {
+          ordersData = result;
+        } else if (result.success && result.data && Array.isArray(result.data)) {
+          ordersData = result.data;
+        } else if (result.data && typeof result.data === 'object') {
+          for (const key in result.data) {
+            if (Array.isArray(result.data[key])) {
+              ordersData = result.data[key];
+              break;
+            }
           }
         }
-      }
-      
-      // Debug: Log sample order from API
-      if (ordersData.length > 0) {
-        console.log('Sample order from API:', JSON.stringify(ordersData[0], null, 2));
-      } else {
-        console.warn('⚠️ No orders found in API response. Response structure:', Object.keys(result));
-        if (result.data) {
-          console.warn('result.data keys:', Object.keys(result.data));
-        }
-      }
-      
-      if (ordersData.length > 0) {
-        // Map API response - matching actual database structure
-        const mappedOrders = ordersData.map((order) => {
+
+        const mapRow = (order) => {
           const orderId = order.order_id || order.id;
-          const orderNumber = order.order_id ? `ORD-${order.order_id}` : (order.orderid || order.order_number || `ORD-${order.id || order.order_id}`);
-          
-          // Calculate total amounts with better fallback logic
-          // Try multiple field names that might contain the order total
-          const gTotalAmount = parseFloat(order.g_total_amount || order.grand_total_amount || order.total_amount || order.total || order.subtotal || 0);
-          
-          // Try multiple field names for net total
-          let netTotalAmount = parseFloat(order.net_total_amount || order.netTotal || order.net_total || order.final_amount || 0);
-          
-          // If netTotal is 0 but we have a total, use total as fallback
-          // This handles cases where bill hasn't been generated yet
+          const orderNumber = order.order_id
+            ? `ORD-${order.order_id}`
+            : order.orderid || order.order_number || `ORD-${order.id || order.order_id}`;
+
+          const gTotalAmount = parseFloat(
+            order.g_total_amount ||
+              order.grand_total_amount ||
+              order.total_amount ||
+              order.total ||
+              order.subtotal ||
+              0
+          );
+
+          let netTotalAmount = parseFloat(
+            order.net_total_amount || order.netTotal || order.net_total || order.final_amount || 0
+          );
+
           if (netTotalAmount === 0 && gTotalAmount > 0) {
             netTotalAmount = gTotalAmount;
           }
-          
-          // If both are 0, try calculating from order items if available
+
           if (netTotalAmount === 0 && gTotalAmount === 0 && order.items && Array.isArray(order.items)) {
             const calculatedTotal = order.items.reduce((sum, item) => {
-              const itemTotal = parseFloat(item.total_amount || item.total || (item.price || 0) * (item.quantity || 0) || 0);
+              const itemTotal = parseFloat(
+                item.total_amount || item.total || (item.price || 0) * (item.quantity || 0) || 0
+              );
               return sum + itemTotal;
             }, 0);
             if (calculatedTotal > 0) {
               netTotalAmount = calculatedTotal;
             }
           }
-          
-          // Extract status - prioritize order_status field (from database), then status field
-          // Keep original case for display, but normalize for comparison
+
           const rawStatus = order.order_status || order.status || order.Status || 'Pending';
           const normalizedStatus = String(rawStatus).toLowerCase().trim();
-          
+
           return {
             id: orderId,
             order_id: orderId,
             order_number: orderNumber,
-            orderid: order.orderid || orderNumber, // Ensure orderid is always formatted string like "ORD-123"
+            orderid: order.orderid || orderNumber,
             order_type: order.order_type || 'Dine In',
             table_id: order.table_id || order.tableid || '-',
             table_number: order.table_number || order.table_id || '-',
@@ -334,106 +325,109 @@ export default function OrderManagementPage() {
             hall_name: order.hall_name || '-',
             shop_name: order.shopname || '-',
             customer_name: order.customer_name || order.customer || '-',
-            branch_id: order.branch_id || order.branchId || null, // Include branch_id for filtering
-            branch_name: order.branch_name || order.branchName || null, // Include branch_name for display
+            branch_id: order.branch_id || order.branchId || null,
+            branch_name: order.branch_name || order.branchName || null,
             total: gTotalAmount,
             discount: parseFloat(order.discount_amount || order.discount || 0),
             service_charge: parseFloat(order.service_charge || 0),
             netTotal: netTotalAmount,
             status: normalizedStatus,
-            order_status: rawStatus, // Preserve original status from API
-            original_status: rawStatus, // Keep original for reference
+            order_status: rawStatus,
+            original_status: rawStatus,
             payment_mode: order.payment_mode || 'Cash',
             created_at: order.created_at || order.date || '',
             terminal: order.terminal || terminal,
           };
-        });
-        setOrders(mappedOrders);
-      } else if (result.data && result.data.success === false) {
-        setAlert({ type: 'error', message: result.data.message || 'Failed to load orders' });
+        };
+
+        if (ordersData.length > 0) {
+          let mappedOrders = ordersData.map(mapRow);
+          if (dateFilter === 'today') {
+            mappedOrders = filterOrdersByLocalDate(mappedOrders, todayYmd);
+          }
+          setOrders(mappedOrders);
+        } else if (result.data && result.data.success === false) {
+          setAlert({ type: 'error', message: result.data.message || 'Failed to load orders' });
+          setOrders([]);
+        } else {
+          setOrders([]);
+        }
+      } catch (error) {
+        console.error('Error fetching orders:', error);
+        setAlert({ type: 'error', message: 'Failed to load orders: ' + (error.message || 'Network error') });
         setOrders([]);
-      } else {
-        setOrders([]);
+      } finally {
+        if (!silent) setLoading(false);
+        else setRefreshing(false);
       }
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching orders:', error);
-      setAlert({ type: 'error', message: 'Failed to load orders: ' + (error.message || 'Network error') });
-      setLoading(false);
-      setOrders([]);
-    }
-  };
+    },
+    [filter, selectedBranchFilter, dateFilter]
+  );
 
   useEffect(() => {
-    // Wrap in try-catch to prevent production crashes
+    fetchBranches();
+  }, []);
+
+  useEffect(() => {
+    fetchCustomers().catch((err) => {
+      console.error('Error in fetchCustomers:', err);
+    });
+  }, [fetchCustomers]);
+
+  useEffect(() => {
+    fetchOrders(false);
+  }, [fetchOrders]);
+
+  /** Slow background poll + throttled cross-tab sync (avoids hammering the API). */
+  useEffect(() => {
+    const POLL_MS = 120000;
+    const SYNC_THROTTLE_MS = 5000;
+    let lastSync = 0;
+
+    const poll = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchOrders(true);
+    };
+
+    const intervalId = setInterval(poll, POLL_MS);
+
+    let cleanupSync = () => {};
     try {
-      fetchBranches();
-      // Safely call fetchCustomers - it has its own error handling
-      if (typeof fetchCustomers === 'function') {
-        fetchCustomers().catch(err => {
-          console.error('Error in fetchCustomers (caught in useEffect):', err);
-          // Silently fail - don't crash the page
-        });
-      }
-      fetchOrders();
-    } catch (error) {
-      console.error('Error in useEffect initialization:', error);
-      // Continue execution - don't crash
-    }
-    
-    // Auto-refresh every 30 seconds to show new orders
-    const interval = setInterval(() => {
-      try {
-        fetchOrders();
-      } catch (error) {
-        console.error('Error in fetchOrders interval:', error);
-      }
-    }, 30000);
-    
-    // Listen for updates from other dashboard instances
-    let cleanup;
-    try {
-      cleanup = listenForUpdates((event) => {
-        try {
-          console.log('📥 Received dashboard update:', event);
-          if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
-              event.type === UPDATE_EVENTS.ORDER_UPDATED || 
-              event.type === UPDATE_EVENTS.ORDER_DELETED ||
-              event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
-              event.type === UPDATE_EVENTS.BILL_CREATED ||
-              event.type === UPDATE_EVENTS.BILL_UPDATED ||
-              event.type === UPDATE_EVENTS.BILL_PAID) {
-            // Refresh orders when any order/bill is updated
-            fetchOrders();
-          }
-        } catch (error) {
-          console.error('Error in dashboard update handler:', error);
+      cleanupSync = listenForUpdates((event) => {
+        if (
+          event.type !== UPDATE_EVENTS.ORDER_CREATED &&
+          event.type !== UPDATE_EVENTS.ORDER_UPDATED &&
+          event.type !== UPDATE_EVENTS.ORDER_DELETED &&
+          event.type !== UPDATE_EVENTS.ORDER_STATUS_CHANGED &&
+          event.type !== UPDATE_EVENTS.BILL_CREATED &&
+          event.type !== UPDATE_EVENTS.BILL_UPDATED &&
+          event.type !== UPDATE_EVENTS.BILL_PAID
+        ) {
+          return;
         }
+        const now = Date.now();
+        if (now - lastSync < SYNC_THROTTLE_MS) return;
+        lastSync = now;
+        fetchOrders(true);
       });
     } catch (error) {
       console.error('Error setting up dashboard sync:', error);
-      cleanup = () => {}; // Provide empty cleanup function
     }
-    
+
     return () => {
-      try {
-        clearInterval(interval);
-        if (cleanup && typeof cleanup === 'function') {
-          cleanup();
-        }
-      } catch (error) {
-        console.error('Error in useEffect cleanup:', error);
-      }
+      clearInterval(intervalId);
+      cleanupSync();
     };
-  }, [filter, selectedBranchFilter, fetchCustomers]);
+  }, [fetchOrders]);
 
   // Initialize bill data when bill modal opens (no auto-calculation)
   useEffect(() => {
     if (billModalOpen && billOrder) {
-      // Preserve existing service charge if already set, otherwise default to 0
+      const dineIn = isDineInOrderType(billOrder.order_type);
       setBillData(prev => ({
         ...prev,
-        service_charge: prev.service_charge || 0,
+        // Dine-in: service charge is always 5% via computeBillBreakdown — no manual amount
+        service_charge: dineIn ? 0 : prev.service_charge || 0,
         discount_percentage: prev.discount_percentage || 0,
       }));
     }
@@ -942,7 +936,8 @@ export default function OrderManagementPage() {
   /**
    * Update order status
    * API: chnageorder_status.php (POST)
-   * Accepts: order_id (numeric) or orderid (string format "ORD-{number}")
+   * Accepts: order_id (numeric) or orderid (string format "ORD-{number}"), and at least one of
+   * order_status, payment_status, or payment_method (per chnageorder_status.php).
    * Also updates table status automatically when order is completed
    */
   const updateOrderStatus = async (orderId, orderNumber, newStatus) => {
@@ -956,8 +951,8 @@ export default function OrderManagementPage() {
       const isDineIn = order?.order_type === 'Dine In';
       const tableId = order?.table_id;
       
-      // Send both order_id (numeric) and orderid (formatted string) for maximum compatibility
-      const payload = { status: newStatus };
+      // API expects order_status (not legacy "status")
+      const payload = { order_status: newStatus };
       if (order_idValue) {
         payload.order_id = order_idValue;
       }
@@ -1020,7 +1015,7 @@ export default function OrderManagementPage() {
         
         setAlert({ type: 'success', message: apiResponse.message || 'Order status updated successfully!' });
         
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         setAlert({ type: 'error', message: apiResponse?.message || result.message || 'Failed to update order status' });
       }
@@ -1640,7 +1635,7 @@ export default function OrderManagementPage() {
         setSelectedCategory('');
         setOriginalTableId(null);
         setTables([]);
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         // Even if items update fails, order was updated
         setAlert({ type: 'warning', message: 'Order details updated, but there was an issue updating items. Please check manually.' });
@@ -1650,7 +1645,7 @@ export default function OrderManagementPage() {
         setSelectedCategory('');
         setOriginalTableId(null);
         setTables([]);
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       }
     } catch (error) {
       console.error('Error updating order:', error);
@@ -1681,7 +1676,7 @@ export default function OrderManagementPage() {
 
       if (result.success && result.data && result.data.success) {
         setAlert({ type: 'success', message: result.data.message || 'Order deleted successfully!' });
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         setAlert({ type: 'error', message: result.data?.message || 'Failed to delete order' });
       }
@@ -1988,7 +1983,7 @@ export default function OrderManagementPage() {
           message: `Payment recorded successfully, but order status update failed: ${orderUpdateError || 'Unknown error'}. The bill is paid, but you may need to manually update the order status to Complete.` 
         });
         // Still refresh to show updated payment status
-        fetchOrders();
+        fetchOrders(true);
         // Don't return - allow the success flow to continue since payment was successful
       }
       
@@ -2055,7 +2050,7 @@ export default function OrderManagementPage() {
         }
         
         // Refresh orders to show updated status
-        fetchOrders();
+        fetchOrders(true);
         
         // Update existingBill state to reflect payment
         if (existingBill) {
@@ -2378,14 +2373,14 @@ export default function OrderManagementPage() {
                                generatedBill.is_credit === true;
               const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
               
-              const statusPayload = { 
-                status: orderStatus,
+              const statusPayload = {
+                order_status: orderStatus,
                 order_id: orderIdValue,
-                orderid: orderidValue
+                orderid: orderidValue,
               };
-              
+
               await apiPost('api/chnageorder_status.php', statusPayload);
-              fetchOrders(); // Refresh orders list
+              fetchOrders(true); // Refresh orders list
             } catch (error) {
               console.error('Error updating order status on print:', error);
             }
@@ -2687,15 +2682,43 @@ html, body {
       wrap: false,
     },
     {
-      header: 'Total',
+      header: 'Bill amount',
+      accessor: (row) => (
+        <span className="font-medium text-gray-900 text-sm whitespace-nowrap">{formatPKR(row.total || 0)}</span>
+      ),
+      className: 'min-w-[7.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Service charges',
+      accessor: (row) => (
+        <span className="text-gray-700 text-sm whitespace-nowrap">{formatPKR(row.service_charge || 0)}</span>
+      ),
+      className: 'min-w-[7.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Discount',
       accessor: (row) => {
-        // Use netTotal if available, otherwise fallback to total, otherwise show 0
-        const displayAmount = row.netTotal > 0 ? row.netTotal : (row.total > 0 ? row.total : 0);
+        const d = parseFloat(row.discount || 0);
         return (
-          <span className="font-bold text-[#FF5F15] text-sm">{formatPKR(displayAmount)}</span>
+          <span className={`text-sm whitespace-nowrap ${d > 0 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+            {d > 0 ? formatPKR(-d) : formatPKR(0)}
+          </span>
         );
       },
-      className: 'w-32',
+      className: 'min-w-[6.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Total amount',
+      accessor: (row) => {
+        const displayAmount = row.netTotal > 0 ? row.netTotal : (row.total > 0 ? row.total : 0);
+        return (
+          <span className="font-bold text-[#FF5F15] text-sm whitespace-nowrap">{formatPKR(displayAmount)}</span>
+        );
+      },
+      className: 'min-w-[7.5rem] text-right',
       wrap: false,
     },
     {
@@ -2884,15 +2907,20 @@ html, body {
               <FileText className="w-7 h-7 text-[#FF5F15]" />
               Order Management
             </h1>
-            <p className="text-gray-600 mt-1">View and manage all orders with full CRUD operations</p>
+            <p className="text-gray-600 mt-1">
+              {dateFilter === 'today'
+                ? `Showing today's orders (${getLocalTodayYMD()}). Switch to “All dates” to load history.`
+                : 'View and manage orders across all dates.'}
+            </p>
           </div>
           <Button
             variant="outline"
-            onClick={fetchOrders}
-            title="Refresh Orders"
+            onClick={() => fetchOrders(false)}
+            disabled={loading}
+            title={refreshing ? 'Refreshing in background…' : 'Reload orders'}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading || refreshing ? 'animate-spin' : ''}`} />
+            {loading ? 'Loading…' : refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
 
@@ -2958,6 +2986,32 @@ html, body {
           )}
         </div>
 
+        {/* Date scope: default today for lighter loads; “All dates” for full history */}
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Date range</label>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={dateFilter === 'today' ? 'primary' : 'secondary'}
+              onClick={() => setDateFilter('today')}
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={dateFilter === 'all' ? 'primary' : 'secondary'}
+              onClick={() => setDateFilter('all')}
+            >
+              All dates
+            </Button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            The list refreshes quietly in the background about every 2 minutes while this tab is visible. Use Refresh for an immediate reload.
+          </p>
+        </div>
+
         {/* Filter Buttons */}
         <div className="flex gap-2 flex-wrap items-center">
           <span className="text-sm font-medium text-gray-700 mr-2">Filter by Status:</span>
@@ -3005,9 +3059,11 @@ html, body {
             <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-600 font-medium text-lg mb-2">No orders found</p>
             <p className="text-gray-500 text-sm">
-              {filter === 'all' 
-                ? 'There are no orders in the system yet.' 
-                : `No orders found with status "${filter}".`}
+              {dateFilter === 'today' && filter === 'all'
+                ? `No orders for today (${getLocalTodayYMD()}). Try “All dates” or another status filter.`
+                : filter === 'all'
+                  ? 'There are no orders matching the current filters.'
+                  : `No orders found with status "${filter}".`}
             </p>
           </div>
         ) : (
@@ -3518,36 +3574,43 @@ html, body {
 
               {/* Bill Calculation */}
               <div className="space-y-4">
-                {/* Subtotal - Read Only */}
+                {/* Bill amount / Subtotal — read only */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
                   <label className="block text-sm font-medium text-blue-600 mb-1.5 uppercase tracking-wide">
-                    Subtotal
+                    {isDineInOrderType(billOrder.order_type) ? 'Bill amount' : 'Subtotal'}
                   </label>
                   <p className="text-2xl font-bold text-gray-900">
                     {formatPKR(billOrder.g_total_amount || billOrder.total || 0)}
                   </p>
                 </div>
 
-                {/* Service Charge - Manual Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={billData.service_charge || 0}
-                    onChange={(e) => {
-                      const serviceCharge = parseFloat(e.target.value) || 0;
-                      setBillData({ ...billData, service_charge: serviceCharge });
-                    }}
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enter service charge amount (e.g., 50.00)
-                  </p>
-                </div>
+                {/* Service charge — Dine In: fixed 5% after discount | Others: manual amount */}
+                {!isDineInOrderType(billOrder.order_type) ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={billData.service_charge || 0}
+                      onChange={(e) => {
+                        const serviceCharge = parseFloat(e.target.value) || 0;
+                        setBillData({ ...billData, service_charge: serviceCharge });
+                      }}
+                      placeholder="0.00"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter service charge amount (e.g., 50.00)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                    Dine-in service charge is fixed at{' '}
+                    <span className="font-semibold">5%</span> of gross total (bill amount minus discount).
+                  </div>
+                )}
 
                 {/* Discount - Percentage Input */}
                 <div>
@@ -3626,38 +3689,63 @@ html, body {
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
                   const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                  // Step 1: Service charge (from manual input)
-                  const serviceCharge = parseFloat(billData.service_charge || 0);
-                  // Step 2: Discount amount (percentage of subtotal + service charge)
-                  const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                  // Step 3: Grand total
-                  const grandTotal = (subtotal + serviceCharge) - discountAmount;
-                  
+                  const br = computeBillBreakdown(
+                    billOrder.order_type,
+                    subtotal,
+                    billData.discount_percentage,
+                    billData.service_charge
+                  );
+
+                  if (br.isDineIn) {
+                    return (
+                      <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Bill amount:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
+                        </div>
+                        {billData.discount_percentage > 0 && (
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                            <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Gross total:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.grossTotal)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Service charges (5%):</span>
+                          <span className="font-semibold text-gray-900">+{formatPKR(br.serviceCharge)}</span>
+                        </div>
+                        <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                          <span className="text-gray-900">Net amount:</span>
+                          <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between text-sm py-2">
                         <span className="text-gray-600 font-medium">Subtotal:</span>
-                        <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
+                        <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
                       </div>
-                      {serviceCharge > 0 && (
+                      {br.serviceCharge > 0 && (
                         <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Service Charge:</span>
-                          <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
+                          <span className="text-gray-600 font-medium">Service charge:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.serviceCharge)}</span>
                         </div>
                       )}
                       {billData.discount_percentage > 0 && (
-                        <>
-                          <div className="flex justify-between text-sm py-2">
-                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
-                            <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
-                          </div>
-                        </>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                          <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                        </div>
                       )}
                       <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
-                        <span className="text-gray-900">Grand Total:</span>
-                        <span className="text-[#FF5F15] text-2xl">
-                          {formatPKR(grandTotal)}
-                        </span>
+                        <span className="text-gray-900">Grand total:</span>
+                        <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
                       </div>
                     </div>
                   );
@@ -3677,15 +3765,15 @@ html, body {
                       }
 
                       const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                      
-                      // Step 1: Service charge (from manual input)
-                      const serviceCharge = parseFloat(billData.service_charge || 0);
-                      
-                      // Step 2: Discount amount (percentage of subtotal + service charge)
-                      const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                      
-                      // Step 3: Grand total
-                      const grandTotal = (subtotal + serviceCharge) - discountAmount;
+                      const br = computeBillBreakdown(
+                        billOrder.order_type,
+                        subtotal,
+                        billData.discount_percentage,
+                        billData.service_charge
+                      );
+                      const serviceCharge = br.serviceCharge;
+                      const discountAmount = br.discountAmount;
+                      const grandTotal = br.grandTotal;
 
                       // Create bill using bills_management.php API
                       const billPayload = {
@@ -3789,8 +3877,12 @@ html, body {
                         
                         // Calculate discount percentage if not in bill data
                         let discountPercentage = billData.discount_percentage || 0;
-                        if (!discountPercentage && billData.discount && (subtotal + serviceCharge) > 0) {
-                          discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
+                        if (!discountPercentage && billData.discount && subtotal > 0) {
+                          if (isDineInOrderType(billOrder.order_type)) {
+                            discountPercentage = ((billData.discount / subtotal) * 100).toFixed(2);
+                          } else if (subtotal + serviceCharge > 0) {
+                            discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
+                          }
                         }
                         
                         // Get customer info if credit
@@ -3817,6 +3909,7 @@ html, body {
                           service_charge: serviceCharge,
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
+                          gross_after_discount: br.isDineIn ? br.grossTotal : undefined,
                           grand_total: grandTotal,
                           payment_method: paymentMethod, // Explicitly set to 'Credit' if payment_mode is 'Credit'
                           payment_mode: paymentMethod, // Also set payment_mode for consistency
@@ -3847,10 +3940,10 @@ html, body {
                         const orderStatus = billData.payment_mode === 'Credit' ? 'Credit' : 'Bill Generated';
                         
                         try {
-                          const statusPayload = { 
-                            status: orderStatus,
+                          const statusPayload = {
+                            order_status: orderStatus,
                             order_id: orderIdValue,
-                            orderid: orderidValue
+                            orderid: orderidValue,
                           };
                           await apiPost('api/chnageorder_status.php', statusPayload);
                           console.log(`Order status updated to: ${orderStatus}`);
@@ -3864,7 +3957,7 @@ html, body {
                         setDetailsModalOpen(false);
                         
                         // Refresh orders list
-                        fetchOrders();
+                        fetchOrders(true);
                         
                         // Auto-print receipt after a short delay (allowing modal to render)
                         setTimeout(() => {

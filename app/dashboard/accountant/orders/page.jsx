@@ -18,6 +18,7 @@ import { formatPKR, formatDateTime } from '@/utils/format';
 import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer, Plus, Minus, ShoppingCart, CreditCard, DollarSign } from 'lucide-react';
 import ThermalReceipt from '@/components/receipt/ThermalReceipt';
 import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
+import { computeBillBreakdown, isDineInOrderType } from '@/utils/billTotals';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -94,10 +95,10 @@ export default function OrderManagementPage() {
       // Initialize bill data when bill modal opens (no auto-calculation)
       useEffect(() => {
         if (billModalOpen && billOrder) {
-          // Preserve existing service charge if already set, otherwise default to 0
+          const dineIn = isDineInOrderType(billOrder.order_type);
           setBillData(prev => ({
             ...prev,
-            service_charge: prev.service_charge || 0,
+            service_charge: dineIn ? 0 : prev.service_charge || 0,
             discount_percentage: prev.discount_percentage || 0,
           }));
         } else if (!billModalOpen) {
@@ -623,8 +624,8 @@ export default function OrderManagementPage() {
       const orderidValue = orderNumber || (orderId ? `ORD-${orderId}` : null);
       const order_idValue = orderId || (orderNumber ? parseInt(orderNumber.replace(/ORD-?/i, '')) : null);
       
-      // Send both order_id (numeric) and orderid (formatted string) for maximum compatibility
-      const payload = { status: newStatus };
+      // API expects order_status (not legacy "status")
+      const payload = { order_status: newStatus };
       if (order_idValue) {
         payload.order_id = order_idValue;
       }
@@ -3007,12 +3008,12 @@ html, body {
                                generatedBill.is_credit === true;
               const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
               
-              const statusPayload = { 
-                status: orderStatus,
+              const statusPayload = {
+                order_status: orderStatus,
                 order_id: orderIdValue,
-                orderid: orderidValue
+                orderid: orderidValue,
               };
-              
+
               await apiPost('api/chnageorder_status.php', statusPayload);
               fetchOrders(); // Refresh orders list
             } catch (error) {
@@ -4319,36 +4320,41 @@ html, body {
 
               {/* Bill Calculation */}
               <div className="space-y-4">
-                {/* Subtotal - Read Only */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
                   <label className="block text-sm font-medium text-blue-600 mb-1.5 uppercase tracking-wide">
-                    Subtotal
+                    {isDineInOrderType(billOrder.order_type) ? 'Bill amount' : 'Subtotal'}
                   </label>
                   <p className="text-2xl font-bold text-gray-900">
                     {formatPKR(billOrder.g_total_amount || billOrder.total || 0)}
                   </p>
                 </div>
 
-                {/* Service Charge - Manual Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={billData.service_charge || 0}
-                    onChange={(e) => {
-                      const serviceCharge = parseFloat(e.target.value) || 0;
-                      setBillData({ ...billData, service_charge: serviceCharge });
-                    }}
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enter service charge amount (e.g., 50.00)
-                  </p>
-                </div>
+                {!isDineInOrderType(billOrder.order_type) ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={billData.service_charge || 0}
+                      onChange={(e) => {
+                        const serviceCharge = parseFloat(e.target.value) || 0;
+                        setBillData({ ...billData, service_charge: serviceCharge });
+                      }}
+                      placeholder="0.00"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter service charge amount (e.g., 50.00)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                    Dine-in service charge is fixed at <span className="font-semibold">5%</span> of gross total
+                    (bill amount minus discount).
+                  </div>
+                )}
 
                 {/* Discount - Percentage Input */}
                 <div>
@@ -4376,38 +4382,63 @@ html, body {
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
                   const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                  // Step 1: Service charge (from manual input)
-                  const serviceCharge = parseFloat(billData.service_charge || 0);
-                  // Step 2: Discount amount (percentage of subtotal + service charge)
-                  const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                  // Step 3: Grand total
-                  const grandTotal = (subtotal + serviceCharge) - discountAmount;
-                  
+                  const br = computeBillBreakdown(
+                    billOrder.order_type,
+                    subtotal,
+                    billData.discount_percentage,
+                    billData.service_charge
+                  );
+
+                  if (br.isDineIn) {
+                    return (
+                      <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Bill amount:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
+                        </div>
+                        {billData.discount_percentage > 0 && (
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                            <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Gross total:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.grossTotal)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Service charges (5%):</span>
+                          <span className="font-semibold text-gray-900">+{formatPKR(br.serviceCharge)}</span>
+                        </div>
+                        <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                          <span className="text-gray-900">Net amount:</span>
+                          <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between text-sm py-2">
                         <span className="text-gray-600 font-medium">Subtotal:</span>
-                        <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
+                        <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
                       </div>
-                      {serviceCharge > 0 && (
+                      {br.serviceCharge > 0 && (
                         <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Service Charge:</span>
-                          <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
+                          <span className="text-gray-600 font-medium">Service charge:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.serviceCharge)}</span>
                         </div>
                       )}
                       {billData.discount_percentage > 0 && (
-                        <>
-                          <div className="flex justify-between text-sm py-2">
-                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
-                            <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
-                          </div>
-                        </>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                          <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                        </div>
                       )}
                       <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
-                        <span className="text-gray-900">Grand Total:</span>
-                        <span className="text-[#FF5F15] text-2xl">
-                          {formatPKR(grandTotal)}
-                        </span>
+                        <span className="text-gray-900">Grand total:</span>
+                        <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
                       </div>
                     </div>
                   );
@@ -4418,15 +4449,15 @@ html, body {
                   onClick={async () => {
                     try {
                       const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                      
-                      // Step 1: Service charge (from manual input)
-                      const serviceCharge = parseFloat(billData.service_charge || 0);
-                      
-                      // Step 2: Discount amount (percentage of subtotal + service charge)
-                      const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                      
-                      // Step 3: Grand total
-                      const grandTotal = (subtotal + serviceCharge) - discountAmount;
+                      const br = computeBillBreakdown(
+                        billOrder.order_type,
+                        subtotal,
+                        billData.discount_percentage,
+                        billData.service_charge
+                      );
+                      const serviceCharge = br.serviceCharge;
+                      const discountAmount = br.discountAmount;
+                      const grandTotal = br.grandTotal;
 
                       // Create bill using bills_management.php API - Always create as Unpaid
                       const billPayload = {
@@ -4523,8 +4554,12 @@ html, body {
                         
                         // Calculate discount percentage if not in bill data
                         let discountPercentage = billData.discount_percentage || 0;
-                        if (!discountPercentage && billData.discount && (subtotal + serviceCharge) > 0) {
-                          discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
+                        if (!discountPercentage && billData.discount && subtotal > 0) {
+                          if (isDineInOrderType(billOrder.order_type)) {
+                            discountPercentage = ((billData.discount / subtotal) * 100).toFixed(2);
+                          } else if (subtotal + serviceCharge > 0) {
+                            discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
+                          }
                         }
                         
                         // Check if order_items are already in the response (NEW: bills_management.php now returns order_items)
@@ -4661,6 +4696,7 @@ html, body {
                           service_charge: serviceCharge,
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
+                          gross_after_discount: br.isDineIn ? br.grossTotal : undefined,
                           grand_total: grandTotal,
                           payment_method: 'Cash', // Default payment method, will be updated when payment is received
                           payment_mode: 'Cash', // Default payment method, will be updated when payment is received
@@ -4690,10 +4726,10 @@ html, body {
                         const orderStatus = 'Bill Generated';
                         
                         try {
-                          const statusPayload = { 
-                            status: orderStatus,
+                          const statusPayload = {
+                            order_status: orderStatus,
                             order_id: orderIdValue,
-                            orderid: orderidValue
+                            orderid: orderidValue,
                           };
                           await apiPost('api/chnageorder_status.php', statusPayload);
                           console.log(`Order status updated to: ${orderStatus}`);

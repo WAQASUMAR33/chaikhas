@@ -632,16 +632,6 @@ export default function LoginPage() {
                   )}
                 </button>
               </div>
-
-              {/* Demo credentials - Only show in development */}
-              {process.env.NODE_ENV === 'development' && (
-                <div className="text-center pt-1">
-                  <p className="text-xs text-gray-500">
-                    Demo: <span className="font-semibold text-[#FF5F15]">admin@gmail.com</span> /{' '}
-                    <span className="font-semibold text-[#FF5F15]">dev786</span>
-                  </p>
-                </div>
-              )}
             </form>
           </div>
 

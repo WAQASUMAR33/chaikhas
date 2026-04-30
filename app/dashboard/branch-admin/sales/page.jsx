@@ -17,7 +17,7 @@ import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
-import { apiPost, getTerminal, getBranchId } from '@/utils/api';
+import { apiPost, apiGet, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X } from 'lucide-react';
 import logger from '@/utils/logger';
@@ -343,7 +343,8 @@ export default function SalesListPage() {
             billsParams.to_date = dateRange.toDate;
           }
           
-          const billsResult = await apiPost('api/bills_management.php', { action: 'get', ...billsParams });
+          // bills_management.php lists bills on GET only (branch_id, etc.); POST action=get is not handled there
+          const billsResult = await apiGet('api/bills_management.php', billsParams);
           
           if (billsResult.success && billsResult.data) {
             let billsList = [];

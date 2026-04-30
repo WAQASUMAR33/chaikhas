@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { formatPKR, formatDateTime } from '@/utils/format';
+import { isDineInOrderType } from '@/utils/billTotals';
 
 /**
  * Logo Component with Text Fallback
@@ -418,29 +419,58 @@ export default function ThermalReceipt({ order, items, branchName = '', showPaid
 
         {/* Totals Section */}
         <div className="totals-section">
-          <div className="total-row">
-            <span className="total-label">Subtotal:</span>
-            <span className="total-value">{formatPKR(subtotal)}</span>
-          </div>
-          
-          {serviceCharge > 0 && (
-            <div className="total-row">
-              <span className="total-label">Service Charge:</span>
-              <span className="total-value">{formatPKR(serviceCharge)}</span>
-            </div>
+          {isDineInOrderType(orderType) ? (
+            <>
+              <div className="total-row">
+                <span className="total-label">Bill amount:</span>
+                <span className="total-value">{formatPKR(subtotal)}</span>
+              </div>
+              {discount > 0 && (
+                <div className="total-row">
+                  <span className="total-label">Discount:</span>
+                  <span className="total-value">-{formatPKR(discount)}</span>
+                </div>
+              )}
+              <div className="total-row">
+                <span className="total-label">Gross total:</span>
+                <span className="total-value">{formatPKR(subtotal - discount)}</span>
+              </div>
+              <div className="total-row">
+                <span className="total-label">Service charges (5%):</span>
+                <span className="total-value">+{formatPKR(serviceCharge)}</span>
+              </div>
+              <div className="total-row net-total">
+                <span className="total-label">Net amount:</span>
+                <span className="total-value">{formatPKR(netTotal)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="total-row">
+                <span className="total-label">Subtotal:</span>
+                <span className="total-value">{formatPKR(subtotal)}</span>
+              </div>
+
+              {serviceCharge > 0 && (
+                <div className="total-row">
+                  <span className="total-label">Service Charge:</span>
+                  <span className="total-value">{formatPKR(serviceCharge)}</span>
+                </div>
+              )}
+
+              {discount > 0 && (
+                <div className="total-row">
+                  <span className="total-label">Discount:</span>
+                  <span className="total-value">-{formatPKR(discount)}</span>
+                </div>
+              )}
+
+              <div className="total-row net-total">
+                <span className="total-label">Net Total:</span>
+                <span className="total-value">{formatPKR(netTotal)}</span>
+              </div>
+            </>
           )}
-          
-          {discount > 0 && (
-            <div className="total-row">
-              <span className="total-label">Discount:</span>
-              <span className="total-value">-{formatPKR(discount)}</span>
-            </div>
-          )}
-          
-          <div className="total-row net-total">
-            <span className="total-label">Net Total:</span>
-            <span className="total-value">{formatPKR(netTotal)}</span>
-          </div>
           
           {/* Payment Information */}
           {paymentMethod && (

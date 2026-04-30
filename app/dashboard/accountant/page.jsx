@@ -10,8 +10,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AccountantLayout from '@/components/accountant/AccountantLayout';
 import Button from '@/components/ui/Button';
-import { getToken, getRole, getBranchId } from '@/utils/api';
-import { apiPost, getTerminal } from '@/utils/api';
+import { getToken, getRole, getBranchId, apiPost, apiGet, getTerminal } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { 
   LayoutDashboard, 
@@ -159,7 +158,7 @@ export default function AccountantDashboardPage() {
         }
         
         console.log('📊 Fetching bills for accurate sales calculation:', billsParams);
-        const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+        const billsResult = await apiGet('api/bills_management.php', billsParams);
         
         if (billsResult.success && billsResult.data) {
           let billsList = [];
@@ -334,7 +333,7 @@ export default function AccountantDashboardPage() {
             billsParams.after_closing_date = lastDayendTime;
           }
           
-          const billsResult = await apiPost('/api/bills_management.php', { action: 'get', ...billsParams });
+          const billsResult = await apiGet('api/bills_management.php', billsParams);
           console.log('📊 Direct bills fetch response:', billsResult);
           
           if (billsResult.success && billsResult.data) {

@@ -16,7 +16,90 @@ import { apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
 import { ShoppingCart, Plus, Minus, X, Receipt, Check } from 'lucide-react';
 
+/** Sum line totals from API/cart-shaped items (create-order API often omits order-level amounts until billing). */
+function sumReceiptLineItems(items) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return items.reduce((sum, item) => {
+    const total = parseFloat(item.total_amount ?? item.total ?? item.total_price ?? '');
+    if (!Number.isNaN(total) && total > 0) return sum + total;
+    const price = parseFloat(item.price ?? item.rate ?? item.unit_price ?? 0);
+    const qty = parseInt(item.quantity ?? item.qty ?? item.qnty ?? 1, 10) || 1;
+    return sum + price * qty;
+  }, 0);
+}
+
+function normalizeReceiptItems(apiItems, cartSnapshot) {
+  const raw = Array.isArray(apiItems) ? apiItems : [];
+  if (raw.length > 0) {
+    return raw.map((item) => {
+      const price = parseFloat(item.price ?? item.rate ?? item.unit_price ?? 0);
+      const qty = parseInt(item.quantity ?? item.qty ?? item.qnty ?? 1, 10) || 1;
+      const lineTotal = parseFloat(item.total_amount ?? item.total ?? item.total_price ?? '');
+      const totalAmt = !Number.isNaN(lineTotal) && lineTotal > 0 ? lineTotal : price * qty;
+      return {
+        dish_name: item.dish_name || item.name || item.title || item.item_name || 'Item',
+        price,
+        quantity: qty,
+        total_amount: totalAmt,
+      };
+    });
+  }
+  return (cartSnapshot || []).map((item) => {
+    const price = parseFloat(item.price ?? 0);
+    const qty = parseInt(item.quantity ?? 1, 10) || 1;
+    return {
+      dish_name: item.name || item.dish_name || 'Item',
+      price,
+      quantity: qty,
+      total_amount: price * qty,
+    };
+  });
+}
+
+/**
+ * Build receipt display state: backend often returns order without g_total_amount / items array uses varying keys.
+ */
+function enrichReceiptState(responseData, cartSnapshot, defaultOrderType) {
+  const nestedItems =
+    responseData.items ||
+    responseData.order_items ||
+    responseData.order?.items ||
+    responseData.details ||
+    responseData.orderdetails ||
+    [];
+  const items = normalizeReceiptItems(nestedItems, cartSnapshot);
+  const fromLines = sumReceiptLineItems(items);
+
+  const orderRaw =
+    responseData.order && typeof responseData.order === 'object' ? responseData.order : responseData;
+
+  const oid = responseData.order_id ?? orderRaw.order_id ?? orderRaw.id ?? null;
+
+  const gTot = parseFloat(orderRaw.g_total_amount ?? orderRaw.total_amount ?? orderRaw.total ?? '');
+  const netTot = parseFloat(orderRaw.net_total_amount ?? orderRaw.net_total ?? orderRaw.netTotal ?? '');
+
+  const g = !Number.isNaN(gTot) && gTot > 0 ? gTot : fromLines;
+  const net = !Number.isNaN(netTot) && netTot > 0 ? netTot : g;
+
+  const order = {
+    ...orderRaw,
+    order_type: orderRaw.order_type || defaultOrderType,
+    order_status: orderRaw.order_status || orderRaw.status || 'Running',
+    g_total_amount: g,
+    net_total_amount: net,
+    total: g,
+  };
+
+  return {
+    order,
+    items,
+    order_id: oid ?? order.order_id ?? order.id,
+  };
+}
+
 export default function CreateOrderPage() {
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchId, setSelectedBranchId] = useState('');
   const [halls, setHalls] = useState([]);
   const [tables, setTables] = useState([]);
   const [dishes, setDishes] = useState([]);
@@ -36,12 +119,6 @@ export default function CreateOrderPage() {
   const [orderReceipt, setOrderReceipt] = useState(null);
 
   useEffect(() => {
-    fetchHalls();
-    fetchCategories();
-    fetchDishes();
-  }, []);
-
-  useEffect(() => {
     if (selectedHall) {
       fetchTables();
     } else {
@@ -56,17 +133,140 @@ export default function CreateOrderPage() {
   // }, [selectedCategory]);
 
   /**
-   * Fetch halls from API
+   * Branch used for halls, tables, categories, menu & order payload (super-admin often has no branch_id in session).
+   */
+  const resolveBranchIdForApi = () => {
+    if (selectedBranchId) {
+      const n = parseInt(selectedBranchId, 10);
+      if (!isNaN(n) && n > 0) return n;
+    }
+    let branchId = getBranchId();
+    if (branchId) {
+      branchId = String(branchId).trim();
+      if (branchId === 'null' || branchId === 'undefined' || branchId === '') {
+        branchId = null;
+      } else {
+        const n = parseInt(branchId, 10);
+        if (isNaN(n) || n <= 0) branchId = null;
+      }
+    }
+    const terminal = getTerminal();
+    return branchId || terminal;
+  };
+
+  const fetchBranches = async () => {
+    try {
+      const result = await apiPost('/branch_management.php', { action: 'get' });
+      let branchesData = [];
+      if (result.data && Array.isArray(result.data)) {
+        branchesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        branchesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.branches)) {
+        branchesData = result.data.branches;
+      }
+      setBranches(branchesData);
+      return branchesData;
+    } catch (error) {
+      console.error('Error fetching branches:', error);
+      setBranches([]);
+      return [];
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const list = await fetchBranches();
+      if (cancelled) return;
+      if (!list.length) {
+        setLoading(false);
+        setAlert({
+          type: 'warning',
+          message: 'No branches found. Cannot load halls until branches exist.',
+        });
+        return;
+      }
+
+      let sid = getBranchId();
+      if (sid) {
+        sid = String(sid).trim();
+        if (sid === 'null' || sid === 'undefined') sid = '';
+      }
+      const matchStored =
+        sid &&
+        list.some((b) => String(b.branch_id ?? b.id ?? b.branch_ID) === String(sid));
+
+      const pickId = matchStored
+        ? sid
+        : String(list[0].branch_id ?? list[0].id ?? list[0].branch_ID ?? '');
+      if (pickId && !cancelled) setSelectedBranchId(pickId);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    setSelectedHall('');
+    setSelectedTable('');
+    fetchHalls();
+    fetchCategories();
+    fetchDishes();
+  }, [selectedBranchId]);
+
+  /**
+   * Fetch halls from API (send branch_id like categories — backend often requires it)
    */
   const fetchHalls = async () => {
     try {
       const terminal = getTerminal();
-      const result = await apiPost('api/get_halls.php', { terminal });
+      const branchKey = resolveBranchIdForApi();
+
+      console.log('=== Fetching Halls (Super Admin Create Order) ===', { terminal, branch_id: branchKey });
+
+      const result = await apiPost('api/get_halls.php', {
+        terminal,
+        branch_id: branchKey,
+      });
+
+      let hallsData = [];
+
       if (result.data && Array.isArray(result.data)) {
-        setHalls(result.data);
+        hallsData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.data)) {
+        hallsData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.halls)) {
+        hallsData = result.data.halls;
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key of Object.keys(result.data)) {
+          if (Array.isArray(result.data[key])) {
+            hallsData = result.data[key];
+            break;
+          }
+        }
+      }
+
+      if (hallsData.length > 0) {
+        const mapped = hallsData
+          .map((hall) => ({
+            hall_id: hall.hall_id ?? hall.id ?? hall.HallID,
+            name: hall.name || hall.hall_name || hall.Name || '',
+            capacity: hall.capacity ?? 0,
+            branch_id: hall.branch_id ?? branchKey,
+          }))
+          .filter((h) => h.hall_id != null && h.hall_id !== '');
+        setHalls(mapped);
+      } else {
+        console.warn('No halls in API response');
+        setHalls([]);
       }
     } catch (error) {
       console.error('Error fetching halls:', error);
+      setHalls([]);
     }
   };
 
@@ -75,15 +275,54 @@ export default function CreateOrderPage() {
    */
   const fetchTables = async () => {
     try {
-      const terminal = getTerminal();
-      const result = await apiPost('api/get_tables.php', { terminal });
-      if (result.data && Array.isArray(result.data)) {
-        // Filter tables by selected hall
-        const filtered = result.data.filter(table => table.hall_id == selectedHall);
-        setTables(filtered);
+      if (!selectedHall) {
+        setTables([]);
+        return;
       }
+
+      const terminal = getTerminal();
+      const branchKey = resolveBranchIdForApi();
+
+      const result = await apiPost('api/get_tables.php', {
+        terminal,
+        branch_id: branchKey,
+      });
+
+      let tablesData = [];
+
+      if (result.data && Array.isArray(result.data)) {
+        tablesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.data)) {
+        tablesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.tables)) {
+        tablesData = result.data.tables;
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key of Object.keys(result.data)) {
+          if (Array.isArray(result.data[key])) {
+            tablesData = result.data[key];
+            break;
+          }
+        }
+      }
+
+      const mappedTables = tablesData
+        .map((table) => ({
+          table_id: table.table_id ?? table.id ?? table.TableID,
+          table_number: table.table_number || table.table_name || table.number || '',
+          hall_id: table.hall_id ?? table.HallID ?? null,
+          hall_name: table.hall_name || '',
+          capacity: table.capacity ?? table.Capacity ?? 0,
+          status: table.status || table.Status || '',
+          branch_id: table.branch_id ?? branchKey,
+        }))
+        .filter((t) => t.table_id != null && String(t.hall_id) === String(selectedHall));
+
+      setTables(mappedTables);
     } catch (error) {
       console.error('Error fetching tables:', error);
+      setTables([]);
     }
   };
 
@@ -93,14 +332,15 @@ export default function CreateOrderPage() {
   const fetchCategories = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
       
+      const branchKey = resolveBranchIdForApi();
+
       console.log('=== Fetching Categories (Create Order) ===');
-      console.log('Params:', { terminal, branch_id: branchId || terminal });
+      console.log('Params:', { terminal, branch_id: branchKey });
       
       const result = await apiPost('api/get_categories.php', { 
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchKey,
       });
       
       console.log('get_categories.php response:', result);
@@ -163,14 +403,32 @@ export default function CreateOrderPage() {
   const fetchDishes = async () => {
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
-      const result = await apiPost('api/get_products.php', { 
+      const branchKey = resolveBranchIdForApi();
+
+      const result = await apiPost('api/get_products.php', {
         terminal,
-        branch_id: branchId || terminal
+        branch_id: branchKey,
       });
+
+      let dishesData = [];
       if (result.data && Array.isArray(result.data)) {
-        setDishes(result.data);
+        dishesData = result.data;
+      } else if (result.data && result.data.success && Array.isArray(result.data.data)) {
+        dishesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.data)) {
+        dishesData = result.data.data;
+      } else if (result.data && Array.isArray(result.data.products)) {
+        dishesData = result.data.products;
+      } else if (result.data && typeof result.data === 'object') {
+        for (const key of Object.keys(result.data)) {
+          if (Array.isArray(result.data[key])) {
+            dishesData = result.data[key];
+            break;
+          }
+        }
       }
+
+      setDishes(dishesData);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching dishes:', error);
@@ -236,13 +494,17 @@ export default function CreateOrderPage() {
       setAlert({ type: 'error', message: 'Cart is empty. Please add items' });
       return;
     }
+    if (branches.length > 0 && !selectedBranchId) {
+      setAlert({ type: 'error', message: 'Please select a branch.' });
+      return;
+    }
 
     setPlacing(true);
     setAlert({ type: '', message: '' });
 
     try {
       const terminal = getTerminal();
-      const branchId = getBranchId();
+      const branchKey = resolveBranchIdForApi();
       const userId = getToken(); // Get user ID from token or localStorage
       
       // Prepare order items
@@ -270,7 +532,7 @@ export default function CreateOrderPage() {
         table_id: orderType === 'Dine In' ? parseInt(selectedTable) : 0,
         comments: comments,
         terminal: terminal,
-        branch_id: branchId || terminal, // Use branch_id or fallback to terminal
+        branch_id: branchKey,
         items: items,
       };
 
@@ -285,14 +547,11 @@ export default function CreateOrderPage() {
 
       // Handle nested response structure: result.data.success and result.data.data
       if (result.success && result.data) {
+        const cartSnapshot = cart.map((i) => ({ ...i }));
         // Check if response has success field (nested structure)
         if (result.data.success === true && result.data.data) {
           const responseData = result.data.data;
-          setOrderReceipt({
-            order: responseData.order || responseData,
-            items: responseData.items || [],
-            order_id: responseData.order_id || (responseData.order ? responseData.order.order_id : null),
-          });
+          setOrderReceipt(enrichReceiptState(responseData, cartSnapshot, orderType));
           setReceiptModalOpen(true);
           
           // Update table status to "Running" for Dine In orders
@@ -324,11 +583,7 @@ export default function CreateOrderPage() {
           setAlert({ type: 'error', message: result.data.message || 'Failed to place order' });
         } else {
           // Direct data response (no nested structure)
-          setOrderReceipt({
-            order: result.data.order || result.data,
-            items: result.data.items || [],
-            order_id: result.data.order_id || (result.data.order ? result.data.order.order_id : null),
-          });
+          setOrderReceipt(enrichReceiptState(result.data, cartSnapshot, orderType));
           setReceiptModalOpen(true);
           
           // Update table status to "Running" for Dine In orders
@@ -394,7 +649,7 @@ export default function CreateOrderPage() {
 
         {/* Order Selection - Horizontal Row */}
         <div className="bg-white rounded-lg shadow p-4 sm:p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {/* Order Type */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -418,6 +673,31 @@ export default function CreateOrderPage() {
               </select>
             </div>
 
+            {/* Branch (super-admin: halls/menu are scoped by branch) */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Branch <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+                disabled={branches.length === 0}
+                required
+                className="block w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition shadow-sm hover:border-gray-300 disabled:bg-gray-50"
+              >
+                <option value="">{branches.length === 0 ? 'No branches' : 'Select branch'}</option>
+                {branches.map((b) => {
+                  const id = b.branch_id ?? b.id ?? b.branch_ID;
+                  const label = b.branch_name || b.name || b.shop_name || `Branch ${id}`;
+                  return (
+                    <option key={id} value={String(id)}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
             {/* Select Hall (only for Dine In) */}
             {orderType === 'Dine In' && (
               <div>
@@ -431,7 +711,8 @@ export default function CreateOrderPage() {
                     setSelectedTable('');
                   }}
                   required
-                  className="block w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition shadow-sm hover:border-gray-300"
+                  disabled={!selectedBranchId}
+                  className="block w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15] transition shadow-sm hover:border-gray-300 disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">Select a hall</option>
                   {halls.map((hall) => (
@@ -719,7 +1000,12 @@ export default function CreateOrderPage() {
                   {/* Place Order Button */}
                   <Button
                     onClick={placeOrder}
-                    disabled={placing || (orderType === 'Dine In' && (!selectedHall || !selectedTable)) || cart.length === 0}
+                    disabled={
+                      placing ||
+                      (branches.length > 0 && !selectedBranchId) ||
+                      (orderType === 'Dine In' && (!selectedHall || !selectedTable)) ||
+                      cart.length === 0
+                    }
                     className="w-full mt-4 py-3 text-base font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all"
                   >
                     {placing ? 'Placing Order...' : 'Place Order'}
@@ -770,16 +1056,32 @@ export default function CreateOrderPage() {
 
               {/* Receipt Totals */}
               <div className="border-t pt-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span className="font-medium">{formatPKR(orderReceipt.order?.g_total_amount || orderReceipt.order?.total || 0)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span className="text-[#FF5F15]">
-                    {formatPKR(orderReceipt.order?.net_total_amount || orderReceipt.order?.netTotal || orderReceipt.order?.total || 0)}
-                  </span>
-                </div>
+                {(() => {
+                  const rows = orderReceipt.items || [];
+                  const lineSum = sumReceiptLineItems(rows);
+                  const sub =
+                    parseFloat(orderReceipt.order?.g_total_amount ?? orderReceipt.order?.total_amount ?? '') ||
+                    lineSum;
+                  const net =
+                    parseFloat(
+                      orderReceipt.order?.net_total_amount ??
+                        orderReceipt.order?.net_total ??
+                        orderReceipt.order?.netTotal ??
+                        ''
+                    ) || sub;
+                  return (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span>Subtotal:</span>
+                        <span className="font-medium">{formatPKR(sub)}</span>
+                      </div>
+                      <div className="flex justify-between text-lg font-bold border-t pt-2">
+                        <span>Total:</span>
+                        <span className="text-[#FF5F15]">{formatPKR(net)}</span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Success Message */}

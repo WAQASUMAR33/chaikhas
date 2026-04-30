@@ -19,6 +19,7 @@ import { FileText, Eye, Edit, Trash2, X, RefreshCw, Receipt, Calculator, Printer
 import ThermalReceipt from '@/components/receipt/ThermalReceipt';
 import logger from '@/utils/logger';
 import { broadcastUpdate, listenForUpdates, UPDATE_EVENTS } from '@/utils/dashboardSync';
+import { computeBillBreakdown, isDineInOrderType } from '@/utils/billTotals';
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState([]);
@@ -1250,8 +1251,8 @@ export default function OrderManagementPage() {
       const isDineIn = order?.order_type === 'Dine In';
       const tableId = order?.table_id;
       
-      // Send both order_id (numeric) and orderid (formatted string) for maximum compatibility
-      const payload = { status: newStatus };
+      // API expects order_status (not legacy "status")
+      const payload = { order_status: newStatus };
       if (order_idValue) {
         payload.order_id = order_idValue;
       }
@@ -2718,26 +2719,51 @@ export default function OrderManagementPage() {
       <div class="divider" style="text-align: center; margin: 10px 0; font-size: 10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
 
       <div class="totals-section" style="margin-top: 15px; border-top: 1px solid #000; padding-top: 10px;">
-        <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
-          <span class="total-label" style="text-align: left; flex: 1;">Subtotal:</span>
-          <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal)}</span>
-        </div>
-        ${serviceCharge > 0 ? `
+        ${orderType === 'Dine In' ? `
           <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
-            <span class="total-label" style="text-align: left; flex: 1;">Service Charge:</span>
-            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(serviceCharge)}</span>
+            <span class="total-label" style="text-align: left; flex: 1;">Bill amount:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal)}</span>
           </div>
-        ` : ''}
-        ${discount > 0 ? `
+          ${discount > 0 ? `
+            <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+              <span class="total-label" style="text-align: left; flex: 1;">Discount:</span>
+              <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">-${formatPKR(discount)}</span>
+            </div>
+          ` : ''}
           <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
-            <span class="total-label" style="text-align: left; flex: 1;">Discount:</span>
-            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">-${formatPKR(discount)}</span>
+            <span class="total-label" style="text-align: left; flex: 1;">Gross total:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal - discount)}</span>
           </div>
-        ` : ''}
-        <div class="total-row net-total" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
-          <span class="total-label" style="text-align: left; flex: 1;">Net Total:</span>
-          <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(grandTotal)}</span>
-        </div>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Service charges (5%):</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">+${formatPKR(serviceCharge)}</span>
+          </div>
+          <div class="total-row net-total" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
+            <span class="total-label" style="text-align: left; flex: 1;">Net amount:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(grandTotal)}</span>
+          </div>
+        ` : `
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Subtotal:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal)}</span>
+          </div>
+          ${serviceCharge > 0 ? `
+            <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+              <span class="total-label" style="text-align: left; flex: 1;">Service Charge:</span>
+              <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(serviceCharge)}</span>
+            </div>
+          ` : ''}
+          ${discount > 0 ? `
+            <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+              <span class="total-label" style="text-align: left; flex: 1;">Discount:</span>
+              <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">-${formatPKR(discount)}</span>
+            </div>
+          ` : ''}
+          <div class="total-row net-total" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
+            <span class="total-label" style="text-align: left; flex: 1;">Net Total:</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(grandTotal)}</span>
+          </div>
+        `}
         ${paymentMethod ? `
           <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; line-height: 1.5; border-top: 1px solid #ddd; padding-top: 8px;">
             <span class="total-label" style="text-align: left; flex: 1;">Payment Method:</span>
@@ -3059,12 +3085,12 @@ html, body {
                            generatedBill.is_credit === true;
           const orderStatus = isCredit ? 'Credit' : 'Bill Generated';
           
-          const statusPayload = { 
-            status: orderStatus,
+          const statusPayload = {
+            order_status: orderStatus,
             order_id: orderIdValue,
-            orderid: orderidValue
+            orderid: orderidValue,
           };
-          
+
           await apiPost('api/chnageorder_status.php', statusPayload);
           fetchOrders(); // Refresh orders list
         } catch (error) {
@@ -3838,27 +3864,49 @@ html, body {
                     0
                   );
                   
-                  const serviceCharge = parseFloat(
-                    orderDetails.service_charge || 
-                    orderDetails.service ||
-                    0
-                  );
-                  
-                  const discountAmount = parseFloat(
-                    orderDetails.discount_amount || 
-                    orderDetails.discount ||
-                    0
-                  );
-                  
-                  // Calculate net total - try multiple field names
-                  const netTotal = parseFloat(
-                    orderDetails.net_total_amount || 
-                    orderDetails.net_total ||
-                    orderDetails.netTotal || 
-                    orderDetails.grand_total ||
-                    (subtotal + serviceCharge - discountAmount) ||
-                    0
-                  );
+                  const useBill = existingBill && (existingBill.total_amount != null || existingBill.grand_total != null);
+                  const billAmt = useBill
+                    ? parseFloat(existingBill.total_amount || subtotal || 0)
+                    : subtotal;
+                  const discountAmount = useBill
+                    ? parseFloat(existingBill.discount || 0)
+                    : parseFloat(
+                        orderDetails.discount_amount || 
+                        orderDetails.discount ||
+                        0
+                      );
+                  const serviceCharge = useBill
+                    ? parseFloat(existingBill.service_charge || 0)
+                    : parseFloat(
+                        orderDetails.service_charge || 
+                        orderDetails.service ||
+                        0
+                      );
+                  const grossAfterDiscount =
+                    isDineInOrderType(orderDetails.order_type) ? billAmt - discountAmount : null;
+
+                  let netTotal = useBill
+                    ? parseFloat(existingBill.grand_total || 0)
+                    : parseFloat(
+                        orderDetails.net_total_amount ||
+                          orderDetails.net_total ||
+                          orderDetails.netTotal ||
+                          orderDetails.grand_total ||
+                          0
+                      );
+
+                  if (!useBill && !netTotal) {
+                    const pctFallback =
+                      subtotal > 0 && discountAmount > 0
+                        ? (discountAmount / subtotal) * 100
+                        : parseFloat(orderDetails.discount_percentage || 0);
+                    netTotal = computeBillBreakdown(
+                      orderDetails.order_type,
+                      subtotal,
+                      pctFallback,
+                      parseFloat(orderDetails.service_charge || 0)
+                    ).grandTotal;
+                  }
                   
                   console.log('💰 Modal Display - Calculated values:', {
                     subtotal,
@@ -3870,28 +3918,57 @@ html, body {
                   
                   return (
                     <>
-                      <div className="flex justify-between text-sm py-2">
-                        <span className="text-gray-600 font-medium">Subtotal:</span>
-                        <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
-                      </div>
-                      {serviceCharge > 0 && (
-                        <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Service Charge:</span>
-                          <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
-                        </div>
+                      {isDineInOrderType(orderDetails.order_type) ? (
+                        <>
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Bill amount:</span>
+                            <span className="font-semibold text-gray-900">{formatPKR(billAmt)}</span>
+                          </div>
+                          {discountAmount > 0 && (
+                            <div className="flex justify-between text-sm py-2">
+                              <span className="text-gray-600 font-medium">Discount:</span>
+                              <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Gross total:</span>
+                            <span className="font-semibold text-gray-900">
+                              {formatPKR(grossAfterDiscount ?? billAmt)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Service charges (5%):</span>
+                            <span className="font-semibold text-gray-900">+{formatPKR(serviceCharge)}</span>
+                          </div>
+                          <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                            <span className="text-gray-900">Net amount:</span>
+                            <span className="text-[#FF5F15] text-2xl">{formatPKR(netTotal)}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Subtotal:</span>
+                            <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
+                          </div>
+                          {serviceCharge > 0 && (
+                            <div className="flex justify-between text-sm py-2">
+                              <span className="text-gray-600 font-medium">Service Charge:</span>
+                              <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
+                            </div>
+                          )}
+                          {discountAmount > 0 && (
+                            <div className="flex justify-between text-sm py-2">
+                              <span className="text-gray-600 font-medium">Discount:</span>
+                              <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                            <span className="text-gray-900">Total:</span>
+                            <span className="text-[#FF5F15] text-2xl">{formatPKR(netTotal)}</span>
+                          </div>
+                        </>
                       )}
-                      {discountAmount > 0 && (
-                        <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Discount:</span>
-                          <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
-                        <span className="text-gray-900">Total:</span>
-                        <span className="text-[#FF5F15] text-2xl">
-                          {formatPKR(netTotal)}
-                        </span>
-                      </div>
                     </>
                   );
                 })()}
@@ -4033,18 +4110,31 @@ html, body {
                       // If bill data is missing, calculate from order (for "Bill Generated" orders)
                       if (!billToPay || !grandTotal) {
                         subtotal = parseFloat(orderDetails.g_total_amount || orderDetails.total || 0);
-                        // Get service charge from order if available, otherwise 0
-                        serviceCharge = parseFloat(orderDetails.service_charge || 0);
-                        // Get discount from order if available
                         discountAmount = parseFloat(orderDetails.discount_amount || orderDetails.discount || 0);
-                        // Calculate grand total
-                        grandTotal = subtotal + serviceCharge - discountAmount;
+                        const pctGuess =
+                          discountAmount > 0 && subtotal > 0
+                            ? (discountAmount / subtotal) * 100
+                            : parseFloat(orderDetails.discount_percentage || 0);
+                        const manualSc = parseFloat(orderDetails.service_charge || 0);
+                        const fb = computeBillBreakdown(
+                          orderDetails.order_type,
+                          subtotal,
+                          pctGuess,
+                          manualSc
+                        );
+                        serviceCharge = fb.serviceCharge;
+                        discountAmount = fb.discountAmount;
+                        grandTotal = fb.grandTotal;
                       }
                       
-                      // Calculate discount percentage
-                      const discountPercentage = discountAmount > 0 && (subtotal + serviceCharge) > 0 
-                        ? ((discountAmount / (subtotal + serviceCharge)) * 100).toFixed(2)
-                        : 0;
+                      // Calculate discount percentage for receipt display
+                      const dineInOrd = isDineInOrderType(orderDetails.order_type);
+                      const discountPercentage =
+                        discountAmount > 0 && subtotal > 0 && dineInOrd
+                          ? ((discountAmount / subtotal) * 100).toFixed(2)
+                          : discountAmount > 0 && subtotal + serviceCharge > 0 && !dineInOrd
+                            ? ((discountAmount / (subtotal + serviceCharge)) * 100).toFixed(2)
+                            : 0;
                       
                       // Format order items for receipt
                       const formattedItems = (orderItems || []).map(item => ({
@@ -4069,6 +4159,8 @@ html, body {
                         service_charge: serviceCharge,
                         discount_percentage: parseFloat(discountPercentage) || 0,
                         discount_amount: discountAmount,
+                        gross_after_discount:
+                          dineInOrd && subtotal > 0 ? subtotal - discountAmount : undefined,
                         grand_total: grandTotal,
                         payment_method: billToPay?.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: billToPay?.payment_status || 'Unpaid',
@@ -4235,6 +4327,17 @@ html, body {
                       const isComplete = orderStatus === 'complete';
                       const finalPaymentStatus = isComplete ? 'Paid' : (billForReceipt?.payment_status || 'Paid');
                       
+                      const billSub = parseFloat(billForReceipt?.total_amount || orderDetails.g_total_amount || orderDetails.total || 0);
+                      const billDisc = parseFloat(billForReceipt?.discount || 0);
+                      const billSc = parseFloat(billForReceipt?.service_charge || 0);
+                      const dineInPaid = isDineInOrderType(orderDetails.order_type);
+                      const discPctPaid =
+                        billDisc > 0 && billSub > 0 && dineInPaid
+                          ? ((billDisc / billSub) * 100).toFixed(2)
+                          : billDisc > 0 && billSub + billSc > 0 && !dineInPaid
+                            ? ((billDisc / (billSub + billSc)) * 100).toFixed(2)
+                            : 0;
+
                       // Prepare paid bill receipt data
                       const receiptData = {
                         bill_id: billForReceipt?.bill_id || null,
@@ -4242,12 +4345,12 @@ html, body {
                         order_number: orderDetails.order_id ? `ORD-${orderDetails.order_id}` : (orderDetails.orderid || orderDetails.id),
                         order_type: orderDetails.order_type || 'Dine In',
                         table_number: orderDetails.table_number || orderDetails.table_id || '',
-                        subtotal: parseFloat(billForReceipt?.total_amount || orderDetails.g_total_amount || orderDetails.total || 0),
-                        service_charge: parseFloat(billForReceipt?.service_charge || 0),
-                        discount_percentage: billForReceipt?.discount > 0 && billForReceipt?.total_amount > 0 
-                          ? ((billForReceipt.discount / (billForReceipt.total_amount + (billForReceipt.service_charge || 0))) * 100).toFixed(2)
-                          : 0,
-                        discount_amount: parseFloat(billForReceipt?.discount || 0),
+                        subtotal: billSub,
+                        service_charge: billSc,
+                        discount_percentage: parseFloat(discPctPaid) || 0,
+                        discount_amount: billDisc,
+                        gross_after_discount:
+                          dineInPaid && billSub > 0 ? billSub - billDisc : undefined,
                         grand_total: parseFloat(billForReceipt?.grand_total || orderDetails.net_total_amount || orderDetails.total || 0),
                         payment_method: billForReceipt?.payment_method || orderDetails.payment_mode || 'Cash',
                         payment_status: finalPaymentStatus === 'Paid' || finalPaymentStatus === 'paid' ? 'Paid' : finalPaymentStatus,
@@ -4311,36 +4414,42 @@ html, body {
 
               {/* Bill Calculation */}
               <div className="space-y-4">
-                {/* Subtotal - Read Only */}
+                {/* Bill amount / Subtotal - Read Only */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
                   <label className="block text-sm font-medium text-blue-600 mb-1.5 uppercase tracking-wide">
-                    Subtotal
+                    {isDineInOrderType(billOrder.order_type) ? 'Bill amount' : 'Subtotal'}
                   </label>
                   <p className="text-2xl font-bold text-gray-900">
                     {formatPKR(billOrder.g_total_amount || billOrder.total || 0)}
                   </p>
                 </div>
 
-                {/* Service Charge - Manual Input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={billData.service_charge || 0}
-                    onChange={(e) => {
-                      const serviceCharge = parseFloat(e.target.value) || 0;
-                      setBillData({ ...billData, service_charge: serviceCharge });
-                    }}
-                    placeholder="0.00"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enter service charge amount (e.g., 50.00)
-                  </p>
-                </div>
+                {/* Service Charge — Dine In: 5% auto on gross after discount | Others: manual */}
+                {!isDineInOrderType(billOrder.order_type) ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Service Charge <span className="text-gray-500 font-normal">(Amount)</span>
+                    </label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={billData.service_charge || 0}
+                      onChange={(e) => {
+                        const serviceCharge = parseFloat(e.target.value) || 0;
+                        setBillData({ ...billData, service_charge: serviceCharge });
+                      }}
+                      placeholder="0.00"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter service charge amount (e.g., 50.00)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                    Service charges for dine-in are <span className="font-semibold">5%</span> of gross total (bill amount after discount).
+                  </div>
+                )}
 
                 {/* Discount - Percentage Input */}
                 <div>
@@ -4369,38 +4478,63 @@ html, body {
                 {/* Bill Summary - Real-time Calculation */}
                 {(() => {
                   const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                  // Step 1: Service charge (from manual input)
-                  const serviceCharge = parseFloat(billData.service_charge || 0);
-                  // Step 2: Discount amount (percentage of subtotal + service charge)
-                  const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                  // Step 3: Grand total
-                  const grandTotal = (subtotal + serviceCharge) - discountAmount;
-                  
+                  const br = computeBillBreakdown(
+                    billOrder.order_type,
+                    subtotal,
+                    billData.discount_percentage,
+                    billData.service_charge
+                  );
+
+                  if (br.isDineIn) {
+                    return (
+                      <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Bill amount:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
+                        </div>
+                        {billData.discount_percentage > 0 && (
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                            <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Gross total:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.grossTotal)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Service charges (5%):</span>
+                          <span className="font-semibold text-gray-900">+{formatPKR(br.serviceCharge)}</span>
+                        </div>
+                        <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
+                          <span className="text-gray-900">Net amount:</span>
+                          <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl p-5 border border-gray-200 shadow-sm space-y-3">
                       <div className="flex justify-between text-sm py-2">
                         <span className="text-gray-600 font-medium">Subtotal:</span>
-                        <span className="font-semibold text-gray-900">{formatPKR(subtotal)}</span>
+                        <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
                       </div>
-                      {serviceCharge > 0 && (
+                      {br.serviceCharge > 0 && (
                         <div className="flex justify-between text-sm py-2">
                           <span className="text-gray-600 font-medium">Service Charge:</span>
-                          <span className="font-semibold text-gray-900">{formatPKR(serviceCharge)}</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(br.serviceCharge)}</span>
                         </div>
                       )}
                       {billData.discount_percentage > 0 && (
-                        <>
-                          <div className="flex justify-between text-sm py-2">
-                            <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
-                            <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
-                          </div>
-                        </>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
+                          <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
+                        </div>
                       )}
                       <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
                         <span className="text-gray-900">Grand Total:</span>
-                        <span className="text-[#FF5F15] text-2xl">
-                          {formatPKR(grandTotal)}
-                        </span>
+                        <span className="text-[#FF5F15] text-2xl">{formatPKR(br.grandTotal)}</span>
                       </div>
                     </div>
                   );
@@ -4412,15 +4546,17 @@ html, body {
                   onClick={async () => {
                     try {
                       const subtotal = parseFloat(billOrder.g_total_amount || billOrder.total || 0);
-                      
-                      // Step 1: Service charge (from manual input)
-                      const serviceCharge = parseFloat(billData.service_charge || 0);
-                      
-                      // Step 2: Discount amount (percentage of subtotal + service charge)
-                      const discountAmount = ((subtotal + serviceCharge) * (billData.discount_percentage / 100));
-                      
-                      // Step 3: Grand total
-                      const grandTotal = (subtotal + serviceCharge) - discountAmount;
+                      const enteredDiscountPct = billData.discount_percentage;
+                      const enteredManualService = billData.service_charge;
+                      const br = computeBillBreakdown(
+                        billOrder.order_type,
+                        subtotal,
+                        enteredDiscountPct,
+                        enteredManualService
+                      );
+                      const serviceCharge = br.serviceCharge;
+                      const discountAmount = br.discountAmount;
+                      const grandTotal = br.grandTotal;
 
                       // Create bill using bills_management.php API - Always create as Unpaid
                       const billPayload = {
@@ -4482,7 +4618,7 @@ html, body {
                         const responseData = apiResponse.data; // { bill: {...}, bill_id: 123 }
                         
                         let billId = null;
-                        let billData = null;
+                        let savedBillFromApi = null;
                         
                         // Get bill_id from responseData.bill_id
                         if (responseData.bill_id) {
@@ -4491,14 +4627,14 @@ html, body {
                         
                         // Get bill object
                         if (responseData.bill) {
-                          billData = responseData.bill;
+                          savedBillFromApi = responseData.bill;
                           // If bill_id not found, try from bill object
-                          if (!billId && billData.bill_id) {
-                            billId = billData.bill_id;
+                          if (!billId && savedBillFromApi.bill_id) {
+                            billId = savedBillFromApi.bill_id;
                           }
                         } else if (responseData.bill_id) {
                           // If responseData itself has bill_id, it might be the bill
-                          billData = responseData;
+                          savedBillFromApi = responseData;
                           billId = responseData.bill_id;
                         }
                         
@@ -4516,9 +4652,12 @@ html, body {
                         }
                         
                         // Calculate discount percentage if not in bill data
-                        let discountPercentage = billData.discount_percentage || 0;
-                        if (!discountPercentage && billData.discount && (subtotal + serviceCharge) > 0) {
-                          discountPercentage = ((billData.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
+                        let discountPercentage = savedBillFromApi.discount_percentage || enteredDiscountPct || 0;
+                        const dineInBill = isDineInOrderType(billOrder.order_type);
+                        if (!discountPercentage && savedBillFromApi.discount && subtotal > 0 && dineInBill) {
+                          discountPercentage = ((savedBillFromApi.discount / subtotal) * 100).toFixed(2);
+                        } else if (!discountPercentage && savedBillFromApi.discount && (subtotal + serviceCharge) > 0 && !dineInBill) {
+                          discountPercentage = ((savedBillFromApi.discount / (subtotal + serviceCharge)) * 100).toFixed(2);
                         }
                         
                         // ALWAYS fetch order items when generating bill to ensure we have the latest data
@@ -4616,7 +4755,12 @@ html, body {
                         
 
                         // Determine payment method - explicitly use 'Credit' if payment_mode is 'Credit'
-                        const paymentMethod = billData.payment_mode === 'Credit' ? 'Credit' : (billData.payment_method || billData.payment_mode || 'Cash');
+                        const paymentMethod =
+                          savedBillFromApi.payment_mode === 'Credit'
+                            ? 'Credit'
+                            : savedBillFromApi.payment_method ||
+                              savedBillFromApi.payment_mode ||
+                              'Cash';
                         
                         const receiptData = {
                           bill_id: billId,
@@ -4628,6 +4772,10 @@ html, body {
                           service_charge: serviceCharge,
                           discount_percentage: parseFloat(discountPercentage) || 0,
                           discount_amount: discountAmount,
+                          gross_after_discount:
+                            isDineInOrderType(billOrder.order_type) && subtotal > 0
+                              ? subtotal - discountAmount
+                              : undefined,
                           grand_total: grandTotal,
                           payment_method: 'Cash', // Default, will be updated when payment is received
                           payment_mode: 'Cash', // Default, will be updated when payment is received
@@ -4667,10 +4815,10 @@ html, body {
                         const orderStatus = 'Bill Generated';
                         
                         try {
-                          const statusPayload = { 
-                            status: orderStatus,
+                          const statusPayload = {
+                            order_status: orderStatus,
                             order_id: orderIdValue,
-                            orderid: orderidValue
+                            orderid: orderidValue,
                           };
                           await apiPost('api/chnageorder_status.php', statusPayload);
                           console.log(`Order status updated to: ${orderStatus}`);
@@ -5097,28 +5245,83 @@ html, body {
                 </div>
                 
                 <div className="space-y-2 bg-white p-4 rounded-lg border border-blue-100">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 font-medium">Subtotal:</span>
-                    <span className="font-semibold text-gray-900">{formatPKR(generatedBill.subtotal)}</span>
-                  </div>
-                  {generatedBill.service_charge > 0 && generatedBill.order_type === 'Dine In' && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 font-medium">Service Charge:</span>
-                      <span className="font-semibold text-gray-900">{formatPKR(generatedBill.service_charge)}</span>
-                    </div>
-                  )}
-                  {generatedBill.discount_percentage > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 font-medium">Discount ({generatedBill.discount_percentage}%):</span>
-                      <span className="font-semibold text-red-600">-{formatPKR(generatedBill.discount_amount)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-xl font-bold pt-2 border-t-2 border-gray-200">
-                    <span className="text-gray-900">Grand Total:</span>
-                    <span className="text-[#FF5F15] text-2xl">
-                      {formatPKR(generatedBill.grand_total)}
-                    </span>
-                  </div>
+                  {(() => {
+                    const dineIn = isDineInOrderType(generatedBill.order_type);
+                    const billAmt = parseFloat(generatedBill.subtotal || 0);
+                    const disc = parseFloat(generatedBill.discount_amount || 0);
+                    const sc = parseFloat(generatedBill.service_charge || 0);
+                    const gross =
+                      typeof generatedBill.gross_after_discount === 'number'
+                        ? generatedBill.gross_after_discount
+                        : billAmt - disc;
+
+                    if (dineIn) {
+                      return (
+                        <>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">Bill amount:</span>
+                            <span className="font-semibold text-gray-900">{formatPKR(billAmt)}</span>
+                          </div>
+                          {generatedBill.discount_percentage > 0 ? (
+                            <div className="flex justify-between text-sm">
+                              <span className="text-gray-600 font-medium">
+                                Discount ({generatedBill.discount_percentage}%):
+                              </span>
+                              <span className="font-semibold text-red-600">-{formatPKR(disc)}</span>
+                            </div>
+                          ) : (
+                            disc > 0 && (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-600 font-medium">Discount:</span>
+                                <span className="font-semibold text-red-600">-{formatPKR(disc)}</span>
+                              </div>
+                            )
+                          )}
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">Gross total:</span>
+                            <span className="font-semibold text-gray-900">{formatPKR(gross)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">Service charges (5%):</span>
+                            <span className="font-semibold text-gray-900">+{formatPKR(sc)}</span>
+                          </div>
+                          <div className="flex justify-between text-xl font-bold pt-2 border-t-2 border-gray-200">
+                            <span className="text-gray-900">Net amount:</span>
+                            <span className="text-[#FF5F15] text-2xl">{formatPKR(generatedBill.grand_total)}</span>
+                          </div>
+                        </>
+                      );
+                    }
+
+                    return (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600 font-medium">Subtotal:</span>
+                          <span className="font-semibold text-gray-900">{formatPKR(generatedBill.subtotal)}</span>
+                        </div>
+                        {generatedBill.service_charge > 0 && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">Service Charge:</span>
+                            <span className="font-semibold text-gray-900">{formatPKR(generatedBill.service_charge)}</span>
+                          </div>
+                        )}
+                        {generatedBill.discount_percentage > 0 && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">
+                              Discount ({generatedBill.discount_percentage}%):
+                            </span>
+                            <span className="font-semibold text-red-600">
+                              -{formatPKR(generatedBill.discount_amount)}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-xl font-bold pt-2 border-t-2 border-gray-200">
+                          <span className="text-gray-900">Grand Total:</span>
+                          <span className="text-[#FF5F15] text-2xl">{formatPKR(generatedBill.grand_total)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
