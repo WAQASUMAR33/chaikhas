@@ -1,4 +1,4 @@
-/** Dine In: discount on bill amount, then 5% service charge on gross (after discount). */
+/** Dine In: 5% service charge on full bill amount (before discount); discount reduces bill; net = bill − discount + service. */
 
 const DINE_IN_SERVICE_CHARGE_PERCENT = 5;
 
@@ -16,8 +16,9 @@ export function computeBillBreakdown(orderType, billAmount, discountPercent, man
 
   if (isDineInOrderType(orderType)) {
     const discountAmount = amt * (pct / 100);
+    // Service charge on bill amount before discount (not on discounted gross)
+    const serviceCharge = amt * (DINE_IN_SERVICE_CHARGE_PERCENT / 100);
     const grossTotal = amt - discountAmount;
-    const serviceCharge = grossTotal * (DINE_IN_SERVICE_CHARGE_PERCENT / 100);
     const grandTotal = grossTotal + serviceCharge;
     return {
       billAmount: amt,

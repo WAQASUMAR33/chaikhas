@@ -6,7 +6,7 @@
  * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -27,6 +27,7 @@ export default function OrderManagementPage() {
   const [orderItems, setOrderItems] = useState([]);
   const [existingBill, setExistingBill] = useState(null); // Bill data for order (if exists)
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all'); // all, pending, preparing, ready, completed, cancelled
   const [dateFilter, setDateFilter] = useState('all'); // all, today, week, month, custom
   const [customDate, setCustomDate] = useState('');
@@ -66,31 +67,8 @@ export default function OrderManagementPage() {
   const [originalTableId, setOriginalTableId] = useState(null); // Store original table ID for transfer
 
   useEffect(() => {
-    fetchOrders();
-    fetchCustomers(); // Fetch credit customers
-    // Auto-refresh every 30 seconds to show new orders
-    const interval = setInterval(fetchOrders, 30000);
-    
-    // Listen for updates from other dashboard instances
-    const cleanup = listenForUpdates((event) => {
-      console.log('📥 Received dashboard update:', event);
-      if (event.type === UPDATE_EVENTS.ORDER_CREATED || 
-          event.type === UPDATE_EVENTS.ORDER_UPDATED || 
-          event.type === UPDATE_EVENTS.ORDER_DELETED ||
-          event.type === UPDATE_EVENTS.ORDER_STATUS_CHANGED ||
-          event.type === UPDATE_EVENTS.BILL_CREATED ||
-          event.type === UPDATE_EVENTS.BILL_UPDATED ||
-          event.type === UPDATE_EVENTS.BILL_PAID) {
-        // Refresh orders when any order/bill is updated
-        fetchOrders();
-      }
-    });
-    
-    return () => {
-      clearInterval(interval);
-      cleanup();
-    };
-  }, [filter, dateFilter, customDate]);
+    fetchCustomers();
+  }, []);
 
   /**
    * Auto-print bill receipt when the receipt modal opens
@@ -304,8 +282,9 @@ export default function OrderManagementPage() {
    * Fetch orders from API
    * API: order_management.php (GET with terminal and optional status)
    */
-  const fetchOrders = async () => {
-    setLoading(true);
+  const fetchOrders = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
     try {
       const terminal = getTerminal();
       let branchId = getBranchId();
@@ -329,7 +308,6 @@ export default function OrderManagementPage() {
         console.error('❌ Branch ID is missing for branch-admin');
         setAlert({ type: 'error', message: 'Branch ID is missing. Please log in again. Branch admin can only view their own branch orders.' });
         setOrders([]);
-        setLoading(false);
         return;
       }
       
@@ -339,7 +317,6 @@ export default function OrderManagementPage() {
         console.error('❌ Invalid Branch ID for branch-admin:', branchId);
         setAlert({ type: 'error', message: 'Invalid Branch ID. Please log in again.' });
         setOrders([]);
-        setLoading(false);
         return;
       }
       
@@ -648,14 +625,61 @@ export default function OrderManagementPage() {
         }
         setOrders([]);
       }
-      setLoading(false);
     } catch (error) {
       console.error('Error fetching orders:', error);
       setAlert({ type: 'error', message: 'Failed to load orders: ' + (error.message || 'Network error') });
-      setLoading(false);
       setOrders([]);
+    } finally {
+      if (!silent) setLoading(false);
+      else setRefreshing(false);
     }
-  };
+  }, [filter, dateFilter, customDate]);
+
+  useEffect(() => {
+    fetchOrders(false);
+  }, [fetchOrders]);
+
+  /** Slow background poll + throttled cross-tab sync (avoids hammering the API). */
+  useEffect(() => {
+    const POLL_MS = 120000;
+    const SYNC_THROTTLE_MS = 5000;
+    let lastSync = 0;
+
+    const poll = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchOrders(true);
+    };
+
+    const intervalId = setInterval(poll, POLL_MS);
+
+    let cleanupSync = () => {};
+    try {
+      cleanupSync = listenForUpdates((event) => {
+        if (
+          event.type !== UPDATE_EVENTS.ORDER_CREATED &&
+          event.type !== UPDATE_EVENTS.ORDER_UPDATED &&
+          event.type !== UPDATE_EVENTS.ORDER_DELETED &&
+          event.type !== UPDATE_EVENTS.ORDER_STATUS_CHANGED &&
+          event.type !== UPDATE_EVENTS.BILL_CREATED &&
+          event.type !== UPDATE_EVENTS.BILL_UPDATED &&
+          event.type !== UPDATE_EVENTS.BILL_PAID
+        ) {
+          return;
+        }
+        const now = Date.now();
+        if (now - lastSync < SYNC_THROTTLE_MS) return;
+        lastSync = now;
+        fetchOrders(true);
+      });
+    } catch (error) {
+      console.error('Error setting up dashboard sync:', error);
+    }
+
+    return () => {
+      clearInterval(intervalId);
+      cleanupSync();
+    };
+  }, [fetchOrders]);
 
   /**
    * Fetch order details and items
@@ -1315,7 +1339,7 @@ export default function OrderManagementPage() {
         
         setAlert({ type: 'success', message: apiResponse.message || 'Order status updated successfully!' });
         
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         setAlert({ type: 'error', message: apiResponse?.message || result.message || 'Failed to update order status' });
       }
@@ -1924,7 +1948,7 @@ export default function OrderManagementPage() {
         setSelectedCategory('');
         setOriginalTableId(null);
         setTables([]);
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         // Even if items update fails, order was updated
         setAlert({ type: 'warning', message: 'Order details updated, but there was an issue updating items. Please check manually.' });
@@ -1934,7 +1958,7 @@ export default function OrderManagementPage() {
         setSelectedCategory('');
         setOriginalTableId(null);
         setTables([]);
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       }
     } catch (error) {
       console.error('Error updating order:', error);
@@ -1965,7 +1989,7 @@ export default function OrderManagementPage() {
 
       if (result.success && result.data && result.data.success) {
         setAlert({ type: 'success', message: result.data.message || 'Order deleted successfully!' });
-        fetchOrders(); // Refresh list
+        fetchOrders(true); // Refresh list
       } else {
         setAlert({ type: 'error', message: result.data?.message || 'Failed to delete order' });
       }
@@ -2277,7 +2301,7 @@ export default function OrderManagementPage() {
           message: `Payment recorded successfully, but order status update failed: ${orderUpdateError || 'Unknown error'}. The bill is paid, but you may need to manually update the order status to Complete.` 
         });
         // Still refresh to show updated payment status
-        fetchOrders();
+        fetchOrders(true);
         // Don't return - allow the success flow to continue since payment was successful
       }
       
@@ -2456,7 +2480,7 @@ export default function OrderManagementPage() {
         }
         
         // Refresh orders to show updated status and update table status if needed
-        await fetchOrders();
+        await fetchOrders(true);
         
         // After refreshing orders, check if any completed Dine In orders need table status updated
         // This handles cases where order was already complete in backend
@@ -2724,20 +2748,16 @@ export default function OrderManagementPage() {
             <span class="total-label" style="text-align: left; flex: 1;">Bill amount:</span>
             <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal)}</span>
           </div>
+          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
+            <span class="total-label" style="text-align: left; flex: 1;">Service charges (5% of bill):</span>
+            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">+${formatPKR(serviceCharge)}</span>
+          </div>
           ${discount > 0 ? `
             <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
               <span class="total-label" style="text-align: left; flex: 1;">Discount:</span>
               <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">-${formatPKR(discount)}</span>
             </div>
           ` : ''}
-          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
-            <span class="total-label" style="text-align: left; flex: 1;">Gross total:</span>
-            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(subtotal - discount)}</span>
-          </div>
-          <div class="total-row" style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 10px; line-height: 1.5;">
-            <span class="total-label" style="text-align: left; flex: 1;">Service charges (5%):</span>
-            <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">+${formatPKR(serviceCharge)}</span>
-          </div>
           <div class="total-row net-total" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 8px 0; border-top: 2px solid #FF5F15; border-bottom: 2px solid #FF5F15; background: #fff5f0; font-size: 13px; font-weight: bold; color: #FF5F15;">
             <span class="total-label" style="text-align: left; flex: 1;">Net amount:</span>
             <span class="total-value" style="text-align: right; font-weight: bold; min-width: 60px;">${formatPKR(grandTotal)}</span>
@@ -3092,7 +3112,7 @@ html, body {
           };
 
           await apiPost('api/chnageorder_status.php', statusPayload);
-          fetchOrders(); // Refresh orders list
+          fetchOrders(true); // Refresh orders list
         } catch (error) {
           console.error('Error updating order status on print:', error);
         }
@@ -3197,8 +3217,8 @@ html, body {
       className: 'w-28',
       wrap: false,
     },
-    { 
-      header: 'Table', 
+    {
+      header: 'Table',
       accessor: (row) => (
         <span className="text-gray-700 text-sm">
           {row.order_type === 'Dine In' ? (row.table_number || '-') : '-'}
@@ -3208,15 +3228,43 @@ html, body {
       wrap: false,
     },
     {
-      header: 'Total',
+      header: 'Bill amount',
+      accessor: (row) => (
+        <span className="font-medium text-gray-900 text-sm whitespace-nowrap">{formatPKR(row.total || 0)}</span>
+      ),
+      className: 'min-w-[7.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Service charges',
+      accessor: (row) => (
+        <span className="text-gray-700 text-sm whitespace-nowrap">{formatPKR(row.service_charge || 0)}</span>
+      ),
+      className: 'min-w-[7.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Discount',
       accessor: (row) => {
-        // Use netTotal if available, otherwise fallback to total, otherwise show 0
-        const displayAmount = row.netTotal > 0 ? row.netTotal : (row.total > 0 ? row.total : 0);
+        const d = parseFloat(row.discount || 0);
         return (
-          <span className="font-bold text-[#FF5F15] text-sm">{formatPKR(displayAmount)}</span>
+          <span className={`text-sm whitespace-nowrap ${d > 0 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+            {d > 0 ? formatPKR(-d) : formatPKR(0)}
+          </span>
         );
       },
-      className: 'w-32',
+      className: 'min-w-[6.5rem] text-right',
+      wrap: false,
+    },
+    {
+      header: 'Net total',
+      accessor: (row) => {
+        const displayAmount = row.netTotal > 0 ? row.netTotal : row.total > 0 ? row.total : 0;
+        return (
+          <span className="font-bold text-[#FF5F15] text-sm whitespace-nowrap">{formatPKR(displayAmount)}</span>
+        );
+      },
+      className: 'min-w-[7.5rem] text-right',
       wrap: false,
     },
     {
@@ -3485,11 +3533,12 @@ html, body {
           </div>
           <Button
             variant="outline"
-            onClick={fetchOrders}
-            title="Refresh Orders"
+            onClick={() => fetchOrders(false)}
+            disabled={loading}
+            title={refreshing ? 'Refreshing in background…' : 'Refresh orders'}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading || refreshing ? 'animate-spin' : ''}`} />
+            {loading ? 'Loading…' : refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
 
@@ -3924,21 +3973,19 @@ html, body {
                             <span className="text-gray-600 font-medium">Bill amount:</span>
                             <span className="font-semibold text-gray-900">{formatPKR(billAmt)}</span>
                           </div>
+                          <div className="flex justify-between text-sm py-2">
+                            <span className="text-gray-600 font-medium">Service charges (5% of bill):</span>
+                            <span className="font-semibold text-gray-900">+{formatPKR(serviceCharge)}</span>
+                          </div>
                           {discountAmount > 0 && (
                             <div className="flex justify-between text-sm py-2">
                               <span className="text-gray-600 font-medium">Discount:</span>
                               <span className="font-semibold text-red-600">-{formatPKR(discountAmount)}</span>
                             </div>
                           )}
-                          <div className="flex justify-between text-sm py-2">
-                            <span className="text-gray-600 font-medium">Gross total:</span>
-                            <span className="font-semibold text-gray-900">
-                              {formatPKR(grossAfterDiscount ?? billAmt)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-sm py-2">
-                            <span className="text-gray-600 font-medium">Service charges (5%):</span>
-                            <span className="font-semibold text-gray-900">+{formatPKR(serviceCharge)}</span>
+                          <div className="flex justify-between py-2 text-xs text-gray-500 border-t border-dashed border-gray-200 pt-2">
+                            <span>After discount (food):</span>
+                            <span>{formatPKR(grossAfterDiscount ?? billAmt)}</span>
                           </div>
                           <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
                             <span className="text-gray-900">Net amount:</span>
@@ -4424,7 +4471,7 @@ html, body {
                   </p>
                 </div>
 
-                {/* Service Charge — Dine In: 5% auto on gross after discount | Others: manual */}
+                {/* Service Charge — Dine In: fixed 5% on bill amount (before discount) | Others: manual */}
                 {!isDineInOrderType(billOrder.order_type) ? (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">
@@ -4447,7 +4494,8 @@ html, body {
                   </div>
                 ) : (
                   <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
-                    Service charges for dine-in are <span className="font-semibold">5%</span> of gross total (bill amount after discount).
+                    Service charges for dine-in are <span className="font-semibold">5%</span> of{' '}
+                    <span className="font-semibold">bill amount before discount</span>.
                   </div>
                 )}
 
@@ -4492,19 +4540,19 @@ html, body {
                           <span className="text-gray-600 font-medium">Bill amount:</span>
                           <span className="font-semibold text-gray-900">{formatPKR(br.billAmount)}</span>
                         </div>
+                        <div className="flex justify-between text-sm py-2">
+                          <span className="text-gray-600 font-medium">Service charges (5% of bill):</span>
+                          <span className="font-semibold text-gray-900">+{formatPKR(br.serviceCharge)}</span>
+                        </div>
                         {billData.discount_percentage > 0 && (
                           <div className="flex justify-between text-sm py-2">
                             <span className="text-gray-600 font-medium">Discount ({billData.discount_percentage}%):</span>
                             <span className="font-semibold text-red-600">-{formatPKR(br.discountAmount)}</span>
                           </div>
                         )}
-                        <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Gross total:</span>
-                          <span className="font-semibold text-gray-900">{formatPKR(br.grossTotal)}</span>
-                        </div>
-                        <div className="flex justify-between text-sm py-2">
-                          <span className="text-gray-600 font-medium">Service charges (5%):</span>
-                          <span className="font-semibold text-gray-900">+{formatPKR(br.serviceCharge)}</span>
+                        <div className="flex justify-between py-2 text-xs text-gray-500 border-t border-dashed border-gray-200 pt-2">
+                          <span>After discount (food):</span>
+                          <span>{formatPKR(br.grossTotal)}</span>
                         </div>
                         <div className="flex justify-between text-xl font-bold pt-3 border-t-2 border-gray-200">
                           <span className="text-gray-900">Net amount:</span>
@@ -4828,7 +4876,7 @@ html, body {
                         }
                         
                         // Refresh orders list
-                        fetchOrders();
+                        fetchOrders(true);
                         
                         // Auto-print generated bill receipt
                         const orderIdForPrint = billOrder.order_id || billOrder.id;
@@ -5262,6 +5310,10 @@ html, body {
                             <span className="text-gray-600 font-medium">Bill amount:</span>
                             <span className="font-semibold text-gray-900">{formatPKR(billAmt)}</span>
                           </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600 font-medium">Service charges (5% of bill):</span>
+                            <span className="font-semibold text-gray-900">+{formatPKR(sc)}</span>
+                          </div>
                           {generatedBill.discount_percentage > 0 ? (
                             <div className="flex justify-between text-sm">
                               <span className="text-gray-600 font-medium">
@@ -5277,13 +5329,9 @@ html, body {
                               </div>
                             )
                           )}
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600 font-medium">Gross total:</span>
-                            <span className="font-semibold text-gray-900">{formatPKR(gross)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600 font-medium">Service charges (5%):</span>
-                            <span className="font-semibold text-gray-900">+{formatPKR(sc)}</span>
+                          <div className="flex justify-between py-2 text-xs text-gray-500 border-t border-dashed border-gray-200 pt-2">
+                            <span>After discount (food):</span>
+                            <span>{formatPKR(gross)}</span>
                           </div>
                           <div className="flex justify-between text-xl font-bold pt-2 border-t-2 border-gray-200">
                             <span className="text-gray-900">Net amount:</span>

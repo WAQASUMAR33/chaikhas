@@ -6,10 +6,9 @@
  * Uses real APIs: get_halls.php, get_tables.php, get_products.php, create_order.php
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
-import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Alert from '@/components/ui/Alert';
 import { apiGet, apiPost, getTerminal, getToken, getBranchId } from '@/utils/api';
@@ -28,6 +27,7 @@ export default function CreateOrderPage() {
   const [selectedHall, setSelectedHall] = useState('');
   const [selectedTable, setSelectedTable] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [categorySearch, setCategorySearch] = useState('');
   const [cart, setCart] = useState([]); // [{ dish_id, name, price, quantity, category_name }]
   const [comments, setComments] = useState('');
   
@@ -1027,6 +1027,16 @@ export default function CreateOrderPage() {
     ? dishes.filter(dish => String(dish.category_id) === String(selectedCategory) && dish.is_available == 1)
     : [];
 
+  const filteredCategories = useMemo(() => {
+    const q = categorySearch.trim().toLowerCase();
+    if (!q) return categories;
+    return categories.filter(
+      (c) =>
+        (c.name || '').toLowerCase().includes(q) ||
+        String(c.category_id) === String(selectedCategory)
+    );
+  }, [categories, categorySearch, selectedCategory]);
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -1126,153 +1136,174 @@ export default function CreateOrderPage() {
           {/* Menu Items */}
           <div className="lg:col-span-2">
             <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6">
-              {/* Categories - Attractive Design */}
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1">Select Category</h3>
-                    <p className="text-xs sm:text-sm text-gray-500">Choose a category to view menu items</p>
-                  </div>
-                  {selectedCategory && (
-                    <button
-                      onClick={() => setSelectedCategory('')}
-                      className="text-xs text-[#FF5F15] hover:text-[#FF9500] font-semibold px-3 py-1.5 rounded-lg hover:bg-orange-50 transition border border-orange-200"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {categories.map((category) => {
-                    const isSelected = String(selectedCategory) === String(category.category_id);
-                    return (
+              {/* Categories (single column) + Menu — side by side on large screens */}
+              <div className="flex flex-col lg:flex-row gap-6 lg:gap-0 lg:items-stretch lg:min-h-[22rem]">
+                <aside className="w-full lg:w-56 xl:w-64 shrink-0 flex flex-col border-b lg:border-b-0 lg:border-r border-gray-200 pb-6 lg:pb-0 lg:pr-5">
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-bold text-gray-900">Categories</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Choose one — dishes appear beside</p>
+                    </div>
+                    {selectedCategory && (
                       <button
-                        key={category.category_id}
-                        onClick={() => setSelectedCategory(String(category.category_id))}
-                        className={`relative overflow-hidden rounded-xl p-4 text-left transition-all duration-300 transform hover:scale-105 ${
-                          isSelected
-                            ? 'bg-gradient-to-br from-[#FF5F15] to-[#FF9500] text-white shadow-xl ring-4 ring-orange-200'
-                            : 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-700 hover:from-gray-100 hover:to-gray-200 border-2 border-gray-200 hover:border-[#FF5F15] shadow-md hover:shadow-lg'
-                        }`}
+                        type="button"
+                        onClick={() => setSelectedCategory('')}
+                        className="text-xs text-[#FF5F15] hover:text-[#FF9500] font-semibold px-2.5 py-1 rounded-lg hover:bg-orange-50 transition border border-orange-200 shrink-0"
                       >
-                        {isSelected && (
-                          <div className="absolute top-0 right-0 w-20 h-20 bg-white opacity-10 rounded-full -mr-10 -mt-10"></div>
-                        )}
-                        <div className="relative z-10">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className={`text-lg font-bold ${isSelected ? 'text-white' : 'text-gray-900'}`}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <label className="sr-only" htmlFor="category-filter">
+                    Filter categories
+                  </label>
+                  <input
+                    id="category-filter"
+                    type="search"
+                    placeholder="Filter categories…"
+                    value={categorySearch}
+                    onChange={(e) => setCategorySearch(e.target.value)}
+                    className="w-full px-2.5 py-2 mb-3 text-xs border border-[#E0E0E0] rounded-lg text-gray-900 placeholder-gray-400 bg-white focus:outline-none focus:ring-2 focus:ring-[#FF5F15] focus:border-[#FF5F15]"
+                  />
+                  <div className="flex flex-col gap-2 overflow-y-auto max-h-[42vh] lg:max-h-[min(70vh,520px)] pr-1 -mr-1">
+                    {filteredCategories.map((category) => {
+                      const isSelected = String(selectedCategory) === String(category.category_id);
+                      const count = dishes.filter(
+                        (d) => String(d.category_id) === String(category.category_id) && d.is_available == 1
+                      ).length;
+                      return (
+                        <button
+                          type="button"
+                          key={category.category_id}
+                          onClick={() => setSelectedCategory(String(category.category_id))}
+                          className={`relative w-full text-left rounded-lg px-2.5 py-2 transition-all border-2 ${
+                            isSelected
+                              ? 'bg-gradient-to-r from-[#FF5F15] to-[#FF9500] text-white border-transparent shadow-md ring-2 ring-orange-200'
+                              : 'bg-gray-50 text-gray-800 border-gray-200 hover:border-[#FF5F15] hover:bg-white'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className={`font-semibold text-xs leading-snug ${isSelected ? 'text-white' : 'text-gray-900'}`}>
                               {category.name}
                             </span>
                             {isSelected && (
-                              <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center">
-                                <Check className="w-4 h-4 text-[#FF5F15]" />
-                              </div>
+                              <span className="shrink-0 w-6 h-6 bg-white rounded-full flex items-center justify-center">
+                                <Check className="w-3.5 h-3.5 text-[#FF5F15]" />
+                              </span>
                             )}
                           </div>
-                          <div className={`text-xs ${isSelected ? 'text-orange-100' : 'text-gray-500'}`}>
-                            {dishes.filter(d => String(d.category_id) === String(category.category_id) && d.is_available == 1).length} items available
+                          <p className={`text-[11px] mt-1 ${isSelected ? 'text-orange-100' : 'text-gray-500'}`}>
+                            {count} available
+                          </p>
+                        </button>
+                      );
+                    })}
+                    {categories.length === 0 && (
+                      <div className="p-4 text-center bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                        <p className="text-xs text-gray-500">No categories available</p>
+                      </div>
+                    )}
+                    {categories.length > 0 && filteredCategories.length === 0 && (
+                      <div className="p-3 text-center bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                        <p className="text-[11px] text-gray-500">No categories match</p>
+                      </div>
+                    )}
+                  </div>
+                </aside>
+
+                <div className="flex-1 min-w-0 flex flex-col lg:pl-6">
+                  {!selectedCategory ? (
+                    <div className="flex flex-1 items-center justify-center text-center py-12 lg:py-8 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
+                      <div className="max-w-md mx-auto px-4">
+                        <div className="w-16 h-16 bg-[#FF5F15] bg-opacity-10 rounded-full flex items-center justify-center mx-auto mb-3">
+                          <ShoppingCart className="w-8 h-8 text-[#FF5F15]" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">Select a category</h3>
+                        <p className="text-sm text-gray-600 mb-3">
+                          Pick a category from the column on the left — menu items will show here in the same row on desktop.
+                        </p>
+                        <div className="flex items-center justify-center gap-2 text-xs text-gray-500">
+                          <span className="w-1.5 h-1.5 bg-[#FF5F15] rounded-full animate-pulse" />
+                          <span>Categories • Menu • Same workspace</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mb-3 pb-3 border-b border-gray-200">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h2 className="text-base sm:text-lg font-bold text-gray-900">Menu</h2>
+                            <p className="text-xs text-gray-600">
+                              <span className="font-semibold text-[#FF5F15]">
+                                {categories.find((c) => String(c.category_id) === String(selectedCategory))?.name || 'Selected'}
+                              </span>
+                            </p>
+                          </div>
+                          <div className="px-2 py-1 bg-[#FF5F15] bg-opacity-10 rounded-md">
+                            <span className="text-xs font-semibold text-[#FF5F15]">
+                              {filteredDishes.length} {filteredDishes.length === 1 ? 'item' : 'items'}
+                            </span>
                           </div>
                         </div>
-                      </button>
-                    );
-                  })}
-                  {categories.length === 0 && (
-                    <div className="col-span-full p-6 sm:p-8 text-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
-                      <p className="text-xs sm:text-sm text-gray-500">No categories available</p>
-                    </div>
+                      </div>
+                      {loading ? (
+                        <div className="text-center py-12">
+                          <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-[#FF5F15] border-t-transparent mb-3" />
+                          <p className="text-gray-500">Loading menu items...</p>
+                        </div>
+                      ) : filteredDishes.length === 0 ? (
+                        <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                          <p className="text-gray-600 font-medium mb-2">No dishes in this category</p>
+                          <p className="text-sm text-gray-500">Try another category</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 overflow-y-auto max-h-[min(70vh,560px)] pr-1">
+                          {filteredDishes.map((dish) => (
+                            <div
+                              key={dish.dish_id}
+                              className="group relative bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md hover:border-[#FF5F15] transition-all duration-200"
+                            >
+                              <div className="absolute inset-0 bg-gradient-to-br from-[#FF5F15] to-[#FF9500] opacity-0 group-hover:opacity-5 rounded-lg transition-opacity duration-200" />
+
+                              <div className="relative">
+                                <div className="flex justify-between items-start mb-2">
+                                  <div className="flex-1 min-w-0">
+                                    <h3 className="font-semibold text-gray-900 text-xs sm:text-sm leading-tight mb-0.5 group-hover:text-[#FF5F15] transition-colors">
+                                      {dish.name}
+                                    </h3>
+                                    {dish.description && (
+                                      <p className="text-[10px] sm:text-[11px] text-gray-600 line-clamp-3 mt-0.5 leading-snug">{dish.description}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100 gap-2">
+                                  <div className="min-w-0">
+                                    <p className="text-sm sm:text-base font-bold text-[#FF5F15] tabular-nums">{formatPKR(dish.price)}</p>
+                                    {dish.is_available != 1 && (
+                                      <span className="text-[10px] text-red-500 font-medium">Unavailable</span>
+                                    )}
+                                  </div>
+                                  {dish.is_available == 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => addToCart(dish)}
+                                      className="shrink-0 px-3 py-1.5 bg-gradient-to-r from-[#FF5F15] to-[#FF9500] text-white rounded-md font-semibold text-[11px] hover:from-[#FF9500] hover:to-[#FF5F15] transition-all shadow-sm flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3.5 h-3.5" />
+                                      Add
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
-
-              {/* Menu Items Section */}
-              {!selectedCategory ? (
-                <div className="text-center py-16 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-dashed border-gray-300">
-                  <div className="max-w-md mx-auto">
-                    <div className="w-20 h-20 bg-[#FF5F15] bg-opacity-10 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <ShoppingCart className="w-10 h-10 text-[#FF5F15]" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">Select a Category</h3>
-                    <p className="text-gray-600 mb-4">
-                      Please select a category from above to view and add menu items to your order.
-                    </p>
-                    <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                      <div className="w-2 h-2 bg-[#FF5F15] rounded-full animate-pulse"></div>
-                      <span>Choose a category to get started</span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="mb-4 pb-4 border-b border-gray-200">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-900 mb-1">
-                          Menu Items
-                        </h2>
-                        <p className="text-sm text-gray-600">
-                          Category: <span className="font-semibold text-[#FF5F15]">{categories.find(c => String(c.category_id) === String(selectedCategory))?.name || 'Selected'}</span>
-                        </p>
-                      </div>
-                      <div className="px-3 py-1.5 bg-[#FF5F15] bg-opacity-10 rounded-lg">
-                        <span className="text-sm font-semibold text-[#FF5F15]">
-                          {filteredDishes.length} {filteredDishes.length === 1 ? 'item' : 'items'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  {loading ? (
-                    <div className="text-center py-12">
-                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-[#FF5F15] border-t-transparent mb-3"></div>
-                      <p className="text-gray-500">Loading menu items...</p>
-                    </div>
-                  ) : filteredDishes.length === 0 ? (
-                    <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
-                      <p className="text-gray-600 font-medium mb-2">No dishes available in this category</p>
-                      <p className="text-sm text-gray-500">Try selecting a different category</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {filteredDishes.map((dish) => (
-                        <div
-                          key={dish.dish_id}
-                          className="group relative bg-white border-2 border-gray-200 rounded-xl p-5 hover:shadow-xl hover:border-[#FF5F15] transition-all duration-300 transform hover:-translate-y-1"
-                        >
-                          {/* Hover effect overlay */}
-                          <div className="absolute inset-0 bg-gradient-to-br from-[#FF5F15] to-[#FF9500] opacity-0 group-hover:opacity-5 rounded-xl transition-opacity duration-300"></div>
-                          
-                          <div className="relative">
-                            <div className="flex justify-between items-start mb-3">
-                              <div className="flex-1 min-w-0">
-                                <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-1 group-hover:text-[#FF5F15] transition-colors">{dish.name}</h3>
-                                {dish.description && (
-                                  <p className="text-xs text-gray-600 line-clamp-2 mt-1">{dish.description}</p>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                              <div>
-                                <p className="text-xl sm:text-2xl font-bold text-[#FF5F15]">{formatPKR(dish.price)}</p>
-                                {dish.is_available != 1 && (
-                                  <span className="text-xs text-red-500 font-medium">Unavailable</span>
-                                )}
-                              </div>
-                              {dish.is_available == 1 && (
-                                <button
-                                  onClick={() => addToCart(dish)}
-                                  className="px-5 py-2.5 bg-gradient-to-r from-[#FF5F15] to-[#FF9500] text-white rounded-lg font-semibold text-sm hover:from-[#FF9500] hover:to-[#FF5F15] transition-all shadow-lg hover:shadow-xl flex items-center gap-2 transform hover:scale-105"
-                                >
-                                  <Plus className="w-4 h-4" />
-                                  Add
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
             </div>
           </div>
 
