@@ -16,6 +16,43 @@ const FALLBACK_API_URL = 'http://localhost/restuarent/api';
 // Storage key for caching working API URL
 const WORKING_API_URL_KEY = 'working_api_url';
 
+// When true (set NEXT_PUBLIC_API_USE_PROXY=1 on Vercel), browser calls same-origin
+// /api/php-proxy/... and the Next server forwards to PHP — avoids browser CORS to Hostinger.
+const rawProxyFlag =
+  typeof process !== 'undefined' ? String(process.env.NEXT_PUBLIC_API_USE_PROXY || '').toLowerCase() : '';
+const USE_API_PROXY = rawProxyFlag === '1' || rawProxyFlag === 'true' || rawProxyFlag === 'yes';
+
+const getProxyBaseUrl = () => {
+  if (typeof window === 'undefined') return '';
+  const origin = window.location.origin.replace(/\/$/, '');
+  return `${origin}/api/php-proxy/`;
+};
+
+/**
+ * URLs to try for apiGet/apiPost-style base + resolveApiEndpoint paths.
+ * In the browser with USE_API_PROXY, only the Next.js proxy (no direct PHP / localhost fallback).
+ */
+const getUrlsToTry = () => {
+  const currentWorkingUrl = getWorkingApiUrl();
+  if (USE_API_PROXY && typeof window !== 'undefined') {
+    return [normalizeApiUrl(getProxyBaseUrl())];
+  }
+
+  const urlsToTry = [currentWorkingUrl];
+  const shouldTryPrimary =
+    PRIMARY_API_URL && !PRIMARY_API_URL.includes('localhost') && PRIMARY_API_URL.trim() !== '';
+
+  const normalizedPrimary = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
+  if (shouldTryPrimary && normalizedPrimary && normalizedPrimary !== currentWorkingUrl) {
+    urlsToTry.push(normalizedPrimary);
+  }
+  const normalizedFallback = normalizeApiUrl(FALLBACK_API_URL);
+  if (normalizedFallback !== currentWorkingUrl && (!shouldTryPrimary || normalizedPrimary !== normalizedFallback)) {
+    urlsToTry.push(normalizedFallback);
+  }
+  return urlsToTry;
+};
+
 // Development mode flag - only log in development and client-side
 const IS_DEVELOPMENT = typeof window !== 'undefined' && process.env.NODE_ENV === 'development';
 
@@ -83,10 +120,14 @@ const resolveApiEndpoint = (endpoint) => {
  * @returns {string} The API base URL to use
  */
 const getWorkingApiUrl = () => {
+  if (USE_API_PROXY && typeof window !== 'undefined') {
+    return normalizeApiUrl(getProxyBaseUrl());
+  }
+
   if (typeof window === 'undefined') {
     // Server-side: use primary or fallback, normalize them
     const primaryUrl = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
-    return primaryUrl || FALLBACK_API_URL;
+    return primaryUrl || normalizeApiUrl(FALLBACK_API_URL);
   }
 
   // Check if we have a cached working URL
@@ -419,27 +460,14 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
   
-  // Determine URLs to try (cached working URL first, then primary, then fallback)
   const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = [currentWorkingUrl];
-  
-  const shouldTryPrimary = PRIMARY_API_URL && 
-                           !PRIMARY_API_URL.includes('localhost') && 
-                           PRIMARY_API_URL.trim() !== '';
-
-  const normalizedPrimary = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
-  if (shouldTryPrimary && normalizedPrimary && normalizedPrimary !== currentWorkingUrl) {
-    urlsToTry.push(normalizedPrimary);
-  }
-  const normalizedFallback = normalizeApiUrl(FALLBACK_API_URL);
-  if (normalizedFallback !== currentWorkingUrl && (!shouldTryPrimary || normalizedPrimary !== normalizedFallback)) {
-    urlsToTry.push(normalizedFallback);
-  }
+  const urlsToTry = getUrlsToTry();
 
   // Log API base URL in development for debugging
   if (IS_DEVELOPMENT) {
     console.log('🔧 Trying API URLs:', urlsToTry);
     console.log('🔧 Current working URL:', currentWorkingUrl);
+    if (USE_API_PROXY) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
   }
 
   // Log API request
@@ -552,27 +580,14 @@ export const apiPost = async (endpoint, body, options = {}) => {
   // Resolve endpoint with correct folder path (api/ or pos/)
   const normalizedEndpoint = resolveApiEndpoint(endpoint);
   
-  // Determine URLs to try (cached working URL first, then primary, then fallback)
   const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = [currentWorkingUrl];
-  
-  const shouldTryPrimary = PRIMARY_API_URL && 
-                           !PRIMARY_API_URL.includes('localhost') && 
-                           PRIMARY_API_URL.trim() !== '';
-
-  const normalizedPrimary = PRIMARY_API_URL ? normalizeApiUrl(PRIMARY_API_URL) : '';
-  if (shouldTryPrimary && normalizedPrimary && normalizedPrimary !== currentWorkingUrl) {
-    urlsToTry.push(normalizedPrimary);
-  }
-  const normalizedFallback = normalizeApiUrl(FALLBACK_API_URL);
-  if (normalizedFallback !== currentWorkingUrl && (!shouldTryPrimary || normalizedPrimary !== normalizedFallback)) {
-    urlsToTry.push(normalizedFallback);
-  }
+  const urlsToTry = getUrlsToTry();
 
   // Log API base URL in development for debugging
   if (IS_DEVELOPMENT) {
     console.log('🔧 Trying API URLs:', urlsToTry);
     console.log('🔧 Current working URL:', currentWorkingUrl);
+    if (USE_API_PROXY) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
   }
   
   // Log API request
@@ -877,20 +892,7 @@ export const apiPut = async (endpoint, body, options = {}) => {
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   
-  // Determine URLs to try (cached working URL first, then primary, then fallback)
-  const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = [currentWorkingUrl];
-  
-  const shouldTryPrimary = PRIMARY_API_URL && 
-                           !PRIMARY_API_URL.includes('localhost') && 
-                           PRIMARY_API_URL.trim() !== '';
-  
-  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
-    urlsToTry.push(PRIMARY_API_URL);
-  }
-  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
-    urlsToTry.push(FALLBACK_API_URL);
-  }
+  const urlsToTry = getUrlsToTry();
 
   try {
     const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
@@ -961,20 +963,7 @@ export const apiDelete = async (endpoint, body = null, options = {}) => {
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   
-  // Determine URLs to try (cached working URL first, then primary, then fallback)
-  const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = [currentWorkingUrl];
-  
-  const shouldTryPrimary = PRIMARY_API_URL && 
-                           !PRIMARY_API_URL.includes('localhost') && 
-                           PRIMARY_API_URL.trim() !== '';
-  
-  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
-    urlsToTry.push(PRIMARY_API_URL);
-  }
-  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
-    urlsToTry.push(FALLBACK_API_URL);
-  }
+  const urlsToTry = getUrlsToTry();
 
   try {
     const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
@@ -1050,24 +1039,13 @@ export const generateToken = () => {
  * @returns {Promise<Object>} Connection test result
  */
 export const testConnection = async () => {
-  // Determine URLs to try
   const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = [currentWorkingUrl];
-  
-  const shouldTryPrimary = PRIMARY_API_URL && 
-                           !PRIMARY_API_URL.includes('localhost') && 
-                           PRIMARY_API_URL.trim() !== '';
-  
-  if (shouldTryPrimary && PRIMARY_API_URL !== currentWorkingUrl) {
-    urlsToTry.push(PRIMARY_API_URL);
-  }
-  if (FALLBACK_API_URL !== currentWorkingUrl && (!shouldTryPrimary || PRIMARY_API_URL !== FALLBACK_API_URL)) {
-    urlsToTry.push(FALLBACK_API_URL);
-  }
+  const urlsToTry = getUrlsToTry();
+  const testEndpoint = resolveApiEndpoint('test_connection.php');
 
   try {
     const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
-      return fetch(`${baseUrl}/test_connection.php`, {
+      return fetch(`${baseUrl}${testEndpoint}`, {
         method: 'GET',
         mode: 'cors',
         credentials: 'omit',
@@ -1093,7 +1071,7 @@ export const testConnection = async () => {
       success: response.ok,
       data,
       status: response.status,
-      url: `${workingUrl}/test_connection.php`,
+      url: `${workingUrl}${testEndpoint}`,
       testedUrls: urlsToTry,
     };
   } catch (error) {
@@ -1105,7 +1083,7 @@ export const testConnection = async () => {
         error: 'Cannot connect to any API server',
       },
       status: 0,
-      url: `${getWorkingApiUrl()}/test_connection.php`,
+      url: `${getWorkingApiUrl()}${testEndpoint}`,
       testedUrls: urlsToTry,
     };
   }
