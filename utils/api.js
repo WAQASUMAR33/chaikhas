@@ -154,6 +154,9 @@ const testApiUrl = async (baseUrl, testEndpoint = '/test_connection.php') => {
       method: 'HEAD',
       mode: 'cors',
       credentials: 'omit',
+      headers: {
+        Accept: 'application/json',
+      },
       signal: controller.signal,
     });
 
@@ -395,9 +398,11 @@ export const clearAuth = () => {
  */
 export const apiGet = async (endpoint, params = {}, options = {}) => {
   const token = getToken();
+  const { headers: optionHeaders = {}, ...restFetchOptions } = options;
   const headers = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...optionHeaders,
   };
 
   // Add token to headers if available
@@ -451,11 +456,11 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
       }
       
       return fetch(fullUrl, {
+        ...restFetchOptions,
         method: 'GET',
         mode: 'cors',
         credentials: 'omit',
         headers,
-        ...options,
       });
     });
 
@@ -511,9 +516,11 @@ export const apiPost = async (endpoint, body, options = {}) => {
   }
   
   const token = getToken();
+  const { headers: optionHeaders = {}, ...restFetchOptions } = options;
   const headers = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...optionHeaders,
   };
 
   // Add token to headers if available
@@ -583,23 +590,18 @@ export const apiPost = async (endpoint, body, options = {}) => {
         console.log('🔧 Request headers:', headers);
       }
       
-      // Ensure method is always POST and cannot be overridden
       const fetchOptions = {
-        method: 'POST', // Always POST, cannot be overridden
+        ...restFetchOptions,
+        method: 'POST',
         mode: 'cors',
         credentials: 'omit',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: bodyString, // Use pre-validated stringified body
-        ...options,
+        headers: { ...headers },
+        body: bodyString,
       };
       
-      // Explicitly set method again after spreading options to prevent override
       fetchOptions.method = 'POST';
+      fetchOptions.body = bodyString;
       
-      // Ensure Content-Type is set
       if (!fetchOptions.headers['Content-Type']) {
         fetchOptions.headers['Content-Type'] = 'application/json';
       }
@@ -860,9 +862,11 @@ export const apiPost = async (endpoint, body, options = {}) => {
  */
 export const apiPut = async (endpoint, body, options = {}) => {
   const token = getToken();
+  const { headers: optionHeaders = {}, ...restFetchOptions } = options;
   const headers = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...optionHeaders,
   };
 
   // Add token to headers if available
@@ -897,12 +901,12 @@ export const apiPut = async (endpoint, body, options = {}) => {
       }
       
       return fetch(fullUrl, {
+        ...restFetchOptions,
         method: 'PUT',
         mode: 'cors',
         credentials: 'omit',
         headers,
         body: JSON.stringify(body),
-        ...options,
       });
     });
 
@@ -942,9 +946,11 @@ export const apiPut = async (endpoint, body, options = {}) => {
  */
 export const apiDelete = async (endpoint, body = null, options = {}) => {
   const token = getToken();
+  const { headers: optionHeaders = {}, ...restFetchOptions } = options;
   const headers = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...optionHeaders,
   };
 
   // Add token to headers if available
@@ -979,11 +985,11 @@ export const apiDelete = async (endpoint, body = null, options = {}) => {
       }
       
       const fetchOptions = {
+        ...restFetchOptions,
         method: 'DELETE',
         mode: 'cors',
         credentials: 'omit',
         headers,
-        ...options,
       };
 
       // Include body if provided (some DELETE requests need body)
@@ -1066,6 +1072,7 @@ export const testConnection = async () => {
         mode: 'cors',
         credentials: 'omit',
         headers: {
+          Accept: 'application/json',
           'Content-Type': 'application/json',
         },
       });

@@ -24,7 +24,10 @@ export const printToNetworkPrinter = async (content, printerIP, printerPort = 91
     // Send print job via API endpoint
     const response = await fetch('/api/print_direct.php', {
       method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
       headers: {
+        Accept: 'application/json',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

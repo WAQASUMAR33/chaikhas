@@ -9,7 +9,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { login, saveAuth, getToken, getRole } from '@/utils/api';
+import { login, saveAuth, getToken, getRole, apiPost } from '@/utils/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -224,19 +224,14 @@ export default function LoginPage() {
         const userUsername = apiResponse.user?.username || apiResponse.username || username;
         
         if (userId && token) {
-          // Try to fetch user role directly from database via API
           try {
-            const roleFetchResult = await fetch('http://localhost/restuarent/api/get_user_role.php', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify({ user_id: userId, username: userUsername })
+            const roleFetchResult = await apiPost('get_user_role.php', {
+              user_id: userId,
+              username: userUsername,
             });
-            
-            if (roleFetchResult.ok) {
-              const roleData = await roleFetchResult.json();
+
+            if (roleFetchResult.success && roleFetchResult.data) {
+              const roleData = roleFetchResult.data;
               if (roleData.success && roleData.role) {
                 role = roleData.role;
                 console.log('Successfully fetched role from database:', role);
