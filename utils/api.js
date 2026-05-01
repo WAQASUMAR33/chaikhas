@@ -21,6 +21,10 @@ const WORKING_API_URL_KEY = 'working_api_url';
 const rawProxyFlag =
   typeof process !== 'undefined' ? String(process.env.NEXT_PUBLIC_API_USE_PROXY || '').toLowerCase() : '';
 const USE_API_PROXY = rawProxyFlag === '1' || rawProxyFlag === 'true' || rawProxyFlag === 'yes';
+const DEFAULT_GET_CACHE_TTL_MS = 3000;
+const MAX_GET_CACHE_ENTRIES = 200;
+const inFlightGetRequests = new Map();
+const getResponseCache = new Map();
 
 const getProxyBaseUrl = () => {
   if (typeof window === 'undefined') return '';
@@ -68,6 +72,42 @@ const devError = (...args) => {
   if (IS_DEVELOPMENT) {
     console.error(...args);
   }
+};
+
+const stableStringify = (value) => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+};
+
+const getRequestCacheKey = ({ endpoint, params, token }) => {
+  return `${endpoint}::${stableStringify(params)}::${token || ''}`;
+};
+
+const setCachedGetResponse = (cacheKey, value, ttlMs) => {
+  const expiresAt = Date.now() + ttlMs;
+  getResponseCache.set(cacheKey, { expiresAt, value });
+
+  // Prevent unbounded growth during long sessions.
+  if (getResponseCache.size > MAX_GET_CACHE_ENTRIES) {
+    const oldestKey = getResponseCache.keys().next().value;
+    if (oldestKey) getResponseCache.delete(oldestKey);
+  }
+};
+
+const getCachedGetResponse = (cacheKey) => {
+  const cached = getResponseCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    getResponseCache.delete(cacheKey);
+    return null;
+  }
+  return cached.value;
 };
 
 /**
@@ -439,7 +479,14 @@ export const clearAuth = () => {
  */
 export const apiGet = async (endpoint, params = {}, options = {}) => {
   const token = getToken();
-  const { headers: optionHeaders = {}, ...restFetchOptions } = options;
+  const {
+    headers: optionHeaders = {},
+    cacheTtlMs = DEFAULT_GET_CACHE_TTL_MS,
+    noCache = false,
+    forceRefresh = false,
+    dedupe = true,
+    ...restFetchOptions
+  } = options;
   const headers = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
@@ -453,6 +500,11 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
 
   // Resolve endpoint with correct folder path (api/ or pos/)
   const normalizedEndpoint = resolveApiEndpoint(endpoint);
+  const cacheKey = getRequestCacheKey({
+    endpoint: normalizedEndpoint,
+    params,
+    token,
+  });
   
   // Convert params object to query string
   const queryString = Object.keys(params)
@@ -473,6 +525,18 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
   // Log API request
   logger.logAPI('GET', normalizedEndpoint, params);
 
+  if (!forceRefresh && !noCache && cacheTtlMs > 0) {
+    const cachedValue = getCachedGetResponse(cacheKey);
+    if (cachedValue) {
+      return cachedValue;
+    }
+  }
+
+  if (dedupe && inFlightGetRequests.has(cacheKey)) {
+    return inFlightGetRequests.get(cacheKey);
+  }
+
+  const requestPromise = (async () => {
   try {
     const response = await fetchWithFallback(urlsToTry, (baseUrl) => {
       const fullUrl = queryString 
@@ -496,8 +560,12 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
     
     // Log API response
     logger.logAPIResponse(normalizedEndpoint, data, response.status);
-    
-    return { success: response.ok, data, status: response.status };
+
+    const result = { success: response.ok, data, status: response.status };
+    if (!noCache && cacheTtlMs > 0 && response.ok) {
+      setCachedGetResponse(cacheKey, result, cacheTtlMs);
+    }
+    return result;
   } catch (error) {
     devError('API GET Error:', normalizedEndpoint, error.message);
     
@@ -526,6 +594,19 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
       },
       status: 0,
     };
+  }
+  })();
+
+  if (dedupe) {
+    inFlightGetRequests.set(cacheKey, requestPromise);
+  }
+
+  try {
+    return await requestPromise;
+  } finally {
+    if (dedupe) {
+      inFlightGetRequests.delete(cacheKey);
+    }
   }
 };
 
