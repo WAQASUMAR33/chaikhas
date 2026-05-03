@@ -19,7 +19,7 @@ import Table from '@/components/ui/Table';
 import Alert from '@/components/ui/Alert';
 import { apiPost, apiGet, getTerminal, getBranchId } from '@/utils/api';
 import { formatPKR } from '@/utils/format';
-import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X, Building2, Filter } from 'lucide-react';
+import { TrendingUp, FileText, DollarSign, BarChart3, Download, RefreshCw, Calendar, Search, X, Building2, Filter, Receipt, Percent } from 'lucide-react';
 
 /**
  * Fetch the last dayend closing_date_time for a branch
@@ -65,11 +65,15 @@ export default function SalesListPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [branches, setBranches] = useState([]);
   const [selectedBranchId, setSelectedBranchId] = useState('all'); // 'all' or specific branch_id
-  const [summary, setSummary] = useState({
+  const emptySummary = () => ({
     totalSales: 0,
     totalOrders: 0,
     averageOrder: 0,
+    totalBillAmount: 0,
+    totalServiceCharge: 0,
+    totalNetAmount: 0,
   });
+  const [summary, setSummary] = useState(emptySummary);
   const [alert, setAlert] = useState({ type: '', message: '' });
   const [lastUpdated, setLastUpdated] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -182,7 +186,7 @@ export default function SalesListPage() {
           message: 'Please select both start and end dates' 
         });
         setSales([]);
-        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        setSummary(emptySummary());
         if (showRefreshing) {
           setRefreshing(false);
         } else {
@@ -342,7 +346,7 @@ export default function SalesListPage() {
             setAlert({ type: 'error', message: errorMessage });
           }
           setSales([]);
-          setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+          setSummary(emptySummary());
           if (showRefreshing) {
             setRefreshing(false);
           } else {
@@ -421,7 +425,7 @@ export default function SalesListPage() {
           }
         }
         setSales([]);
-        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        setSummary(emptySummary());
         if (showRefreshing) {
           setRefreshing(false);
         } else {
@@ -453,7 +457,7 @@ export default function SalesListPage() {
         }
         
         setSales([]);
-        setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+        setSummary(emptySummary());
         if (showRefreshing) {
           setRefreshing(false);
         } else {
@@ -520,6 +524,27 @@ export default function SalesListPage() {
         const totalOrders = parseInt(sale.total_orders || sale.orders_count || sale.count || 0);
         const averageOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
 
+        const billAmount = parseFloat(
+          sale.bill_amount ??
+            sale.g_total_amount ??
+            sale.total_amount ??
+            sale.total_bill ??
+            0
+        );
+        const serviceCharge = parseFloat(
+          sale.service_charge ?? sale.service_charges ?? sale.total_service_charge ?? 0
+        );
+        let netAmount = parseFloat(
+          sale.net_total ??
+            sale.net_total_amount ??
+            sale.grand_total ??
+            sale.final_amount ??
+            0
+        );
+        if (!netAmount && totalSales) {
+          netAmount = totalSales;
+        }
+
         // Get branch information - try multiple field names
         const branchId = sale.branch_id || sale.branchId || sale.branch_ID || sale.BranchID;
         
@@ -558,6 +583,9 @@ export default function SalesListPage() {
           total_sales: totalSales,
           total_orders: totalOrders,
           average_order: averageOrder,
+          bill_amount: billAmount,
+          service_charge: serviceCharge,
+          net_amount: netAmount,
           raw_date: sale.date || sale.date_period || sale.period,
           branch_id: branchId,
           branch_name: branchName,
@@ -572,14 +600,27 @@ export default function SalesListPage() {
       const total = processedSales.reduce((sum, sale) => sum + (sale.total_sales || 0), 0);
       const orders = processedSales.reduce((sum, sale) => sum + (sale.total_orders || 0), 0);
       const average = orders > 0 ? total / orders : 0;
+      const totalBillAmount = processedSales.reduce((sum, sale) => sum + (sale.bill_amount || 0), 0);
+      const totalServiceCharge = processedSales.reduce((sum, sale) => sum + (sale.service_charge || 0), 0);
+      const totalNetAmount = processedSales.reduce((sum, sale) => sum + (sale.net_amount || 0), 0);
 
       setSummary({
         totalSales: total,
         totalOrders: orders,
         averageOrder: average,
+        totalBillAmount,
+        totalServiceCharge,
+        totalNetAmount,
       });
 
-      console.log('✅ Summary calculated:', { total, orders, average });
+      console.log('✅ Summary calculated:', {
+        total,
+        orders,
+        average,
+        totalBillAmount,
+        totalServiceCharge,
+        totalNetAmount,
+      });
 
       setLastUpdated(new Date());
     } catch (error) {
@@ -605,7 +646,7 @@ export default function SalesListPage() {
         message: 'Failed to load sales data: ' + errorMessage 
       });
       setSales([]);
-      setSummary({ totalSales: 0, totalOrders: 0, averageOrder: 0 });
+      setSummary(emptySummary());
     } finally {
       fetchingRef.current = false;
       if (showRefreshing) {
@@ -756,6 +797,12 @@ export default function SalesListPage() {
       doc.text(`Total Orders: ${summary.totalOrders}`, margin, yPos);
       yPos += 6;
       doc.text(`Average Order: ${formatPKR(summary.averageOrder)}`, margin, yPos);
+      yPos += 6;
+      doc.text(`Total Bill Amount: ${formatPKR(summary.totalBillAmount)}`, margin, yPos);
+      yPos += 6;
+      doc.text(`Total Service Charges: ${formatPKR(summary.totalServiceCharge)}`, margin, yPos);
+      yPos += 6;
+      doc.text(`Total Net Amount: ${formatPKR(summary.totalNetAmount)}`, margin, yPos);
       yPos += 10;
 
       // Table Header
@@ -890,6 +937,30 @@ export default function SalesListPage() {
       header: 'Total Orders',
       accessor: 'total_orders',
       className: 'w-32 text-center',
+      wrap: false,
+    },
+    {
+      header: 'Bill Amount',
+      accessor: (row) => (
+        <span className="font-medium text-gray-800">{formatPKR(row.bill_amount || 0)}</span>
+      ),
+      className: 'w-36 text-right',
+      wrap: false,
+    },
+    {
+      header: 'Service',
+      accessor: (row) => (
+        <span className="font-medium text-gray-700">{formatPKR(row.service_charge || 0)}</span>
+      ),
+      className: 'w-32 text-right',
+      wrap: false,
+    },
+    {
+      header: 'Net Amount',
+      accessor: (row) => (
+        <span className="font-semibold text-[#FF5F15]">{formatPKR(row.net_amount || 0)}</span>
+      ),
+      className: 'w-36 text-right',
       wrap: false,
     },
     {
@@ -1063,7 +1134,7 @@ export default function SalesListPage() {
             )}
           </div>
 
-        {/* Summary Cards */}
+        {/* Summary cards — always visible (shows PKR 0 while loading / no rows) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between mb-2">
@@ -1089,7 +1160,7 @@ export default function SalesListPage() {
             </p>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-4 sm:p-6 sm:col-span-2 lg:col-span-1">
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs sm:text-sm font-medium text-gray-600">Average Order</h3>
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -1099,6 +1170,45 @@ export default function SalesListPage() {
             <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 break-words">
               {formatPKR(summary.averageOrder)}
             </p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6 border border-gray-100">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Total Bill Amount</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-slate-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Receipt className="w-4 h-4 sm:w-5 sm:h-5 text-slate-700" />
+              </div>
+            </div>
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 break-words">
+              {formatPKR(summary.totalBillAmount)}
+            </p>
+            <p className="text-[11px] text-gray-500 mt-1">From API bill fields per row (see table)</p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6 border border-gray-100">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Total Service Charges</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-50 rounded-full flex items-center justify-center flex-shrink-0">
+                <Percent className="w-4 h-4 sm:w-5 sm:h-5 text-blue-700" />
+              </div>
+            </div>
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-blue-700 break-words">
+              {formatPKR(summary.totalServiceCharge)}
+            </p>
+            <p className="text-[11px] text-gray-500 mt-1">Sum of service charge per row</p>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6 border border-gray-100">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs sm:text-sm font-medium text-gray-600">Total Net Amount</h3>
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-50 rounded-full flex items-center justify-center flex-shrink-0">
+                <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-[#FF5F15]" />
+              </div>
+            </div>
+            <p className="text-lg sm:text-xl lg:text-2xl font-bold text-[#FF5F15] break-words">
+              {formatPKR(summary.totalNetAmount)}
+            </p>
+            <p className="text-[11px] text-gray-500 mt-1">Net / grand total per row (falls back to total sales)</p>
           </div>
         </div>
 
@@ -1125,6 +1235,22 @@ export default function SalesListPage() {
               data={sales}
               emptyMessage="No sales data found"
             />
+            <div className="border-t border-gray-200 bg-gray-50 px-3 sm:px-6 py-3 sm:py-4">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 sm:gap-6 text-xs sm:text-sm">
+                <span className="text-gray-700">
+                  <span className="font-semibold text-gray-900">Total Bill: </span>
+                  {formatPKR(summary.totalBillAmount)}
+                </span>
+                <span className="text-gray-700">
+                  <span className="font-semibold text-gray-900">Total Service: </span>
+                  {formatPKR(summary.totalServiceCharge)}
+                </span>
+                <span className="text-gray-900">
+                  <span className="font-semibold">Total Net: </span>
+                  {formatPKR(summary.totalNetAmount)}
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </div>
