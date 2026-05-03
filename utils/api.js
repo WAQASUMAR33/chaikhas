@@ -16,11 +16,49 @@ const FALLBACK_API_URL = 'http://localhost/restuarent/api';
 // Storage key for caching working API URL
 const WORKING_API_URL_KEY = 'working_api_url';
 
-// When true (set NEXT_PUBLIC_API_USE_PROXY=1 on Vercel), browser calls same-origin
-// /api/php-proxy/... and the Next server forwards to PHP — avoids browser CORS to Hostinger.
+// Optional override: NEXT_PUBLIC_API_USE_PROXY=1 forces proxy, =0 disables (even auto).
 const rawProxyFlag =
   typeof process !== 'undefined' ? String(process.env.NEXT_PUBLIC_API_USE_PROXY || '').toLowerCase() : '';
-const USE_API_PROXY = rawProxyFlag === '1' || rawProxyFlag === 'true' || rawProxyFlag === 'yes';
+
+const isProxyExplicitlyOff = () =>
+  rawProxyFlag === '0' || rawProxyFlag === 'false' || rawProxyFlag === 'no';
+
+const isProxyExplicitlyOn = () =>
+  rawProxyFlag === '1' || rawProxyFlag === 'true' || rawProxyFlag === 'yes';
+
+const parseUrlOrigin = (raw) => {
+  if (!raw || !String(raw).trim()) return null;
+  try {
+    return new URL(String(raw).trim()).origin;
+  } catch {
+    return null;
+  }
+};
+
+/** Origin of the PHP API the app would call without proxy (for CORS / auto-proxy checks). */
+const getAutoProxyCompareOrigin = () => {
+  return (
+    parseUrlOrigin(PRIMARY_API_URL) ||
+    (typeof window !== 'undefined' ? parseUrlOrigin(localStorage.getItem(WORKING_API_URL_KEY)) : null) ||
+    parseUrlOrigin(FALLBACK_API_URL)
+  );
+};
+
+/**
+ * Browser calls same-origin /api/php-proxy/...; Next server forwards to PHP (no browser CORS).
+ * - USE_PROXY=1|true|yes → always on (client)
+ * - USE_PROXY=0|false|no → always off
+ * - Otherwise → on when API origin ≠ page origin (e.g. Vercel→Hostinger, localhost:3001→localhost:80)
+ */
+const isBrowserProxyActive = () => {
+  if (typeof window === 'undefined') return false;
+  if (isProxyExplicitlyOff()) return false;
+  if (isProxyExplicitlyOn()) return true;
+
+  const apiOrigin = getAutoProxyCompareOrigin();
+  if (!apiOrigin) return false;
+  return apiOrigin !== window.location.origin;
+};
 const DEFAULT_GET_CACHE_TTL_MS = 3000;
 const MAX_GET_CACHE_ENTRIES = 200;
 const inFlightGetRequests = new Map();
@@ -34,11 +72,11 @@ const getProxyBaseUrl = () => {
 
 /**
  * URLs to try for apiGet/apiPost-style base + resolveApiEndpoint paths.
- * In the browser with USE_API_PROXY, only the Next.js proxy (no direct PHP / localhost fallback).
+ * In the browser with proxy active, only the Next.js proxy (no direct PHP / localhost fallback).
  */
 const getUrlsToTry = () => {
   const currentWorkingUrl = getWorkingApiUrl();
-  if (USE_API_PROXY && typeof window !== 'undefined') {
+  if (isBrowserProxyActive()) {
     return [normalizeApiUrl(getProxyBaseUrl())];
   }
 
@@ -160,7 +198,7 @@ const resolveApiEndpoint = (endpoint) => {
  * @returns {string} The API base URL to use
  */
 const getWorkingApiUrl = () => {
-  if (USE_API_PROXY && typeof window !== 'undefined') {
+  if (isBrowserProxyActive()) {
     return normalizeApiUrl(getProxyBaseUrl());
   }
 
@@ -519,7 +557,7 @@ export const apiGet = async (endpoint, params = {}, options = {}) => {
   if (IS_DEVELOPMENT) {
     console.log('🔧 Trying API URLs:', urlsToTry);
     console.log('🔧 Current working URL:', currentWorkingUrl);
-    if (USE_API_PROXY) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
+    if (isBrowserProxyActive()) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
   }
 
   // Log API request
@@ -668,7 +706,7 @@ export const apiPost = async (endpoint, body, options = {}) => {
   if (IS_DEVELOPMENT) {
     console.log('🔧 Trying API URLs:', urlsToTry);
     console.log('🔧 Current working URL:', currentWorkingUrl);
-    if (USE_API_PROXY) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
+    if (isBrowserProxyActive()) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
   }
   
   // Log API request
