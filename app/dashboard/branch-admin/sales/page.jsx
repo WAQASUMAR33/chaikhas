@@ -70,6 +70,75 @@ const emptySummary = () => ({
   totalNetAmount: 0,
 });
 
+/** Normalize API date fields to YYYY-MM-DD for joining with bills. */
+const dateKeyFromSaleRow = (sale) => {
+  const raw = sale.date || sale.date_period || sale.period || sale.report_date || sale.sale_date || '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  return '';
+};
+
+const extractBillsList = (data) => {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  if (data.data && Array.isArray(data.data)) return data.data;
+  if (data.bills && Array.isArray(data.bills)) return data.bills;
+  return [];
+};
+
+const emptyBillAgg = () => ({ bill: 0, discount: 0, service: 0, net: 0, orders: 0 });
+
+const accumulateBillInto = (acc, bill) => {
+  const discount =
+    parseFloat(
+      bill.discount_amount ?? bill.discount ?? bill.total_discount ?? bill.discount_total ?? 0
+    ) || 0;
+  const service =
+    parseFloat(bill.service_charge ?? bill.serviceCharge ?? bill.total_service_charge ?? 0) || 0;
+  const net =
+    parseFloat(
+      bill.grand_total ?? bill.net_total ?? bill.net_total_amount ?? bill.total_amount ?? 0
+    ) || 0;
+  let billAmt =
+    parseFloat(
+      bill.g_total_amount ??
+        bill.subtotal ??
+        bill.bill_amount ??
+        bill.amount_before_discount ??
+        bill.items_total ??
+        0
+    ) || 0;
+  if (!billAmt && (net || discount || service)) {
+    billAmt = Math.max(0, net - service + discount);
+  }
+  acc.discount += discount;
+  acc.service += service;
+  acc.net += net;
+  acc.bill += billAmt;
+  acc.orders += 1;
+};
+
+const aggregateBillsByDate = (billsList) => {
+  const map = {};
+  for (const bill of billsList) {
+    const rawD = bill.created_at || bill.bill_date || bill.date || '';
+    const dateKey = String(rawD).trim().split('T')[0];
+    if (!dateKey || dateKey === 'Invalid') continue;
+    if (!map[dateKey]) map[dateKey] = emptyBillAgg();
+    accumulateBillInto(map[dateKey], bill);
+  }
+  return map;
+};
+
+const sumAllBillsAgg = (billsList) => {
+  const acc = emptyBillAgg();
+  for (const bill of billsList) accumulateBillInto(acc, bill);
+  return acc;
+};
+
 export default function SalesListPage() {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -376,12 +445,37 @@ export default function SalesListPage() {
                     date: dateKey,
                     total_sales: 0,
                     total_orders: 0,
+                    bill_amount: 0,
+                    discount_amount: 0,
+                    service_charge: 0,
+                    net_total: 0,
                   };
                 }
                 
                 const billTotal = parseFloat(bill.grand_total || bill.net_total || bill.total_amount || 0);
                 salesByDate[dateKey].total_sales += billTotal;
                 salesByDate[dateKey].total_orders += 1;
+                const disc =
+                  parseFloat(
+                    bill.discount_amount ?? bill.discount ?? bill.total_discount ?? bill.discount_total ?? 0
+                  ) || 0;
+                const svc =
+                  parseFloat(bill.service_charge ?? bill.serviceCharge ?? bill.total_service_charge ?? 0) || 0;
+                let bAmt =
+                  parseFloat(
+                    bill.g_total_amount ??
+                      bill.subtotal ??
+                      bill.bill_amount ??
+                      bill.amount_before_discount ??
+                      0
+                  ) || 0;
+                if (!bAmt && (billTotal || disc || svc)) {
+                  bAmt = Math.max(0, billTotal - svc + disc);
+                }
+                salesByDate[dateKey].discount_amount += disc;
+                salesByDate[dateKey].service_charge += svc;
+                salesByDate[dateKey].bill_amount += bAmt;
+                salesByDate[dateKey].net_total += billTotal;
               });
               
               // Convert to array format
@@ -461,6 +555,31 @@ export default function SalesListPage() {
       });
       
       console.log(`📊 Branch filtering: ${salesData.length} total sales, ${filteredSalesData.length} after filtering for branch ${branchId}`);
+
+      // Bills carry discount / service / bill amounts orders use; get_sales aggregates often omit them.
+      let billsByDate = {};
+      let billsTotalAll = emptyBillAgg();
+      try {
+        const billsResult = await apiGet('api/bills_management.php', {
+          terminal,
+          branch_id: branchId,
+          from_date: dateRange.fromDate,
+          to_date: dateRange.toDate,
+        });
+        if (billsResult.success && billsResult.data) {
+          const billsList = extractBillsList(billsResult.data);
+          if (billsList.length > 0) {
+            billsByDate = aggregateBillsByDate(billsList);
+            billsTotalAll = sumAllBillsAgg(billsList);
+            logger.info('Merged bills into sales breakdown', {
+              bills: billsList.length,
+              days: Object.keys(billsByDate).length,
+            });
+          }
+        }
+      } catch (billErr) {
+        console.warn('Could not load bills for sales discount/service totals:', billErr);
+      }
       
       // Log if no sales data found
       if (salesData.length === 0) {
@@ -505,23 +624,28 @@ export default function SalesListPage() {
         const totalOrders = parseInt(sale.total_orders || sale.orders_count || sale.count || 0);
         const averageOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
 
-        const billAmount = parseFloat(
+        let billAmount = parseFloat(
           sale.bill_amount ??
             sale.g_total_amount ??
             sale.total_bill ??
             sale.total_amount ??
             0
         );
-        const discountAmount = parseFloat(
+        let discountAmount = parseFloat(
           sale.discount_amount ??
             sale.discount ??
             sale.total_discount ??
             sale.discount_total ??
             sale.total_discount_amount ??
+            sale.discount_value ??
             0
         );
-        const serviceCharge = parseFloat(
-          sale.service_charge ?? sale.service_charges ?? sale.total_service_charge ?? 0
+        let serviceCharge = parseFloat(
+          sale.service_charge ??
+            sale.service_charges ??
+            sale.serviceCharge ??
+            sale.total_service_charge ??
+            0
         );
         let netAmount = parseFloat(
           sale.net_total ??
@@ -532,6 +656,18 @@ export default function SalesListPage() {
         );
         if (!netAmount && totalSales) {
           netAmount = totalSales;
+        }
+
+        const dk = dateKeyFromSaleRow(sale);
+        let agg = dk && billsByDate[dk] && billsByDate[dk].orders > 0 ? billsByDate[dk] : null;
+        if (!agg && filteredSalesData.length === 1 && billsTotalAll.orders > 0) {
+          agg = billsTotalAll;
+        }
+        if (agg && agg.orders > 0) {
+          if (agg.bill > 0) billAmount = agg.bill;
+          discountAmount = agg.discount;
+          serviceCharge = agg.service;
+          if (agg.net > 0) netAmount = agg.net;
         }
 
         return {
