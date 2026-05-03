@@ -6,7 +6,7 @@
  * Uses real APIs: order_management.php (GET for list), get_ordersbyid.php (POST for details with items), chnageorder_status.php, bills_management.php, print.php
  */
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import AdminLayout from '@/components/admin/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -3508,6 +3508,29 @@ html, body {
     return true;
   });
 
+  /** Sum numeric columns for the current filtered list (matches table accessors). */
+  const orderTableTotals = useMemo(() => {
+    return filteredOrders.reduce(
+      (acc, row) => {
+        const bill = parseFloat(row.total || 0) || 0;
+        const svc = parseFloat(row.service_charge || 0) || 0;
+        const disc = parseFloat(row.discount || row.discount_amount || 0) || 0;
+        const net =
+          row.netTotal > 0
+            ? parseFloat(row.netTotal) || 0
+            : row.total > 0
+              ? parseFloat(row.total) || 0
+              : 0;
+        acc.totalBill += bill;
+        acc.totalService += svc;
+        acc.totalDiscount += disc;
+        acc.totalNet += net;
+        return acc;
+      },
+      { totalBill: 0, totalService: 0, totalDiscount: 0, totalNet: 0 }
+    );
+  }, [filteredOrders]);
+
   // Debug: Log filtered orders
   useEffect(() => {
     console.log('🔍 Filtered orders debug:', {
@@ -3725,6 +3748,44 @@ html, body {
               data={filteredOrders}
               actions={actions}
               emptyMessage="No orders found"
+              footer={
+                <tr className="bg-gray-50 border-t-2 border-gray-300 text-gray-900">
+                  <td
+                    colSpan={3}
+                    className="px-2 sm:px-3 md:px-6 py-3 text-left text-xs sm:text-sm font-bold whitespace-nowrap"
+                  >
+                    Totals
+                    <span className="font-normal text-gray-500 ml-2">
+                      ({filteredOrders.length} order{filteredOrders.length === 1 ? '' : 's'})
+                    </span>
+                  </td>
+                  <td className="px-2 sm:px-3 md:px-6 py-3 text-xs sm:text-sm text-right font-bold whitespace-nowrap">
+                    {formatPKR(orderTableTotals.totalBill)}
+                  </td>
+                  <td className="px-2 sm:px-3 md:px-6 py-3 text-xs sm:text-sm text-right font-bold whitespace-nowrap">
+                    {formatPKR(orderTableTotals.totalService)}
+                  </td>
+                  <td
+                    className={`px-2 sm:px-3 md:px-6 py-3 text-xs sm:text-sm text-right font-bold whitespace-nowrap ${
+                      orderTableTotals.totalDiscount > 0 ? 'text-red-600' : 'text-gray-500'
+                    }`}
+                  >
+                    {orderTableTotals.totalDiscount > 0
+                      ? formatPKR(-orderTableTotals.totalDiscount)
+                      : formatPKR(0)}
+                  </td>
+                  <td className="px-2 sm:px-3 md:px-6 py-3 text-xs sm:text-sm text-right font-bold text-[#FF5F15] whitespace-nowrap">
+                    {formatPKR(orderTableTotals.totalNet)}
+                  </td>
+                  <td
+                    colSpan={2}
+                    className="px-2 sm:px-3 md:px-6 py-3 text-xs text-gray-400 text-left whitespace-nowrap"
+                  >
+                    —
+                  </td>
+                  <td className="px-2 sm:px-3 md:px-6 py-3 text-right whitespace-nowrap" aria-hidden="true" />
+                </tr>
+              }
             />
           </div>
         )}

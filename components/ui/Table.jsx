@@ -5,7 +5,7 @@
  * For displaying data in tables
  */
 
-export default function Table({ columns, data, actions, emptyMessage = 'No data available' }) {
+export default function Table({ columns, data, actions, emptyMessage = 'No data available', footer }) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-8 text-center">
@@ -70,6 +70,7 @@ export default function Table({ columns, data, actions, emptyMessage = 'No data 
                   </tr>
                 ))}
               </tbody>
+              {footer ? <tfoot>{footer}</tfoot> : null}
             </table>
           </div>
         </div>
