@@ -46,6 +46,11 @@ class Category extends Model
         return $this->belongsTo(Branch::class);
     }
 
+    public function kitchen()
+    {
+        return $this->belongsTo(Kitchen::class);
+    }
+
     public function menuItems()
     {
         return $this->hasMany(MenuItem::class);

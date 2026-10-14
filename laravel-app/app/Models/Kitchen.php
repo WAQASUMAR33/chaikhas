@@ -14,6 +14,8 @@ class Kitchen extends Model
         'name',
         'code',
         'printer_id',
+        'printer_ip',
+        'printer_port',
         'status',
         'description',
     ];
@@ -26,6 +28,11 @@ class Kitchen extends Model
     public function printer()
     {
         return $this->belongsTo(Printer::class);
+    }
+
+    public function categories()
+    {
+        return $this->hasMany(Category::class);
     }
 
     public function storeStocks()

@@ -64,11 +64,13 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/orders/{order}/billing', [OrderController::class, 'updateBilling'])->name('orders.updateBilling');
     Route::post('/orders/{order}/pay', [OrderController::class, 'processPayment'])->name('orders.processPayment');
     Route::get('/orders/{order}/receipt', [OrderController::class, 'printReceipt'])->name('orders.receipt');
+    Route::post('/orders/{order}/kot', [OrderController::class, 'reprintKOT'])->name('orders.reprintKOT');
 
     // Kitchen Display System & Station Management
     Route::get('/kitchen', [KitchenController::class, 'index'])->name('kitchen.index');
     Route::patch('/kitchen/item/{item}/status', [KitchenController::class, 'updateItemStatus'])->name('kitchen.item.status');
     Route::resource('kitchens', KitchenManagementController::class)->except(['create', 'edit', 'show']);
+    Route::post('/kitchens/{kitchen}/test-printer', [KitchenManagementController::class, 'testPrinter'])->name('kitchens.testPrinter');
 
     // Halls & Tables Management
     Route::resource('halls', HallController::class)->except(['create', 'edit', 'show']);

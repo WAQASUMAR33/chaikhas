@@ -13,7 +13,7 @@ class CategoryController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
-        $query = Category::with('branch');
+        $query = Category::with(['branch', 'kitchen']);
 
         if ($user->role !== 'super_admin' && $user->branch_id) {
             $query->where('branch_id', $user->branch_id);

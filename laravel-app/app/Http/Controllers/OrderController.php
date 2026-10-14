@@ -305,13 +305,36 @@ class OrderController extends Controller
             return $order;
         });
 
+        // Automatically send dishes to related kitchen printers
+        $kotResults = \App\Services\KitchenPrinterService::printOrderKOT($order);
+
         $msg = $isEditing ? 'Running order updated successfully!' : 'Order placed successfully!';
 
         if ($request->wantsJson()) {
-            return response()->json(['success' => true, 'order_id' => $order->id, 'message' => $msg]);
+            return response()->json([
+                'success' => true, 
+                'order_id' => $order->id, 
+                'message' => $msg,
+                'kot_results' => $kotResults
+            ]);
         }
 
         return redirect()->route('orders.show', $order->id)->with('success', $msg);
+    }
+
+    public function reprintKOT(Request $request, Order $order)
+    {
+        $results = \App\Services\KitchenPrinterService::printOrderKOT($order);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'KOT sent to respective kitchen station printers.',
+                'results' => $results,
+            ]);
+        }
+
+        return back()->with('success', 'KOT dispatched to kitchen printers.');
     }
 
     public function show(Request $request, Order $order)
