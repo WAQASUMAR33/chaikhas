@@ -61,4 +61,47 @@ class AttendanceController extends Controller
         return redirect()->route('attendances.index', ['date' => $validated['date']])
             ->with('success', 'Staff attendance register saved successfully!');
     }
+
+    public function clockToggle(Request $request)
+    {
+        $user = Auth::user();
+        $branchId = $user->branch_id ?? Branch::first()->id ?? 1;
+        $today = now()->toDateString();
+        $nowTime = now()->format('h:i A');
+
+        $att = Attendance::where('user_id', $user->id)->whereDate('date', $today)->first();
+
+        if (!$att || empty($att->clock_in)) {
+            $att = Attendance::updateOrCreate(
+                ['user_id' => $user->id, 'date' => $today],
+                [
+                    'branch_id' => $branchId,
+                    'status' => 'Present',
+                    'clock_in' => $nowTime,
+                ]
+            );
+            $msg = "✓ Clocked In successfully at {$nowTime}!";
+            $action = 'clock_in';
+        } elseif (empty($att->clock_out)) {
+            $att->update(['clock_out' => $nowTime]);
+            $msg = "✓ Clocked Out successfully at {$nowTime}!";
+            $action = 'clock_out';
+        } else {
+            $msg = "Already clocked in ({$att->clock_in}) and clocked out ({$att->clock_out}) today.";
+            $action = 'completed';
+        }
+
+        \App\Models\AuditLog::log('Staff Attendance Quick Clock', 'Attendance', null, ['user_id' => $user->id, 'action' => $action, 'time' => $nowTime]);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => $msg,
+                'action' => $action,
+                'attendance' => $att,
+            ]);
+        }
+
+        return redirect()->back()->with('success', $msg);
+    }
 }

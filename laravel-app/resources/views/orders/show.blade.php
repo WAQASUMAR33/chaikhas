@@ -156,18 +156,61 @@
                         @csrf
                         <div>
                             <label class="block text-xs font-bold text-slate-600 mb-1">Select Payment Method *</label>
-                            <select name="payment_mode" required class="w-full px-3 py-2 bg-white border border-slate-300 text-sm font-bold text-slate-900">
+                            <select name="payment_mode" required class="w-full px-3 py-2 bg-white border border-slate-300 text-sm font-bold text-slate-900 rounded-none">
                                 <option value="Cash">Cash</option>
                                 <option value="Card">Credit / Debit Card</option>
                                 <option value="Online">Online / Mobile Wallet</option>
+                                <option value="Khata Credit">📖 Khata Credit (Udhar)</option>
                             </select>
                         </div>
-                        <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-md transition">
+                        <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-md transition rounded-none">
                             💳 Process Payment & Mark Complete
                         </button>
                     </form>
                     @endif
                 </div>
+
+                <!-- Rider Dispatch Card (For Delivery Orders) -->
+                @if($order->order_type === 'Delivery' || $order->rider_id)
+                <div class="p-4 bg-white border border-slate-200 shadow-xs space-y-3 rounded-none">
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <span class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                            <span>🛵</span>
+                            <span>Rider Dispatch</span>
+                        </span>
+                        <span class="px-2 py-0.5 text-[10px] font-black uppercase rounded-none {{ in_array($order->delivery_status, ['Assigned', 'Out for Delivery']) ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800' }}">
+                            {{ $order->delivery_status ?? 'Pending' }}
+                        </span>
+                    </div>
+
+                    <form method="POST" action="{{ route('orders.assignRider', $order->id) }}" class="space-y-2.5">
+                        @csrf
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Assign Rider</label>
+                            <select name="rider_id" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 text-xs font-bold rounded-none">
+                                <option value="">-- No Rider Assigned --</option>
+                                @foreach($riders as $r)
+                                    <option value="{{ $r->id }}" {{ $order->rider_id == $r->id ? 'selected' : '' }}>
+                                        {{ $r->name }} ({{ $r->phone }})
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Delivery Status</label>
+                            <select name="delivery_status" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 text-xs font-bold rounded-none">
+                                <option value="Pending" {{ ($order->delivery_status ?? '') === 'Pending' ? 'selected' : '' }}>Pending</option>
+                                <option value="Assigned" {{ ($order->delivery_status ?? '') === 'Assigned' ? 'selected' : '' }}>Assigned</option>
+                                <option value="Out for Delivery" {{ ($order->delivery_status ?? '') === 'Out for Delivery' ? 'selected' : '' }}>Out for Delivery</option>
+                                <option value="Delivered" {{ ($order->delivery_status ?? '') === 'Delivered' ? 'selected' : '' }}>Delivered</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs rounded-none transition">
+                            Update Rider Dispatch
+                        </button>
+                    </form>
+                </div>
+                @endif
             </div>
 
             <!-- Billing Totals Card -->

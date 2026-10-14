@@ -331,13 +331,25 @@
                 </div>
 
                 <!-- Section 2: SERVICE & FLEET -->
-                @if(Auth::user()->hasPermission('users'))
                 <div class="pt-2 space-y-1">
                     <div class="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
                         <span>{{ __('Service & Fleet') }}</span>
                     </div>
 
+                    <!-- Table Reservations -->
+                    @if(Auth::user()->hasPermission('reservations') || Auth::user()->hasPermission('pos') || Auth::user()->role === 'super_admin')
+                    <a href="{{ route('reservations.index') }}"
+                       x-show="matches('Reservations Book Table Guest Seating Booking')"
+                       class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ request()->routeIs('reservations.*') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-base group-hover:scale-110 transition-transform">📅</span>
+                            <span>{{ __('Table Reservations') }}</span>
+                        </div>
+                    </a>
+                    @endif
+
                     <!-- Delivery Riders -->
+                    @if(Auth::user()->hasPermission('riders') || Auth::user()->hasPermission('users') || Auth::user()->role === 'super_admin')
                     <a href="{{ route('riders.index') }}"
                        x-show="matches('Delivery Riders Dispatch Drivers Fleet')"
                        class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ request()->routeIs('riders.*') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
@@ -346,8 +358,10 @@
                             <span>{{ __('Delivery & Riders') }}</span>
                         </div>
                     </a>
+                    @endif
 
                     <!-- Order Takers / Waiters -->
+                    @if(Auth::user()->hasPermission('users'))
                     <a href="{{ route('users.index', ['role' => 'order_taker']) }}"
                        x-show="matches('Order Takers Waiters Staff Service Floor')"
                        class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ (request()->routeIs('users.*') && request('role') == 'order_taker') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
@@ -356,14 +370,50 @@
                             <span>{{ __('Order Takers (Waiters)') }}</span>
                         </div>
                     </a>
+                    @endif
+
+                    <!-- Staff Attendance -->
+                    @if(Auth::user()->hasPermission('attendances') || Auth::user()->hasPermission('users') || Auth::user()->role === 'super_admin')
+                    <a href="{{ route('attendances.index') }}"
+                       x-show="matches('Staff Attendance Clock In Out Shifts Employees')"
+                       class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ request()->routeIs('attendances.*') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-base group-hover:scale-110 transition-transform">⏱️</span>
+                            <span>{{ __('Staff Attendance') }}</span>
+                        </div>
+                    </a>
+                    @endif
                 </div>
-                @endif
 
                 <!-- Section 3: REGISTER & FINANCE -->
                 <div class="pt-2 space-y-1">
                     <div class="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
                         <span>{{ __('Register & Finance') }}</span>
                     </div>
+
+                    <!-- Purchases & GRN -->
+                    @if(Auth::user()->hasPermission('purchases') || Auth::user()->role === 'super_admin')
+                    <a href="{{ route('purchases.index') }}"
+                       x-show="matches('Purchases Bills Invoices Vendor Stock GRN Orders')"
+                       class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ request()->routeIs('purchases.*') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-base group-hover:scale-110 transition-transform">📦</span>
+                            <span>{{ __('Purchases & GRN') }}</span>
+                        </div>
+                    </a>
+                    @endif
+
+                    <!-- Customer Khata / Ledgers -->
+                    @if(Auth::user()->hasPermission('customer_ledgers') || Auth::user()->hasPermission('pos') || Auth::user()->role === 'super_admin')
+                    <a href="{{ route('customer-ledgers.index') }}"
+                       x-show="matches('Customer Ledgers Khata Udhar Credit Accounts')"
+                       class="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 group {{ request()->routeIs('customer-ledgers.*') ? 'nav-item-active' : 'text-slate-700 hover:bg-sky-50/80 hover:text-[#026897]' }}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-base group-hover:scale-110 transition-transform">📒</span>
+                            <span>{{ __('Customer Khata / Udhar') }}</span>
+                        </div>
+                    </a>
+                    @endif
 
                     <!-- Daily Expenses -->
                     @if(Auth::user()->hasPermission('expenses'))
@@ -462,9 +512,9 @@
                     </div>
                 </div>
 
-                <!-- Center: Quick Action Button (POS Shortcut) -->
-                @if(Auth::user()->hasPermission('pos'))
-                <div class="hidden md:flex items-center">
+                <!-- Center: Quick Action Buttons -->
+                <div class="hidden md:flex items-center gap-2.5">
+                    @if(Auth::user()->hasPermission('pos'))
                     <a href="{{ route('orders.create') }}" 
                        class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 border border-white/25 text-white font-black text-xs shadow-xs hover:shadow-md transition-all group"
                        title="{{ __('Open POS Terminal (F2)') }}">
@@ -472,8 +522,19 @@
                         <span>{{ __('Quick POS') }}</span>
                         <kbd class="bg-black/25 text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold text-white/90">F2</kbd>
                     </a>
+                    @endif
+
+                    <!-- Staff Attendance Quick Clock In / Out Toggle -->
+                    <form action="{{ route('attendances.clock') }}" method="POST" class="inline-flex m-0 p-0" onsubmit="return confirm('{{ __('Toggle staff attendance clock-in / clock-out?') }}');">
+                        @csrf
+                        <button type="submit" 
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 border border-emerald-400/40 text-white font-black text-xs shadow-xs hover:shadow-md transition-all cursor-pointer"
+                                title="{{ __('Toggle Clock-In / Clock-Out for your staff profile') }}">
+                            <span class="w-2 h-2 rounded-full bg-emerald-300 animate-ping"></span>
+                            <span>⏱️ {{ __('Clock In/Out') }}</span>
+                        </button>
+                    </form>
                 </div>
-                @endif
 
                 <!-- Right: Currency, Language, Fullscreen, Lock & User Profile Dropdown -->
                 <div class="flex items-center gap-2 sm:gap-2.5" x-data="{ dropdownOpen: false, currencyOpen: false, langOpen: false }">

@@ -54,6 +54,15 @@ class DashboardController extends Controller
             // Branch Comparison Analytics for Bar Chart
             $branchComparisonData = $this->getBranchComparison($branches);
 
+            // Low Stock Threshold Alerts
+            $lowStockItems = \App\Models\InventoryItem::with(['mainStoreStock', 'kitchenStoreStocks'])
+                ->get()
+                ->filter(function($item) {
+                    $total = ($item->mainStoreStock->quantity ?? 0) + $item->kitchenStoreStocks->sum('quantity');
+                    return $item->min_stock_alert > 0 && $total <= $item->min_stock_alert;
+                });
+            $lowStockCount = $lowStockItems->count();
+
             return view('dashboard.super_admin', compact(
                 'user',
                 'totalBranches',
@@ -64,7 +73,9 @@ class DashboardController extends Controller
                 'trendData',
                 'orderTypeData',
                 'topItemsData',
-                'branchComparisonData'
+                'branchComparisonData',
+                'lowStockCount',
+                'lowStockItems'
             ));
         }
 
@@ -90,6 +101,16 @@ class DashboardController extends Controller
         // Top Selling Menu Items for this branch
         $topItemsData = $this->getTopSellingItems($branchId);
 
+        // Low Stock Threshold Alerts
+        $lowStockItems = \App\Models\InventoryItem::with(['mainStoreStock', 'kitchenStoreStocks'])
+            ->where('branch_id', $branchId)
+            ->get()
+            ->filter(function($item) {
+                $total = ($item->mainStoreStock->quantity ?? 0) + $item->kitchenStoreStocks->sum('quantity');
+                return $item->min_stock_alert > 0 && $total <= $item->min_stock_alert;
+            });
+        $lowStockCount = $lowStockItems->count();
+
         return view('dashboard.branch_admin', compact(
             'user',
             'runningOrders',
@@ -101,7 +122,9 @@ class DashboardController extends Controller
             'recentOrders',
             'trendData',
             'orderTypeData',
-            'topItemsData'
+            'topItemsData',
+            'lowStockCount',
+            'lowStockItems'
         ));
     }
 

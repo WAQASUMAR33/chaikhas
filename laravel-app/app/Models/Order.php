@@ -29,6 +29,11 @@ class Order extends Model
         'payment_status',
         'payment_mode',
         'comments',
+        'rider_id',
+        'delivery_status',
+        'points_earned',
+        'points_redeemed',
+        'is_stock_deducted',
         'pra_invoice_number',
         'pra_qr_code',
         'pra_status',
@@ -68,6 +73,11 @@ class Order extends Model
     public function orderTaker()
     {
         return $this->belongsTo(User::class, 'order_taker_id');
+    }
+
+    public function rider()
+    {
+        return $this->belongsTo(Rider::class);
     }
 
     public function items()

@@ -25,14 +25,17 @@
                         <th class="py-4 px-6">Items Purchased</th>
                         <th class="py-4 px-6">Total Cost</th>
                         <th class="py-4 px-6">Payment</th>
-                        <th class="py-4 px-6 text-right">Added By</th>
+                        <th class="py-4 px-6">Added By</th>
+                        <th class="py-4 px-6 text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-sm font-medium text-slate-700">
                     @forelse($purchases as $po)
                     <tr class="hover:bg-slate-50/50 transition">
                         <td class="py-4 px-6 font-extrabold text-slate-900">
-                            {{ $po->po_number }}
+                            <a href="{{ route('purchases.show', $po->id) }}" class="text-[#026897] hover:underline">
+                                {{ $po->po_number }}
+                            </a>
                             @if($po->invoice_number)
                                 <span class="block text-xs font-semibold text-slate-400">Inv: {{ $po->invoice_number }}</span>
                             @endif
@@ -48,7 +51,7 @@
                                 @endforeach
                             </div>
                         </td>
-                        <td class="py-4 px-6 font-black text-slate-900">{{ number_format($po->total_amount, 2) }}</td>
+                        <td class="py-4 px-6 font-black text-slate-900">{{ currency_symbol() }} {{ number_format($po->total_amount, 2) }}</td>
                         <td class="py-4 px-6">
                             <span class="px-2.5 py-1 text-xs font-bold 
                                 {{ $po->payment_status === 'Paid' ? 'bg-emerald-100 text-emerald-800' : '' }}
@@ -57,13 +60,23 @@
                                 {{ $po->payment_status }}
                             </span>
                         </td>
-                        <td class="py-4 px-6 text-right font-bold text-slate-800 text-xs">
+                        <td class="py-4 px-6 font-bold text-slate-800 text-xs">
                             👤 {{ $po->addedBy->name ?? 'System' }}
+                        </td>
+                        <td class="py-4 px-6 text-right">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <a href="{{ route('purchases.show', $po->id) }}" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition rounded-none">
+                                    View
+                                </a>
+                                <a href="{{ route('purchases.print', $po->id) }}" target="_blank" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition rounded-none" title="Print Goods Received Note">
+                                    🖨️ GRN
+                                </a>
+                            </div>
                         </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colSpan="7" class="py-12 text-center text-slate-400 font-medium">No inward purchases logged yet.</td>
+                        <td colSpan="8" class="py-12 text-center text-slate-400 font-medium">No inward purchases logged yet.</td>
                     </tr>
                     @endforelse
                 </tbody>

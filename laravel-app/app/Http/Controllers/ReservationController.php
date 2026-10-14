@@ -75,4 +75,27 @@ class ReservationController extends Controller
 
         return redirect()->back()->with('success', 'Reservation status updated!');
     }
+
+    public function seatGuest(Request $request, $id)
+    {
+        $reservation = Reservation::with('table')->findOrFail($id);
+        $reservation->update(['status' => 'Seated']);
+
+        if ($reservation->table_id) {
+            Table::where('id', $reservation->table_id)->update(['status' => 'Running']);
+        }
+
+        \App\Models\AuditLog::log('Seated Reservation Guest at Table', 'Reservation', null, ['reservation_id' => $id, 'table_id' => $reservation->table_id]);
+
+        $params = [
+            'order_type' => 'Dine In',
+            'table_id' => $reservation->table_id,
+            'hall_id' => $reservation->table?->hall_id,
+            'customer_name' => $reservation->customer_name,
+            'customer_phone' => $reservation->customer_phone,
+        ];
+
+        return redirect()->route('orders.create', array_filter($params))
+            ->with('success', "Guest '{$reservation->customer_name}' seated! Creating bill in POS...");
+    }
 }

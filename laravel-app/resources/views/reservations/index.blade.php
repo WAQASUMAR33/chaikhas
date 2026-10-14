@@ -108,12 +108,27 @@
                             </span>
                         </td>
                         <td class="py-3 px-4 text-right">
-                            <form method="POST" action="{{ route('reservations.updateStatus', $res->id) }}" class="inline-flex gap-1">
-                                @csrf
-                                @method('PATCH')
-                                <input type="hidden" name="status" value="Seated">
-                                <button type="submit" class="px-2 py-1 bg-emerald-600 text-white text-xs font-bold">Mark Seated</button>
-                            </form>
+                            <div class="inline-flex items-center gap-1.5 justify-end">
+                                @if($res->status !== 'Seated' && $res->status !== 'Cancelled')
+                                    <form method="POST" action="{{ route('reservations.seat', $res->id) }}">
+                                        @csrf
+                                        <button type="submit" class="px-2.5 py-1 bg-[#026897] hover:bg-[#01547b] text-white text-xs font-black shadow-xs rounded-none transition flex items-center gap-1">
+                                            <span>🪑</span>
+                                            <span>Seat & Open POS</span>
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ route('reservations.updateStatus', $res->id) }}">
+                                        @csrf
+                                        @method('PATCH')
+                                        <input type="hidden" name="status" value="Cancelled">
+                                        <button type="submit" onclick="return confirm('Cancel this reservation?')" class="px-2 py-1 bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold border border-rose-200 rounded-none transition">
+                                            Cancel
+                                        </button>
+                                    </form>
+                                @else
+                                    <span class="text-xs font-bold text-slate-400">Completed</span>
+                                @endif
+                            </div>
                         </td>
                     </tr>
                     @empty

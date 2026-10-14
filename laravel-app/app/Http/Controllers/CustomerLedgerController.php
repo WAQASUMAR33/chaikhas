@@ -65,4 +65,67 @@ class CustomerLedgerController extends Controller
         return redirect()->route('customer-ledgers.index', ['customer_id' => $validated['customer_id']])
             ->with('success', 'Customer payment receipt recorded successfully!');
     }
+
+    public function storeCustomer(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:50',
+            'email' => 'nullable|email|max:255',
+            'address' => 'nullable|string',
+            'opening_balance' => 'nullable|numeric|min:0',
+        ]);
+
+        $customer = Customer::create([
+            'name' => $validated['name'],
+            'phone' => $validated['phone'],
+            'email' => $validated['email'] ?? null,
+            'address' => $validated['address'] ?? null,
+            'loyalty_points' => 0,
+        ]);
+
+        $openingBal = (float)($validated['opening_balance'] ?? 0);
+        if ($openingBal > 0) {
+            $user = Auth::user();
+            CustomerLedger::create([
+                'customer_id' => $customer->id,
+                'branch_id' => $user->branch_id,
+                'type' => 'debit',
+                'amount' => $openingBal,
+                'balance' => $openingBal,
+                'description' => 'Opening Khata Balance',
+                'reference_no' => 'OPENING-BAL',
+            ]);
+        }
+
+        \App\Models\AuditLog::log('Registered Khata Customer', 'Customer', null, ['customer_id' => $customer->id, 'name' => $customer->name]);
+
+        return redirect()->route('customer-ledgers.index', ['customer_id' => $customer->id])
+            ->with('success', "Customer '{$customer->name}' registered successfully in Khata!");
+    }
+
+    public function lookupByPhone(Request $request)
+    {
+        $phone = $request->input('phone');
+        if (!$phone) {
+            return response()->json(['success' => false, 'message' => 'Phone required.']);
+        }
+
+        $customer = Customer::where('phone', 'like', "%{$phone}%")->first();
+        if ($customer) {
+            $lastLedger = CustomerLedger::where('customer_id', $customer->id)->latest()->first();
+            return response()->json([
+                'success' => true,
+                'customer' => [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'phone' => $customer->phone,
+                    'loyalty_points' => (int)($customer->loyalty_points ?? 0),
+                    'current_balance' => $lastLedger ? (float)$lastLedger->balance : 0,
+                ]
+            ]);
+        }
+
+        return response()->json(['success' => false, 'message' => 'Customer not found.']);
+    }
 }

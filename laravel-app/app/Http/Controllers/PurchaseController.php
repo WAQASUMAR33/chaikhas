@@ -122,8 +122,65 @@ class PurchaseController extends Controller
                     'notes' => "Purchased via " . $poNumber . " (Vendor #" . $validated['vendor_id'] . ")",
                 ]);
             }
+
+            // Post Bill to Vendor Accounts Payable Ledger
+            $lastLedger = \App\Models\VendorLedger::where('vendor_id', $validated['vendor_id'])->latest()->first();
+            $prevBal = $lastLedger ? (float)$lastLedger->balance : 0;
+            $newBal = $prevBal + $totalAmount;
+
+            \App\Models\VendorLedger::create([
+                'vendor_id' => $validated['vendor_id'],
+                'branch_id' => $validated['branch_id'],
+                'purchase_id' => $purchase->id,
+                'type' => 'bill',
+                'amount' => $totalAmount,
+                'balance' => $newBal,
+                'notes' => "Inward Purchase {$poNumber}" . (!empty($validated['invoice_number']) ? " | Inv #{$validated['invoice_number']}" : ""),
+            ]);
+
+            // If marked Paid on creation, automatically post payment voucher
+            if ($validated['payment_status'] === 'Paid') {
+                $postPayBal = $newBal - $totalAmount;
+                \App\Models\VendorLedger::create([
+                    'vendor_id' => $validated['vendor_id'],
+                    'branch_id' => $validated['branch_id'],
+                    'purchase_id' => $purchase->id,
+                    'type' => 'payment',
+                    'amount' => $totalAmount,
+                    'balance' => $postPayBal,
+                    'payment_method' => 'Cash',
+                    'notes' => "Payment for {$poNumber}",
+                ]);
+            }
         });
 
-        return redirect()->route('purchases.index')->with('success', 'Purchase order logged and Main Store stock updated.');
+        \App\Models\AuditLog::log('Created Inward Purchase Order', 'Purchase', null, ['po_number' => $poNumber, 'vendor_id' => $validated['vendor_id'], 'total_amount' => $purchase->total_amount ?? 0]);
+
+        return redirect()->route('purchases.index')->with('success', 'Purchase order logged, Vendor Ledger updated, and Main Store stock increased.');
+    }
+
+    public function show(Request $request, Purchase $purchase)
+    {
+        $purchase->load(['branch', 'vendor', 'addedBy', 'items.item']);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'purchase' => $purchase,
+            ]);
+        }
+
+        return view('purchases.show', compact('purchase'));
+    }
+
+    public function printVoucher(Purchase $purchase)
+    {
+        $purchase->load(['branch', 'vendor', 'addedBy', 'items.item']);
+        $logo = \App\Models\Setting::get('restaurant_logo');
+        $name = \App\Models\Setting::get('restaurant_name', 'Chai Khas Restaurant');
+        $address = \App\Models\Setting::get('restaurant_address', 'Main Boulevard, Gulberg III, Lahore');
+        $phone1 = \App\Models\Setting::get('restaurant_phone1', '+92-300-1234567');
+
+        return view('purchases.print', compact('purchase', 'logo', 'name', 'address', 'phone1'));
     }
 }

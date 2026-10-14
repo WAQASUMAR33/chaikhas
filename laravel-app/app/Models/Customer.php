@@ -14,5 +14,11 @@ class Customer extends Model
         'phone',
         'email',
         'address',
+        'loyalty_points',
     ];
+
+    public function ledgers()
+    {
+        return $this->hasMany(CustomerLedger::class);
+    }
 }

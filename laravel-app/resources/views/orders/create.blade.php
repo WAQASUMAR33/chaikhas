@@ -40,6 +40,8 @@ window.posApp = function posApp() {
         modalDiscountValue: 0,
         modalDiscountInput: 0,
         modalPaymentMode: 'Cash',
+        customerKhataInfo: null,
+        redeemPointsInput: 0,
         modalLoading: false,
         modalActionLoading: false,
         showImages: (localStorage.getItem('pos_show_images') !== null) ? (localStorage.getItem('pos_show_images') === 'true') : true,
@@ -245,6 +247,25 @@ window.posApp = function posApp() {
             }
         },
 
+        async lookupCustomer() {
+            if (!this.customerPhone || this.customerPhone.trim().length < 4) {
+                this.customerKhataInfo = null;
+                return;
+            }
+            try {
+                let res = await fetch('/customer-ledgers/lookup?phone=' + encodeURIComponent(this.customerPhone.trim()));
+                let data = await res.json();
+                if (data.success && data.customer) {
+                    this.customerKhataInfo = data.customer;
+                    if (!this.customerName) {
+                        this.customerName = data.customer.name;
+                    }
+                } else {
+                    this.customerKhataInfo = null;
+                }
+            } catch(e) {}
+        },
+
         async processModalPayment() {
             if (!this.modalOrder) return;
             if (window.NProgress) NProgress.start();
@@ -257,7 +278,10 @@ window.posApp = function posApp() {
                         "X-CSRF-TOKEN": "{{ csrf_token() }}",
                         "Accept": "application/json"
                     },
-                    body: JSON.stringify({ payment_mode: this.modalPaymentMode })
+                    body: JSON.stringify({ 
+                        payment_mode: this.modalPaymentMode,
+                        redeem_points: parseInt(this.redeemPointsInput) || 0
+                    })
                 });
                 const data = await response.json();
                 if (data.success && data.order) {
@@ -570,9 +594,24 @@ window.posApp = function posApp() {
                         <input type="text" x-model="customerName" placeholder="Customer Name (Optional)" class="w-full px-4 py-2 border border-slate-200 text-sm font-medium">
                     </div>
                     <div>
-                        <input type="text" x-model="customerPhone" placeholder="Customer Phone (Optional)" class="w-full px-4 py-2 border border-slate-200 text-sm font-medium">
+                        <input type="text" x-model="customerPhone" @input.debounce.400ms="lookupCustomer()" placeholder="Customer Phone (Auto-search Khata)" class="w-full px-4 py-2 border border-slate-200 text-sm font-medium">
                     </div>
                 </div>
+
+                <!-- Customer Khata & Loyalty Badge -->
+                <template x-if="customerKhataInfo">
+                    <div class="p-2.5 bg-sky-50 border border-sky-200 text-xs flex flex-wrap items-center justify-between gap-2 rounded-none animate-in fade-in duration-150">
+                        <div class="flex items-center gap-2">
+                            <span class="font-black text-[#026897]">👤 <span x-text="customerKhataInfo.name"></span></span>
+                            <span class="text-slate-400">•</span>
+                            <span class="font-extrabold text-orange-600">🌟 <span x-text="customerKhataInfo.loyalty_points"></span> Loyalty Points</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-slate-600 font-bold">Khata Balance:</span>
+                            <span class="font-black" :class="customerKhataInfo.current_balance > 0 ? 'text-rose-600' : 'text-emerald-700'" x-text="(window.__currencySymbol || '₨') + ' ' + parseFloat(customerKhataInfo.current_balance).toFixed(2)"></span>
+                        </div>
+                    </div>
+                </template>
             </div>
 
             <!-- Item Search & Categories Bar -->
@@ -1153,13 +1192,29 @@ window.posApp = function posApp() {
                                     <div class="space-y-3 pt-2">
                                         <div>
                                             <label class="block text-xs font-bold text-slate-600 mb-1">{{ __('Payment Method') }} *</label>
-                                            <select x-model="modalPaymentMode" class="w-full px-3 py-2 bg-white border border-slate-300 text-sm font-bold text-slate-900">
+                                            <select x-model="modalPaymentMode" class="w-full px-3 py-2 bg-white border border-slate-300 text-sm font-bold text-slate-900 rounded-none">
                                                 <option value="Cash">{{ __('Cash') }}</option>
                                                 <option value="Card">{{ __('Card') }}</option>
                                                 <option value="Online">{{ __('Online') }}</option>
+                                                <option value="Khata Credit">📖 Khata Credit (Udhar)</option>
                                             </select>
                                         </div>
-                                        <button @click="processModalPayment()" :disabled="modalActionLoading" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-md transition flex items-center justify-center gap-2 disabled:opacity-60">
+
+                                        <!-- Loyalty Points Redemption Input -->
+                                        <template x-if="customerKhataInfo && customerKhataInfo.loyalty_points > 0">
+                                            <div class="p-2.5 bg-amber-50 border border-amber-200 text-xs rounded-none space-y-1.5">
+                                                <div class="flex items-center justify-between">
+                                                    <span class="font-bold text-amber-900">🌟 Redeem Loyalty Points</span>
+                                                    <span class="text-[11px] font-black text-amber-700" x-text="'Available: ' + customerKhataInfo.loyalty_points + ' pts'"></span>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <input type="number" min="0" :max="customerKhataInfo.loyalty_points" x-model="redeemPointsInput" placeholder="Points to redeem" class="w-full px-2.5 py-1 bg-white border border-amber-300 text-xs font-black text-slate-800 rounded-none">
+                                                    <button type="button" @click="redeemPointsInput = customerKhataInfo.loyalty_points" class="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded-none shrink-0">Max</button>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <button @click="processModalPayment()" :disabled="modalActionLoading" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm shadow-md transition flex items-center justify-center gap-2 disabled:opacity-60 rounded-none">
                                             <template x-if="modalActionLoading">
                                                 <span class="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent inline-block"></span>
                                             </template>

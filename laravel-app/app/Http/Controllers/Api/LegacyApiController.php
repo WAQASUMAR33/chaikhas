@@ -219,6 +219,7 @@ class LegacyApiController extends Controller
                 'hall_id' => $hallId ?: null,
                 'table_id' => $tableId ?: null,
                 'user_id' => $request->input('order_taker_id') ?? 1,
+                'order_taker_id' => $request->input('order_taker_id') ?: null,
                 'customer_name' => $request->input('customer_name') ?: null,
                 'customer_phone' => $request->input('customer_phone') ?: null,
                 'order_type' => $orderType,
@@ -255,9 +256,13 @@ class LegacyApiController extends Controller
             return $order;
         });
 
+        // Automatically dispatch KOT to kitchen station network printers
+        $kotResults = \App\Services\KitchenPrinterService::printOrderKOT($order);
+
         return response()->json([
             'success' => true,
             'message' => 'Order created successfully.',
+            'kot_dispatch' => $kotResults,
             'data' => [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,

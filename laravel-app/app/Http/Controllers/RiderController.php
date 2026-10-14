@@ -55,20 +55,39 @@ class RiderController extends Controller
     public function assignOrder(Request $request, $orderId)
     {
         $order = Order::findOrFail($orderId);
+        $oldRiderId = $order->rider_id;
         $riderId = $request->input('rider_id');
         $deliveryStatus = $request->input('delivery_status', 'Assigned');
 
         $order->update([
-            'rider_id' => $riderId,
+            'rider_id' => $riderId ?: null,
             'delivery_status' => $deliveryStatus,
         ]);
 
         if ($riderId) {
-            Rider::where('id', $riderId)->update(['status' => 'On Delivery']);
+            if ($deliveryStatus === 'Delivered') {
+                $hasOther = Order::where('rider_id', $riderId)
+                    ->where('id', '!=', $order->id)
+                    ->whereIn('delivery_status', ['Assigned', 'Out for Delivery'])
+                    ->exists();
+                Rider::where('id', $riderId)->update(['status' => $hasOther ? 'On Delivery' : 'Active']);
+            } else {
+                Rider::where('id', $riderId)->update(['status' => 'On Delivery']);
+            }
         }
 
-        \App\Models\AuditLog::log('Assigned Rider to Delivery Order', 'Rider', null, ['order_id' => $orderId, 'rider_id' => $riderId]);
+        if ($oldRiderId && $oldRiderId != $riderId) {
+            $oldHasOther = Order::where('rider_id', $oldRiderId)
+                ->where('id', '!=', $order->id)
+                ->whereIn('delivery_status', ['Assigned', 'Out for Delivery'])
+                ->exists();
+            if (!$oldHasOther) {
+                Rider::where('id', $oldRiderId)->update(['status' => 'Active']);
+            }
+        }
 
-        return redirect()->back()->with('success', 'Rider assigned to order successfully!');
+        \App\Models\AuditLog::log('Assigned Rider to Delivery Order', 'Rider', null, ['order_id' => $orderId, 'rider_id' => $riderId, 'status' => $deliveryStatus]);
+
+        return redirect()->back()->with('success', 'Rider dispatch status updated successfully!');
     }
 }

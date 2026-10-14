@@ -55,6 +55,41 @@
         }
     </style>
 
+    @if(isset($lowStockCount) && $lowStockCount > 0)
+    <div class="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-none shadow-xs">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-none bg-rose-500 text-white flex items-center justify-center font-black text-lg">
+                    ⚠️
+                </div>
+                <div>
+                    <h3 class="text-sm font-black text-rose-900 tracking-tight flex items-center gap-2">
+                        <span>{{ __('NETWORK-WIDE INVENTORY ALERT') }}</span>
+                        <span class="px-2 py-0.5 rounded-none bg-rose-200 text-rose-900 text-[10px] font-black uppercase">{{ $lowStockCount }} {{ __('items depleted') }}</span>
+                    </h3>
+                    <p class="text-xs font-semibold text-rose-700 mt-0.5">
+                        {{ __('Inventory items across outlets are below their designated minimum stock thresholds. Restock via Goods Received Purchase Orders.') }}
+                    </p>
+                </div>
+            </div>
+            <a href="{{ route('purchases.create') }}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-none bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-wider transition shadow-sm">
+                <span>+ {{ __('Create Purchase Order') }}</span>
+            </a>
+        </div>
+        <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 pt-2 border-t border-rose-200">
+            @foreach($lowStockItems->take(8) as $item)
+                @php
+                    $curStock = ($item->mainStoreStock->quantity ?? 0) + $item->kitchenStoreStocks->sum('quantity');
+                @endphp
+                <div class="p-2 bg-white border border-rose-200 rounded-none flex items-center justify-between text-xs">
+                    <span class="font-bold text-slate-800 truncate" title="{{ $item->item_name }}">{{ $item->item_name }}</span>
+                    <span class="font-black text-rose-600 whitespace-nowrap">{{ $curStock }} / {{ $item->min_stock_alert }} {{ $item->unit }}</span>
+                </div>
+            @endforeach
+        </div>
+    </div>
+    @endif
+
     <!-- High Definition Metrics Stats Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <!-- Branches Widget (Vivid Ocean HD Gradient) -->

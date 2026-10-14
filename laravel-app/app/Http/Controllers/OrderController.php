@@ -339,8 +339,9 @@ class OrderController extends Controller
 
     public function show(Request $request, Order $order)
     {
-        $order->load(['branch', 'hall', 'table', 'user', 'orderTaker', 'items.menuItem']);
+        $order->load(['branch', 'hall', 'table', 'user', 'orderTaker', 'rider', 'items.menuItem']);
         $serviceChargePct = (float) Setting::get('service_charge_percentage', 5);
+        $riders = \App\Models\Rider::where('branch_id', $order->branch_id)->where('status', 'Active')->orWhere('id', $order->rider_id)->get();
 
         if ($request->wantsJson()) {
             return response()->json([
@@ -350,7 +351,7 @@ class OrderController extends Controller
             ]);
         }
 
-        return view('orders.show', compact('order', 'serviceChargePct'));
+        return view('orders.show', compact('order', 'serviceChargePct', 'riders'));
     }
 
     public function updateStatus(Request $request, Order $order)
@@ -362,6 +363,12 @@ class OrderController extends Controller
         $newStatus = $validated['order_status'];
 
         if ($newStatus === 'Cancelled') {
+            if ($order->is_stock_deducted) {
+                $this->restoreRecipeStockForOrder($order);
+            }
+            if ($order->rider_id) {
+                $this->releaseRiderForOrder($order, 'Cancelled');
+            }
             $order->update([
                 'order_status' => 'Cancelled',
                 'subtotal' => 0,
@@ -380,6 +387,14 @@ class OrderController extends Controller
             }
         } else {
             $order->update(['order_status' => $newStatus]);
+            if (in_array($newStatus, ['Complete', 'Completed'])) {
+                if (!$order->is_stock_deducted) {
+                    $this->deductRecipeStockForOrder($order);
+                }
+                if ($order->rider_id) {
+                    $this->releaseRiderForOrder($order, 'Delivered');
+                }
+            }
         }
 
         if ($order->table_id) {
@@ -498,8 +513,14 @@ class OrderController extends Controller
         }
 
         if (in_array($nextStatus, ['Complete', 'Completed'])) {
-            $this->deductRecipeStockForOrder($order);
-            $this->processCustomerKhataAndLoyalty($order, $validated['payment_mode']);
+            if (!$order->is_stock_deducted) {
+                $this->deductRecipeStockForOrder($order);
+            }
+            if ($order->rider_id) {
+                $this->releaseRiderForOrder($order, 'Delivered');
+            }
+            $redeemPoints = (int) $request->input('redeem_points', 0);
+            $this->processCustomerKhataAndLoyalty($order, $validated['payment_mode'], $redeemPoints);
 
             // Auto-send invoice to PRA (Punjab Revenue Authority) if enabled
             if (\App\Services\PRAService::isEnabled() && (string) \App\Models\Setting::get('pra_auto_send_on_payment', '1') === '1') {
@@ -507,9 +528,9 @@ class OrderController extends Controller
             }
         }
 
-        \App\Models\AuditLog::log('Processed Payment', 'Orders', null, ['order_id' => $order->id, 'net_total' => $order->net_total]);
+        \App\Models\AuditLog::log('Processed Payment', 'Orders', null, ['order_id' => $order->id, 'net_total' => $order->net_total, 'payment_mode' => $validated['payment_mode']]);
 
-        $order->load(['branch', 'hall', 'table', 'user', 'items.menuItem']);
+        $order->load(['branch', 'hall', 'table', 'user', 'rider', 'items.menuItem']);
 
         if ($request->wantsJson()) {
             return response()->json([
@@ -524,6 +545,10 @@ class OrderController extends Controller
 
     private function deductRecipeStockForOrder(Order $order)
     {
+        if ($order->is_stock_deducted) {
+            return;
+        }
+
         foreach ($order->items as $item) {
             if (!$item->menu_item_id || $item->quantity <= 0) continue;
 
@@ -539,9 +564,51 @@ class OrderController extends Controller
                 }
             }
         }
+
+        $order->update(['is_stock_deducted' => true]);
     }
 
-    private function processCustomerKhataAndLoyalty(Order $order, $paymentMethod = 'Cash')
+    private function restoreRecipeStockForOrder(Order $order)
+    {
+        if (!$order->is_stock_deducted) {
+            return;
+        }
+
+        foreach ($order->items as $item) {
+            $qty = $item->quantity > 0 ? $item->quantity : $item->cancelled_quantity;
+            if (!$item->menu_item_id || $qty <= 0) continue;
+
+            $recipes = \App\Models\Recipe::where('menu_item_id', $item->menu_item_id)->get();
+            foreach ($recipes as $recipe) {
+                $restoreQty = $recipe->quantity_required * $qty;
+                $stock = \App\Models\KitchenStoreStock::where('branch_id', $order->branch_id)
+                    ->where('inventory_item_id', $recipe->inventory_item_id)
+                    ->first();
+
+                if ($stock) {
+                    $stock->increment('quantity', $restoreQty);
+                }
+            }
+        }
+
+        $order->update(['is_stock_deducted' => false]);
+    }
+
+    private function releaseRiderForOrder(Order $order, $deliveryStatus = 'Delivered')
+    {
+        if ($order->rider_id) {
+            $order->update(['delivery_status' => $deliveryStatus]);
+            $otherActive = Order::where('rider_id', $order->rider_id)
+                ->where('id', '!=', $order->id)
+                ->whereIn('delivery_status', ['Assigned', 'Out for Delivery'])
+                ->exists();
+            if (!$otherActive) {
+                \App\Models\Rider::where('id', $order->rider_id)->update(['status' => 'Active']);
+            }
+        }
+    }
+
+    private function processCustomerKhataAndLoyalty(Order $order, $paymentMethod = 'Cash', $redeemPoints = 0)
     {
         if ($order->customer_name || $order->customer_phone) {
             $customer = \App\Models\Customer::where('phone', $order->customer_phone)->first();
@@ -554,6 +621,13 @@ class OrderController extends Controller
             }
 
             if ($customer) {
+                // Handle Loyalty Points Redemption
+                if ($redeemPoints > 0 && $customer->loyalty_points >= $redeemPoints) {
+                    $customer->decrement('loyalty_points', $redeemPoints);
+                    $order->update(['points_redeemed' => $redeemPoints]);
+                }
+
+                // Award New Loyalty Points (1 pt per 10 currency units)
                 $pointsEarned = (int) floor($order->net_total / 10);
                 if ($pointsEarned > 0) {
                     $customer->increment('loyalty_points', $pointsEarned);
@@ -572,7 +646,7 @@ class OrderController extends Controller
                         'type' => 'debit',
                         'amount' => $order->net_total,
                         'balance' => $newBal,
-                        'description' => "Order #{$order->order_number} Credit Purchase",
+                        'description' => "Order #{$order->order_number} Credit Purchase (Khata)",
                         'reference_no' => $order->order_number,
                     ]);
                 }

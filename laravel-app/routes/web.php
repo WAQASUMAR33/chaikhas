@@ -106,6 +106,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
     Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
     Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+    Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
+    Route::get('/purchases/{purchase}/print', [PurchaseController::class, 'printVoucher'])->name('purchases.print');
 
     // Main Store & Kitchen Store Stock Management
     Route::get('/inventory', [InventoryController::class, 'index'])->name('inventory.index');
@@ -125,6 +127,8 @@ Route::middleware(['auth'])->group(function () {
 
     // Customer Ledgers & Khata Credit Accounts
     Route::get('/customer-ledgers', [\App\Http\Controllers\CustomerLedgerController::class, 'index'])->name('customer-ledgers.index');
+    Route::post('/customer-ledgers/customer', [\App\Http\Controllers\CustomerLedgerController::class, 'storeCustomer'])->name('customer-ledgers.customer.store');
+    Route::get('/customer-ledgers/lookup', [\App\Http\Controllers\CustomerLedgerController::class, 'lookupByPhone'])->name('customer-ledgers.lookup');
     Route::post('/customer-ledgers/payment', [\App\Http\Controllers\CustomerLedgerController::class, 'storePayment'])->name('customer-ledgers.payment');
 
     // Vendor Accounts Payable Ledgers
@@ -135,6 +139,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/reservations', [\App\Http\Controllers\ReservationController::class, 'index'])->name('reservations.index');
     Route::post('/reservations', [\App\Http\Controllers\ReservationController::class, 'store'])->name('reservations.store');
     Route::patch('/reservations/{id}/status', [\App\Http\Controllers\ReservationController::class, 'updateStatus'])->name('reservations.updateStatus');
+    Route::post('/reservations/{id}/seat', [\App\Http\Controllers\ReservationController::class, 'seatGuest'])->name('reservations.seat');
 
     // Delivery Riders & Dispatch Tracking
     Route::get('/riders', [\App\Http\Controllers\RiderController::class, 'index'])->name('riders.index');
@@ -148,6 +153,7 @@ Route::middleware(['auth'])->group(function () {
     // Staff Attendance Register
     Route::get('/attendances', [\App\Http\Controllers\AttendanceController::class, 'index'])->name('attendances.index');
     Route::post('/attendances', [\App\Http\Controllers\AttendanceController::class, 'store'])->name('attendances.store');
+    Route::post('/attendances/clock', [\App\Http\Controllers\AttendanceController::class, 'clockToggle'])->name('attendances.clock');
 
     // Security Audit Trail Logs
     Route::get('/audit-logs', [\App\Http\Controllers\AuditLogController::class, 'index'])->name('audit-logs.index');
