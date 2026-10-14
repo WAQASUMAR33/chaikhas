@@ -31,11 +31,27 @@ class CategoryController extends Controller
             $query->where('status', $request->status);
         }
 
-        $categories = $query->latest()->paginate(10)->withQueryString();
+        $perPage = $request->input('per_page', 10);
+        $categories = $query->latest()->paginate($perPage)->withQueryString();
         $branches = Branch::where('status', 'Active')->get();
         $kitchens = DB::table('kitchens')->where('status', 'Active')->get();
 
-        return view('categories.index', compact('categories', 'branches', 'kitchens'));
+        $stats = [
+            'total' => Category::count(),
+            'active' => Category::where('status', 'Active')->count(),
+            'inactive' => Category::where('status', 'Inactive')->count(),
+            'attached_kitchen' => Category::whereNotNull('kitchen_id')->count(),
+        ];
+
+        if ($request->wantsJson() || $request->ajax() || $request->has('ajax')) {
+            return response()->json([
+                'success' => true,
+                'categories' => $categories,
+                'stats' => $stats
+            ]);
+        }
+
+        return view('categories.index', compact('categories', 'branches', 'kitchens', 'stats'));
     }
 
     public function store(Request $request)
@@ -60,8 +76,16 @@ class CategoryController extends Controller
             $validated['image'] = \App\Services\ImageService::compressAndStore($request->file('image'), 'categories');
         }
 
-        Category::create($validated);
+        $category = Category::create($validated);
         \App\Services\MasterDataCache::clearAll();
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Category created successfully.',
+                'category' => $category->load(['branch', 'kitchen'])
+            ]);
+        }
 
         return redirect()->route('categories.index')->with('success', 'Category created successfully.');
     }
@@ -95,15 +119,31 @@ class CategoryController extends Controller
         $category->update($validated);
         \App\Services\MasterDataCache::clearAll();
 
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Category updated successfully.',
+                'category' => $category->fresh()->load(['branch', 'kitchen'])
+            ]);
+        }
+
         return redirect()->route('categories.index')->with('success', 'Category updated successfully.');
     }
 
-    public function destroy(Category $category)
+    public function destroy(Request $request, Category $category)
     {
         \App\Services\ImageService::delete($category->image);
         \App\Models\MenuItem::where('category_id', $category->id)->update(['category_id' => null]);
         $category->delete();
         \App\Services\MasterDataCache::clearAll();
+
+        if ($request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Category deleted successfully.'
+            ]);
+        }
+
         return redirect()->route('categories.index')->with('success', 'Category deleted successfully.');
     }
 }
