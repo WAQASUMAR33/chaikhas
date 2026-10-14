@@ -750,6 +750,191 @@
         </div>
     </div>
 
+    <!-- Global Asynchronous AJAX Navigation Engine (SPA-like experience across all pages) -->
+    <script>
+    (function() {
+        let isNavigating = false;
+
+        async function loadAjaxPage(url, pushState = true) {
+            if (isNavigating) return;
+            isNavigating = true;
+
+            const mainContent = document.getElementById('main-content');
+            if (window.NProgress) window.NProgress.start();
+            if (mainContent) mainContent.style.opacity = '0.35';
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-PJAX': 'true'
+                    }
+                });
+
+                if (!response.ok) {
+                    window.location.href = url;
+                    return;
+                }
+
+                // If redirected to login or external domain
+                if (response.redirected && response.url) {
+                    const redirectedUrl = new URL(response.url);
+                    if (redirectedUrl.pathname.includes('/login') || redirectedUrl.origin !== window.location.origin) {
+                        window.location.href = response.url;
+                        return;
+                    }
+                    url = response.url;
+                }
+
+                const htmlText = await response.text();
+                const parser = new DOMParser();
+                const newDoc = parser.parseFromString(htmlText, 'text/html');
+
+                const newMain = newDoc.getElementById('main-content');
+                if (!newMain || !mainContent) {
+                    window.location.href = url;
+                    return;
+                }
+
+                // 1. Update Document Title
+                if (newDoc.title) {
+                    document.title = newDoc.title;
+                }
+
+                // 2. Destroy old Alpine tree if possible
+                if (window.Alpine && typeof window.Alpine.destroyTree === 'function') {
+                    try { window.Alpine.destroyTree(mainContent); } catch (e) {}
+                }
+
+                // 3. Update main content classes & HTML
+                mainContent.className = newMain.className;
+                mainContent.innerHTML = newMain.innerHTML;
+
+                // 4. Re-execute any scripts inside the new main content
+                const scripts = Array.from(mainContent.querySelectorAll('script'));
+                for (const oldScript of scripts) {
+                    const newScript = document.createElement('script');
+                    Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+                    newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                    oldScript.parentNode.replaceChild(newScript, oldScript);
+                }
+
+                // 5. Re-initialize Alpine tree
+                if (window.Alpine && typeof window.Alpine.initTree === 'function') {
+                    try { window.Alpine.initTree(mainContent); } catch (e) {}
+                }
+
+                // 6. Update URL in browser history without reload
+                if (pushState) {
+                    window.history.pushState({ pjax: true, url: url }, '', url);
+                }
+
+                // 7. Scroll main content to top smoothly
+                mainContent.scrollTop = 0;
+                window.scrollTo(0, 0);
+
+                // 8. Update Active Link in Sidebar & Navigation
+                updateActiveNav(url);
+
+                // 9. Dispatch custom event for any page-specific listeners
+                window.dispatchEvent(new CustomEvent('page-loaded', { detail: { url } }));
+
+            } catch (err) {
+                console.error('AJAX Navigation failed, falling back to full reload:', err);
+                window.location.href = url;
+            } finally {
+                if (mainContent) mainContent.style.opacity = '1';
+                if (window.NProgress) window.NProgress.done();
+                isNavigating = false;
+            }
+        }
+
+        function updateActiveNav(currentUrl) {
+            try {
+                const targetPath = new URL(currentUrl, window.location.origin).pathname;
+                document.querySelectorAll('aside a, #sidebar a, header a').forEach(a => {
+                    if (!a.href || a.href.includes('#') || a.href.startsWith('javascript:')) return;
+                    try {
+                        const aPath = new URL(a.href, window.location.origin).pathname;
+                        if (aPath === targetPath) {
+                            a.classList.add('bg-white/10', 'font-black');
+                        } else {
+                            a.classList.remove('bg-white/10');
+                        }
+                    } catch (e) {}
+                });
+            } catch (e) {}
+        }
+
+        // Global Link Interceptor (for pagination links, buttons, sidebar navigation)
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('a');
+            if (!link) return;
+
+            // Skip conditions
+            if (link.target && link.target !== '_self') return;
+            if (link.hasAttribute('download')) return;
+            if (link.getAttribute('data-no-ajax') !== null) return;
+            if (link.closest('[data-no-ajax]')) return;
+            if (link.getAttribute('hx-boost') === 'false') return;
+
+            const href = link.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+
+            const targetUrl = new URL(link.href, window.location.origin);
+            if (targetUrl.origin !== window.location.origin) return;
+
+            // Skip special routes (logout, exports, pdfs, printer direct links)
+            if (targetUrl.pathname.endsWith('/logout') || 
+                targetUrl.searchParams.has('export') || 
+                targetUrl.pathname.includes('/print') ||
+                targetUrl.pathname.includes('/stream_pdf')) {
+                return;
+            }
+
+            e.preventDefault();
+            loadAjaxPage(targetUrl.href, true);
+        });
+
+        // Global Filter/Search GET Form Interceptor
+        document.addEventListener('submit', function(e) {
+            const form = e.target.closest('form');
+            if (!form) return;
+
+            const method = (form.method || 'GET').toUpperCase();
+            if (method !== 'GET') return; // Only intercept GET search/filter forms
+
+            if (form.target && form.target !== '_self') return;
+            if (form.getAttribute('data-no-ajax') !== null) return;
+            if (form.closest('[data-no-ajax]')) return;
+            if (form.getAttribute('hx-boost') === 'false') return;
+
+            e.preventDefault();
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData);
+            const action = form.action || window.location.href;
+            const targetUrl = new URL(action, window.location.origin);
+
+            for (const [key, val] of params.entries()) {
+                if (val !== '') {
+                    targetUrl.searchParams.set(key, val);
+                } else {
+                    targetUrl.searchParams.delete(key);
+                }
+            }
+
+            loadAjaxPage(targetUrl.href, true);
+        });
+
+        // Browser Back / Forward Button Handling
+        window.addEventListener('popstate', function(e) {
+            loadAjaxPage(window.location.href, false);
+        });
+
+        // Expose globally for manual triggers if needed
+        window.loadAjaxPage = loadAjaxPage;
+    })();
+    </script>
 </body>
 </html>
 
