@@ -557,13 +557,19 @@ export default function AccountManagementPage() {
     }
   }, [modalOpen, branches.length]);
   
-  // Also try to fetch branches periodically if they're not loaded (retry mechanism)
+  // Try to fetch branches with a capped retry count if empty
   useEffect(() => {
     if (currentUserRole === 'super_admin' && branches.length === 0) {
+      let retries = 0;
       const retryInterval = setInterval(() => {
-        console.log('Retrying branch fetch (branches still empty)...');
+        if (retries >= 3) {
+          clearInterval(retryInterval);
+          return;
+        }
+        retries++;
+        console.log(`Retrying branch fetch (attempt ${retries}/3)...`);
         fetchBranches();
-      }, 5000); // Retry every 5 seconds
+      }, 10000); // Retry every 10 seconds, max 3 times
       
       return () => clearInterval(retryInterval);
     }

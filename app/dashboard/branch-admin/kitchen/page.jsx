@@ -48,7 +48,10 @@ export default function KitchenManagementPage() {
     if (selectedKitchen) {
       fetchKitchenOrders();
       if (autoRefresh) {
-        const interval = setInterval(fetchKitchenOrders, 5000); // Refresh every 5 seconds
+        const interval = setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+          fetchKitchenOrders();
+        }, 15000); // Refresh every 15 seconds (pause when tab hidden)
         return () => clearInterval(interval);
       }
     }

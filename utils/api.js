@@ -62,7 +62,40 @@ const isBrowserProxyActive = () => {
 const DEFAULT_GET_CACHE_TTL_MS = 3000;
 const MAX_GET_CACHE_ENTRIES = 200;
 const inFlightGetRequests = new Map();
+const inFlightPostRequests = new Map();
 const getResponseCache = new Map();
+
+// Circuit breaker to prevent hammering backend on server/network failures
+let consecutiveFailures = 0;
+let circuitBreakerCooloffUntil = 0;
+
+export const resetCircuitBreaker = () => {
+  consecutiveFailures = 0;
+  circuitBreakerCooloffUntil = 0;
+};
+
+const isCircuitBreakerActive = () => {
+  if (Date.now() < circuitBreakerCooloffUntil) {
+    const remainingSec = Math.ceil((circuitBreakerCooloffUntil - Date.now()) / 1000);
+    devError(`⚡ Circuit breaker active: Pausing API requests for ${remainingSec}s to prevent rate limits`);
+    return true;
+  }
+  return false;
+};
+
+const recordApiSuccess = () => {
+  consecutiveFailures = 0;
+  circuitBreakerCooloffUntil = 0;
+};
+
+const recordApiFailure = () => {
+  consecutiveFailures++;
+  if (consecutiveFailures >= 3) {
+    // Cool off for 15 seconds after 3 consecutive errors
+    circuitBreakerCooloffUntil = Date.now() + 15000;
+    devError(`🚨 3 consecutive API failures! Pausing background calls for 15s to prevent backend lockup`);
+  }
+};
 
 const getProxyBaseUrl = () => {
   if (typeof window === 'undefined') return '';
@@ -698,19 +731,38 @@ export const apiPost = async (endpoint, body, options = {}) => {
   
   // Resolve endpoint with correct folder path (api/ or pos/)
   const normalizedEndpoint = resolveApiEndpoint(endpoint);
-  
-  const currentWorkingUrl = getWorkingApiUrl();
-  const urlsToTry = getUrlsToTry();
 
-  // Log API base URL in development for debugging
-  if (IS_DEVELOPMENT) {
-    console.log('🔧 Trying API URLs:', urlsToTry);
-    console.log('🔧 Current working URL:', currentWorkingUrl);
-    if (isBrowserProxyActive()) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
+  const cacheKey = `${normalizedEndpoint}::${bodyString}::${token || ''}`;
+
+  if (isCircuitBreakerActive()) {
+    return {
+      success: false,
+      data: {
+        success: false,
+        message: 'API Cool-off active due to repeated server errors. Retrying shortly...',
+        endpoint: normalizedEndpoint,
+      },
+      status: 429,
+    };
   }
-  
-  // Log API request
-  logger.logAPI('POST', normalizedEndpoint, body);
+
+  if (inFlightPostRequests.has(cacheKey)) {
+    return inFlightPostRequests.get(cacheKey);
+  }
+
+  const postPromise = (async () => {
+    const currentWorkingUrl = getWorkingApiUrl();
+    const urlsToTry = getUrlsToTry();
+
+    // Log API base URL in development for debugging
+    if (IS_DEVELOPMENT) {
+      console.log('🔧 Trying API URLs:', urlsToTry);
+      console.log('🔧 Current working URL:', currentWorkingUrl);
+      if (isBrowserProxyActive()) console.log('🔧 API proxy mode: requests go to /api/php-proxy → PHP');
+    }
+    
+    // Log API request
+    logger.logAPI('POST', normalizedEndpoint, body);
   
   try {
     // Try to make the request with fallback
@@ -900,13 +952,14 @@ export const apiPost = async (endpoint, body, options = {}) => {
       }
       
       // Even if response.ok is false, if we got valid JSON, return it
-      // The API might return { success: false, message: "..." } which is valid
+      recordApiSuccess();
       return { 
         success: response.ok || (data && data.success === true), 
         data, 
         status: response.status 
       };
     } catch (parseError) {
+      recordApiFailure();
       // If response is not valid JSON, it might be an HTML error or PHP error
       devError('Invalid JSON response from', normalizedEndpoint, ':', text.substring(0, 200));
       
@@ -946,6 +999,7 @@ export const apiPost = async (endpoint, body, options = {}) => {
       };
     }
   } catch (error) {
+    recordApiFailure();
     devError('API POST Error:', normalizedEndpoint, error.message);
     
     // Log API error
@@ -961,13 +1015,13 @@ export const apiPost = async (endpoint, body, options = {}) => {
     // Check for specific error types
     if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
       errorMessage = 'Cannot connect to server (CORS or Network Issue) - Tried all available servers';
-      detailedMessage = `Unable to reach any API server. Tried: ${urlsToTry.join(', ')}\n\n⚠️ MOST LIKELY ISSUE: CORS Headers Missing or Server Down\n\nYour PHP API file (login.php) needs CORS headers at the top.\n\nQuick Fix - Add these lines to the TOP of your login.php file:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n\nif ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {\n    http_response_code(200);\n    exit();\n}\n\nSee API_CORS_FIX.md for complete instructions.\n\nOther Troubleshooting Steps:\n\n1. Check WAMP Server Status:\n   - Open WAMP server control panel\n   - Ensure Apache and MySQL services are running (green icon)\n   - If red, click "Start All Services"\n\n2. Verify API Folder Location:\n   - Check if folder exists: C:\\wamp64\\www\\restuarent\\api\\\n   - Ensure login.php file exists in that folder\n\n3. Test API in Browser:\n   - Open: http://localhost/restuarent/api/login.php\n   - You should see a response (even if it's an error message)\n   - If you see "404 Not Found", the path is incorrect\n   - If page doesn't load, Apache might not be running\n\n4. Check Browser Network Tab:\n   - Press F12 → Network tab\n   - Try to login again\n   - Look for the login.php request\n   - If it shows "CORS error" or "blocked", add CORS headers to PHP file`;
+      detailedMessage = `Unable to reach any API server. Tried: ${urlsToTry.join(', ')}`;
     } else if (error.message.includes('CORS')) {
       errorMessage = 'CORS (Cross-Origin) Error';
-      detailedMessage = `The server is blocking the request due to CORS policy.\n\nSolution: Add CORS headers to your PHP API files:\n\n<?php\nheader('Access-Control-Allow-Origin: *');\nheader('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');\nheader('Access-Control-Allow-Headers: Content-Type, Authorization');\n?>\n\nTried URLs: ${urlsToTry.join(', ')}`;
+      detailedMessage = `The server is blocking the request due to CORS policy. Tried URLs: ${urlsToTry.join(', ')}`;
     } else if (error.message.includes('timeout')) {
       errorMessage = 'Request Timeout';
-      detailedMessage = `The server took too long to respond.\n\nPossible causes:\n- Server is overloaded\n- Database connection issues\n- Network problems\n\nTried URLs: ${urlsToTry.join(', ')}`;
+      detailedMessage = `The server took too long to respond. Tried URLs: ${urlsToTry.join(', ')}`;
     }
     
     return {
@@ -984,6 +1038,15 @@ export const apiPost = async (endpoint, body, options = {}) => {
       },
       status: 0,
     };
+  }
+  })();
+
+  inFlightPostRequests.set(cacheKey, postPromise);
+
+  try {
+    return await postPromise;
+  } finally {
+    inFlightPostRequests.delete(cacheKey);
   }
 };
 

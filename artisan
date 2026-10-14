@@ -1,0 +1,5 @@
+<?php
+
+// Change directory to laravel-app and run artisan
+chdir(__DIR__ . '/laravel-app');
+require __DIR__ . '/laravel-app/artisan';

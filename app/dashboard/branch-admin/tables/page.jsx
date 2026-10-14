@@ -33,10 +33,11 @@ export default function TableManagementPage() {
     fetchTables();
     fetchHalls();
     
-    // Auto-refresh tables every 10 seconds for real-time updates
+    // Auto-refresh tables every 30 seconds for real-time updates (pause when hidden)
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       fetchTables();
-    }, 10000);
+    }, 30000);
     
     return () => clearInterval(interval);
   }, []);

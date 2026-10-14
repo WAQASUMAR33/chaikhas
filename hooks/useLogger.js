@@ -7,16 +7,13 @@ import { useState, useEffect } from 'react';
 import logger from '@/utils/logger';
 
 export const useLogger = () => {
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState(() => logger.getLogs());
 
   useEffect(() => {
     // Subscribe to log updates
     const unsubscribe = logger.subscribe((newLogs) => {
       setLogs(newLogs);
     });
-
-    // Get initial logs
-    setLogs(logger.getLogs());
 
     return unsubscribe;
   }, []);
