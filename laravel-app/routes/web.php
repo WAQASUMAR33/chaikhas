@@ -86,7 +86,10 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
 
     Route::get('/dayend', [DayEndController::class, 'index'])->name('dayend.index');
+    Route::get('/dayend/preview', [DayEndController::class, 'preview'])->name('dayend.preview');
     Route::post('/dayend', [DayEndController::class, 'store'])->name('dayend.store');
+    Route::get('/dayend/{dayend}', [DayEndController::class, 'show'])->name('dayend.show');
+    Route::get('/dayend/{dayend}/print', [DayEndController::class, 'printZReport'])->name('dayend.print');
 
     // Reports & Analytics Suite
     Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
