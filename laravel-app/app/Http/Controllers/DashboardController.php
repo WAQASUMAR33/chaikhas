@@ -54,12 +54,13 @@ class DashboardController extends Controller
             // Branch Comparison Analytics for Bar Chart
             $branchComparisonData = $this->getBranchComparison($branches);
 
-            // Low Stock Threshold Alerts
+            // Low Stock Threshold Alerts (Filtered directly in database)
             $lowStockItems = \App\Models\InventoryItem::with(['mainStoreStock', 'kitchenStoreStocks'])
+                ->where('min_stock_alert', '>', 0)
                 ->get()
                 ->filter(function($item) {
                     $total = ($item->mainStoreStock->quantity ?? 0) + $item->kitchenStoreStocks->sum('quantity');
-                    return $item->min_stock_alert > 0 && $total <= $item->min_stock_alert;
+                    return $total <= $item->min_stock_alert;
                 });
             $lowStockCount = $lowStockItems->count();
 
@@ -101,13 +102,14 @@ class DashboardController extends Controller
         // Top Selling Menu Items for this branch
         $topItemsData = $this->getTopSellingItems($branchId);
 
-        // Low Stock Threshold Alerts
+        // Low Stock Threshold Alerts (Filtered directly in database)
         $lowStockItems = \App\Models\InventoryItem::with(['mainStoreStock', 'kitchenStoreStocks'])
             ->where('branch_id', $branchId)
+            ->where('min_stock_alert', '>', 0)
             ->get()
             ->filter(function($item) {
                 $total = ($item->mainStoreStock->quantity ?? 0) + $item->kitchenStoreStocks->sum('quantity');
-                return $item->min_stock_alert > 0 && $total <= $item->min_stock_alert;
+                return $total <= $item->min_stock_alert;
             });
         $lowStockCount = $lowStockItems->count();
 
@@ -129,10 +131,22 @@ class DashboardController extends Controller
     }
 
     /**
-     * Get 7-Day Sales & Orders Velocity Trend
+     * Get 7-Day Sales & Orders Velocity Trend (Optimized Single Aggregation)
      */
     private function get7DayTrend(?int $branchId = null): array
     {
+        $startDate = now()->subDays(6)->startOfDay();
+
+        $query = Order::where('created_at', '>=', $startDate);
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+
+        $records = $query->selectRaw('DATE(created_at) as date, COUNT(*) as orders, COALESCE(SUM(net_total), 0) as sales')
+            ->groupBy('date')
+            ->get()
+            ->keyBy('date');
+
         $labels = [];
         $sales = [];
         $orders = [];
@@ -142,17 +156,10 @@ class DashboardController extends Controller
             $dateStr = $dateObj->toDateString();
             $label = $dateObj->format('d M');
 
-            $query = Order::whereDate('created_at', $dateStr);
-            if ($branchId) {
-                $query->where('branch_id', $branchId);
-            }
-
-            $daySales = (float) $query->sum('net_total');
-            $dayOrders = (int) $query->count();
-
+            $row = $records->get($dateStr);
             $labels[] = $label;
-            $sales[] = round($daySales, 2);
-            $orders[] = $dayOrders;
+            $sales[] = $row ? round((float) $row->sales, 2) : 0;
+            $orders[] = $row ? (int) $row->orders : 0;
         }
 
         return [
@@ -222,21 +229,25 @@ class DashboardController extends Controller
     }
 
     /**
-     * Get Branch Sales & Order Comparison (for Super Admin)
+     * Get Branch Sales & Order Comparison (Optimized Single Grouped Query)
      */
     private function getBranchComparison($branches): array
     {
+        $branchStats = Order::selectRaw('branch_id, COUNT(*) as orders, COALESCE(SUM(net_total), 0) as sales')
+            ->groupBy('branch_id')
+            ->get()
+            ->keyBy('branch_id');
+
         $labels = [];
         $sales = [];
         $orders = [];
 
         foreach ($branches as $branch) {
             $labels[] = $branch->branch_name;
-            $bSales = (float) Order::where('branch_id', $branch->id)->sum('net_total');
-            $bOrders = (int) Order::where('branch_id', $branch->id)->count();
+            $stat = $branchStats->get($branch->id);
 
-            $sales[] = round($bSales, 2);
-            $orders[] = $bOrders;
+            $sales[] = $stat ? round((float) $stat->sales, 2) : 0;
+            $orders[] = $stat ? (int) $stat->orders : 0;
         }
 
         return [
